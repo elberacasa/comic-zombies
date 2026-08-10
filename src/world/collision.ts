@@ -234,9 +234,22 @@ function capsuleTriangle(start: Vector3, end: Vector3, radius: number, tri: Tria
  * solid" actually means. Coplanar faces (one big wall, however many triangles) sum to full
  * length and are rejected; the six faces of a box sum to ~zero and are accepted.
  */
+/*
+ * ⚠ AND THAT TEST FALSE-POSITIVED ON EVERY STAIRCASE IN THE ARENA. A `stairRun` collider is a
+ * thin ROTATED SLAB. A capsule standing legitimately on top of one is behind the slab's underside
+ * AND behind its lower end cap — two faces whose normals are ~90° apart, which sums to
+ * count × 0.707 and sails under the 0.85 bar. The deep escape then fired on every solver pass
+ * that found no ordinary contact (constant on a slope) and shoved the body up to `radius * 4`.
+ *
+ * The missing half of the test: an escape is only real if the faces we are behind actually
+ * OPPOSE it. Inside a box, the other faces point back at you and the sum dots negative against
+ * the chosen escape normal. On a stair the faces ENDORSE it — they agree with the direction we
+ * were about to be flung — and `_deepSum · _deepN` comes out large and positive.
+ */
 function enclosed(): boolean {
   if (_deepCount < 2) return false;
-  return _deepSum.length() < _deepCount * 0.85;
+  if (_deepSum.length() >= _deepCount * 0.85) return false;
+  return _deepSum.dot(_deepN) <= 0.5;
 }
 
 const HIT_RING = 8;

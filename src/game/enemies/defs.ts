@@ -35,64 +35,233 @@ import { PALETTE } from '@/art/palette';
 import type { EnemyKind } from '@/core/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The rig — a bone-less hierarchy of mesh parts (ART_DIRECTION §8).
+// THE SKELETON (BUILD 007 — replaces the bone-less mesh hierarchy)
 //
-// Fourteen parts, indexed. The order is load-bearing: **a part's parent always has a lower
-// index than the part itself**, so the whole hierarchy resolves in a single forward pass with
-// no recursion and no sorting (see `body.ts::poseInto`).
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+//  WHY THIS CHANGED, AND WHAT IT COST.
+//
+//  BUILD 006's Shambler was fourteen bevelled boxes parented to each other and posed as rigid
+//  bodies — ART §8's literal "bone-less: hierarchical mesh groups". Rigid parts have one
+//  failure mode and it is structural, not cosmetic: **a rigid part rotates about a point on
+//  its own surface**, so every joint either opens a wedge-shaped hole on the outside of the
+//  bend or drives one box through another on the inside. A 90° elbow on a 0.16 m arm opens a
+//  gap of roughly 0.5 × 0.16 × √2 ≈ 0.11 m — two thirds of the limb's own width. Under the 8 px
+//  enemy ink line that hole is inked on BOTH sides, so the arm reads as two separate objects,
+//  and the silhouette — the one thing ART §9 makes a gameplay contract — comes apart exactly
+//  when the body is doing something worth looking at.
+//
+//  The fix is the thing rigid parts are an approximation of: linear blend skinning. One
+//  continuous surface, every vertex influenced by up to four bones, weights solved from
+//  distance to the bone SEGMENT (see `rig.ts::solveSkin`). A bend now redistributes the surface
+//  instead of tearing it, and the silhouette stays closed at any angle.
+//
+//  WHAT DID NOT CHANGE, deliberately:
+//   • the TIMING. Skinning changes deformation, not animation language. The pose is still
+//     sampled on the 12 Hz stepped clock (`ANIM.poseFps`), still held for ~5 frames at 60 fps,
+//     still off-beat between limbs (`ANIM.armLag` 0.37, `ANIM.limpAsym`). Smooth deformation
+//     with jerky timing is the target; smooth deformation with smooth timing is a different,
+//     much worse game.
+//   • the DRAW CALL COUNT. Still one body mesh + one inverted hull per zombie, still ONE shared
+//     geometry for the whole horde. The bone palette is a per-instance uniform, not a scene
+//     graph — see the long note at the top of `rig.ts` for why this is not `THREE.SkinnedMesh`.
+//
+//  ORDER IS LOAD-BEARING: **a bone's parent always has a lower index than the bone itself**, so
+//  the hierarchy resolves in one forward pass with no recursion and no sorting.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
 
-export const PART = {
-  PELVIS: 0,
-  BELLY: 1,
+export const BONE = {
+  HIPS: 0,
+  SPINE: 1,
   CHEST: 2,
-  HEAD: 3,
-  JAW: 4,
-  ARM_UR: 5,
-  ARM_LR: 6,
-  ARM_UL: 7,
-  ARM_LL: 8,
-  LEG_UR: 9,
-  LEG_LR: 10,
-  LEG_UL: 11,
-  LEG_LL: 12,
-  /** The asymmetry part: a hanging strip of coat / a torn-open ribcage. Never mirrored. */
-  RAG: 13,
+  /** The neck is a BONE, not a gap. See `SURFACE` — it is the whole headshot read. */
+  NECK: 3,
+  HEAD: 4,
+  JAW: 5,
+  CLAV_R: 6,
+  ARM_R: 7,
+  FORE_R: 8,
+  HAND_R: 9,
+  CLAV_L: 10,
+  ARM_L: 11,
+  FORE_L: 12,
+  HAND_L: 13,
+  THIGH_R: 14,
+  SHIN_R: 15,
+  FOOT_R: 16,
+  THIGH_L: 17,
+  SHIN_L: 18,
+  FOOT_L: 19,
+  /** The asymmetry bone: a hanging strip of coat off one shoulder blade. Never mirrored. */
+  RAG: 20,
 } as const;
 
-export const PART_COUNT = 14;
+export const BONE_COUNT = 21;
 
-/** `PART_PARENT[i]` is the index of `i`'s parent, or -1 for the root. Monotonic by construction. */
-export const PART_PARENT: readonly number[] = [
-  -1,            // PELVIS
-  PART.PELVIS,   // BELLY
-  PART.BELLY,    // CHEST
-  PART.CHEST,    // HEAD
-  PART.HEAD,     // JAW
-  PART.CHEST,    // ARM_UR
-  PART.ARM_UR,   // ARM_LR
-  PART.CHEST,    // ARM_UL
-  PART.ARM_UL,   // ARM_LL
-  PART.PELVIS,   // LEG_UR
-  PART.LEG_UR,   // LEG_LR
-  PART.PELVIS,   // LEG_UL
-  PART.LEG_UL,   // LEG_LR
-  PART.CHEST,    // RAG
+/** `BONE_PARENT[i]` is the index of `i`'s parent, or -1 for the root. Monotonic by construction. */
+export const BONE_PARENT: readonly number[] = [
+  -1,            // HIPS
+  BONE.HIPS,     // SPINE
+  BONE.SPINE,    // CHEST
+  BONE.CHEST,    // NECK
+  BONE.NECK,     // HEAD
+  BONE.HEAD,     // JAW
+  BONE.CHEST,    // CLAV_R
+  BONE.CLAV_R,   // ARM_R
+  BONE.ARM_R,    // FORE_R
+  BONE.FORE_R,   // HAND_R
+  BONE.CHEST,    // CLAV_L
+  BONE.CLAV_L,   // ARM_L
+  BONE.ARM_L,    // FORE_L
+  BONE.FORE_L,   // HAND_L
+  BONE.HIPS,     // THIGH_R
+  BONE.THIGH_R,  // SHIN_R
+  BONE.SHIN_R,   // FOOT_R
+  BONE.HIPS,     // THIGH_L
+  BONE.THIGH_L,  // SHIN_L
+  BONE.SHIN_L,   // FOOT_L
+  BONE.CHEST,    // RAG
 ];
+
+/** Debug / tooling only. Never branch on a name. */
+export const BONE_NAME: readonly string[] = [
+  'hips', 'spine', 'chest', 'neck', 'head', 'jaw',
+  'clav_r', 'arm_r', 'fore_r', 'hand_r',
+  'clav_l', 'arm_l', 'fore_l', 'hand_l',
+  'thigh_r', 'shin_r', 'foot_r',
+  'thigh_l', 'shin_l', 'foot_l',
+  'rag',
+];
+
+/**
+ * LEGACY ALIAS. `game/enemies/index.ts` re-exports `PART` and is not this agent's file to edit,
+ * so the fourteen old names keep resolving — to the equivalent BONE index. New code uses `BONE`.
+ *
+ * @deprecated Use `BONE`.
+ */
+export const PART = {
+  PELVIS: BONE.HIPS,
+  BELLY: BONE.SPINE,
+  CHEST: BONE.CHEST,
+  HEAD: BONE.HEAD,
+  JAW: BONE.JAW,
+  ARM_UR: BONE.ARM_R,
+  ARM_LR: BONE.FORE_R,
+  ARM_UL: BONE.ARM_L,
+  ARM_LL: BONE.FORE_L,
+  LEG_UR: BONE.THIGH_R,
+  LEG_LR: BONE.SHIN_R,
+  LEG_UL: BONE.THIGH_L,
+  LEG_LL: BONE.SHIN_L,
+  RAG: BONE.RAG,
+} as const;
 
 /** The four dismemberable limbs, in `Limb` order. */
 export const LIMB = { ARM_R: 0, ARM_L: 1, LEG_R: 2, LEG_L: 3 } as const;
 export const LIMB_COUNT = 4;
 
-/** Root part of each limb — severing it collapses the part and everything under it. */
-export const LIMB_ROOT: readonly number[] = [PART.ARM_UR, PART.ARM_UL, PART.LEG_UR, PART.LEG_UL];
+/** Root bone of each limb — severing it collapses that bone and everything under it. */
+export const LIMB_ROOT: readonly number[] = [BONE.ARM_R, BONE.ARM_L, BONE.THIGH_R, BONE.THIGH_L];
+/** MID bone of each limb — the forearm / shin. */
+export const LIMB_MID: readonly number[] = [BONE.FORE_R, BONE.FORE_L, BONE.SHIN_R, BONE.SHIN_L];
+/** Tip bone of each limb — the hand / foot. */
+export const LIMB_TIP: readonly number[] = [BONE.HAND_R, BONE.HAND_L, BONE.FOOT_R, BONE.FOOT_L];
+
+/**
+ * ═══ A LIMB IS THREE CAPSULES, ONE PER BONE ═══
+ *
+ * BUILD 007 gave each limb ONE capsule, shoulder joint → hand tip. A capsule is a straight tube
+ * between its ends, and a limb is not straight in any pose the animator wrote, so that tube
+ * both (a) left the drawing — a bullet through the empty air in front of a reaching zombie's
+ * chest scored a limb hit — and (b) cut every corner, which is why **37% of the drawn shin and
+ * 27% of the drawn calf registered NOTHING**: the knee→toe line skips the ankle entirely.
+ *
+ * One capsule per bone follows the bend. Cost is at most eight more ray/capsule tests, and only
+ * on a body whose head AND torso have already been missed (`HITBOX.priority`).
+ */
+export const LIMB_BONES: readonly (readonly number[])[] = [
+  [BONE.ARM_R, BONE.FORE_R, BONE.HAND_R],
+  [BONE.ARM_L, BONE.FORE_L, BONE.HAND_L],
+  [BONE.THIGH_R, BONE.SHIN_R, BONE.FOOT_R],
+  [BONE.THIGH_L, BONE.SHIN_L, BONE.FOOT_L],
+];
+/** Hitbox capsules per limb: upper, mid, tip. */
+export const LIMB_SEGMENTS = 3;
+/** Total limb capsules across the body. */
+export const LIMB_CAPSULES = LIMB_COUNT * LIMB_SEGMENTS;
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ * THE BIND POSE — every bone's joint position in ENEMY-LOCAL METRES, parent-relative, with
+ * identity rotation. This table is the single source of truth for:
+ *
+ *   • where the geometry is authored (the surface cage is drawn around these joints, in the
+ *     same space — that is what "bind pose" means);
+ *   • the inverse-bind matrices `rig.ts` builds once at boot;
+ *   • the segments `solveSkin` measures distance to;
+ *   • the hitbox capsules the combat agent reads through `EnemyBody.rig.boneSegment()`.
+ *
+ * Change a number here and the mesh, the skin weights AND the hitboxes all move together, which
+ * is the entire point — "what you see is what you hit" stops being a promise and becomes a
+ * property of the data.
+ *
+ * `radius` is the flesh half-width around that bone: the falloff support for the skin solve and
+ * the capsule radius the combat agent gets. It is not decoration — see `BODY.minHalfWidth`.
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ */
+export interface BoneRest {
+  /** Parent-relative joint offset, metres. */
+  x: number;
+  y: number;
+  z: number;
+  /** Flesh half-width around this bone, metres. */
+  radius: number;
+}
+
+export const SKEL: readonly BoneRest[] = [
+  /* HIPS    */ { x: 0, y: 0.900, z: 0.000, radius: 0.200 },
+  /* SPINE   */ { x: 0, y: 0.150, z: 0.000, radius: 0.190 },
+  /* CHEST   */ { x: 0, y: 0.185, z: -0.010, radius: 0.240 },
+  /* NECK    */ { x: 0, y: 0.173, z: -0.042, radius: 0.085 },
+  /* HEAD    */ { x: 0, y: 0.144, z: -0.036, radius: 0.175 },
+  /* JAW     */ { x: 0, y: 0.040, z: 0.058, radius: 0.120 },
+  /* CLAV_R  */ { x: 0.078, y: 0.157, z: 0.000, radius: 0.130 },
+  /* ARM_R   */ { x: 0.170, y: -0.020, z: 0.000, radius: 0.118 },
+  /* FORE_R  */ { x: 0, y: -0.325, z: 0.000, radius: 0.098 },
+  /* HAND_R  */ { x: 0, y: -0.320, z: 0.000, radius: 0.112 },
+  /* CLAV_L  */ { x: -0.078, y: 0.161, z: 0.000, radius: 0.130 },
+  /* ARM_L   */ { x: -0.178, y: -0.012, z: 0.000, radius: 0.118 },
+  /* FORE_L  */ { x: 0, y: -0.325, z: 0.000, radius: 0.098 },
+  /* HAND_L  */ { x: 0, y: -0.320, z: 0.000, radius: 0.112 },
+  /* THIGH_R */ { x: 0.132, y: -0.072, z: 0.000, radius: 0.135 },
+  /* SHIN_R  */ { x: 0, y: -0.433, z: 0.005, radius: 0.105 },
+  /* FOOT_R  */ { x: 0, y: -0.385, z: -0.005, radius: 0.120 },
+  /* THIGH_L */ { x: -0.132, y: -0.072, z: 0.000, radius: 0.135 },
+  /* SHIN_L  */ { x: 0, y: -0.433, z: 0.005, radius: 0.105 },
+  /* FOOT_L  */ { x: 0, y: -0.385, z: -0.005, radius: 0.120 },
+  /* RAG     */ { x: -0.170, y: -0.020, z: 0.140, radius: 0.120 },
+];
+
+/**
+ * Direction and length of a LEAF bone's tail, in its own space. A leaf has no child to point
+ * at, so the segment `solveSkin` and the hitbox capsules measure against would be a single
+ * point — which makes a hand or a foot bind to nothing and gives it a zero-length capsule.
+ */
+export const BONE_TAIL: Readonly<Record<number, readonly [number, number, number]>> = {
+  [BONE.HEAD]: [0, 0.300, 0.010],
+  [BONE.JAW]: [0, -0.075, -0.150],
+  [BONE.HAND_R]: [0, -0.170, -0.030],
+  [BONE.HAND_L]: [0, -0.170, -0.030],
+  [BONE.FOOT_R]: [0, -0.020, -0.170],
+  [BONE.FOOT_L]: [0, -0.020, -0.170],
+  [BONE.RAG]: [-0.040, -0.400, 0.030],
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BODY — the Shambler's proportions, in metres.
+// BODY — the Shambler's global proportions, in metres.
 //
 // Deliberately NOT human. ART §9 wants a silhouette you can name in a tenth of a second:
-// heavy shoulders, a small dropped head, long hanging arms, short bent legs. Read it as a
-// caricature — an inker exaggerates the read and throws away the anatomy.
+// heavy shoulders, a big dropped head on a thin neck, long hanging arms, short bent legs. Read
+// it as a caricature — an inker exaggerates the read and throws away the anatomy.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const BODY = {
@@ -101,69 +270,188 @@ export const BODY = {
   /** Collision radius. Fat enough that a horde jams a 1.6 m doorway — clumping is a feature. */
   radius: 0.37,
 
-  // ── joint positions, parent-relative, in metres ─────────────────────────────
-  hipY: 0.88,
-  bellyY: 0.17,
-  chestY: 0.25,
-  headY: 0.30,
-  jawY: -0.075,
-  jawZ: 0.055,
-  /** Shoulder: +X is the enemy's RIGHT (forward is -Z, up is +Y). Asymmetric on purpose. */
-  shoulderR: 0.255,
-  shoulderL: -0.268,
-  shoulderY: 0.185,
-  shoulderYL: 0.215,
-  elbowY: -0.315,
-  hipX: 0.135,
-  hipOffY: -0.055,
-  kneeY: -0.435,
-
   /**
    * ───────────────────────────────────────────────────────────────────────────────────────
-   * PART SIZES — [width, height, depth] of the chunky bevelled masses.
-   *
-   * **THE MINIMUM DIMENSION HERE IS A FUNCTION OF THE OUTLINE WEIGHT, NOT OF TASTE.** The
+   * **THE MINIMUM CROSS-SECTION IS A FUNCTION OF THE OUTLINE WEIGHT, NOT OF TASTE.** The
    * inverted hull inflates the silhouette along its normal by a *screen-space* amount, so at
    * `READABILITY.ENEMY_OUTLINE_PX` = 8 — the heaviest line in the game, and non-negotiable
-   * (ART §9) — a part thinner than roughly twice that band has no albedo left between its two
+   * (ART §9) — anything thinner than roughly twice that band has no albedo left between its two
    * inflated faces and **renders as solid ink**.
    *
    * Measured in-engine at 5.6 m, 1568×716 CSS: the first pass authored 0.11–0.13 m arms, a
    * 0.045 m coat flap and a 0.075 m brow, and every one of them came out BLACK — roughly 40%
    * of the body had lost the reserved `ACID` channel entirely, which is the one thing this
-   * enemy exists to carry. Nothing on a Shambler is under ~0.13 m any more.
+   * enemy exists to carry.
    *
-   * The knock-on is pure upside: an inker draws a character with chunky masses precisely so
-   * the bold line has somewhere to sit. Thin limbs and a bold line are incompatible, and it is
-   * the LINE that is the art direction.
+   * So every `SKEL[i].radius` and every ring in `SURFACE` is checked against this floor at boot
+   * — see `body.ts::assertInkFloor`, which prints the offenders rather than shrugging.
    * ───────────────────────────────────────────────────────────────────────────────────────
    */
-  pelvis: [0.42, 0.26, 0.29] as const,
-  belly: [0.43, 0.31, 0.31] as const,
-  chest: [0.56, 0.38, 0.33] as const,
-  head: [0.27, 0.30, 0.29] as const,
-  brow: [0.29, 0.115, 0.16] as const,
-  jaw: [0.21, 0.135, 0.22] as const,
-  upperArm: [0.185, 0.345, 0.195] as const,
-  lowerArm: [0.16, 0.335, 0.17] as const,
-  hand: [0.185, 0.195, 0.165] as const,
-  thigh: [0.225, 0.455, 0.235] as const,
-  shin: [0.19, 0.415, 0.20] as const,
-  foot: [0.21, 0.14, 0.31] as const,
+  minHalfWidth: 0.070,
+  /**
+   * …and a separate, LOWER floor for a slab that is embedded in a bigger mass (the brow shelf,
+   * the jaw, the feet, the coat flap). Those never present a thin isolated silhouette — only
+   * the protruding lip is ever on the outline — so the empirical floor is the one BUILD 002
+   * actually measured: 0.075 m came out solid black, 0.115 m did not.
+   */
+  minSlabDim: 0.110,
 
-  /** Bevel as a fraction of the smallest dimension. The bevel IS the ink line (shapes.ts §1). */
-  bevel: 0.20,
   /** Hand-drawn silhouette wobble, metres. Small — it must not fight the animation. */
-  jitter: 0.008,
+  jitter: 0.006,
 
   /**
-   * Painted vertex AO (ART §2.5 — "ambient occlusion is painted, not computed"). Every part
-   * darkens toward the joint it hangs from, which is what stops fourteen flat masses reading
-   * as fourteen flat masses. Fed to `InkMaterial`'s `uVertexAo`; the shader multiplies the KEY
-   * term by it, so it deepens the cel break without touching the reserved ACID hue.
+   * Painted vertex AO (ART §2.5 — "ambient occlusion is painted, not computed"). With ONE
+   * continuous skinned surface there are no longer fourteen part boundaries to darken toward,
+   * so AO is now solved as real proximity occlusion at boot (`rig.ts::solveAo`): a vertex
+   * darkens by how much OTHER skeleton it is buried in. That lands it in the armpits, the
+   * crotch, the neck root, under the jaw and under the coat flap — which is exactly where an
+   * inker puts it — and it is what keeps a single smooth mass from reading as a smooth mass.
+   *
+   * Fed to `InkMaterial`'s `uVertexAo`; the shader multiplies the KEY term by it, so it deepens
+   * the cel break without touching the reserved ACID hue.
    */
-  aoMin: 0.58,
-  aoStrength: 0.34,
+  aoMin: 0.52,
+  aoStrength: 0.38,
+  /** Metres. How far another bone reaches when it occludes a vertex. */
+  aoRange: 0.30,
+  /** Extra darkening painted into the eye sockets under the brow shelf. 0 = off. */
+  aoSocket: 0.30,
+} as const;
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────────────────
+ * THE SURFACE — the cage `body.ts` lofts, authored in the SAME enemy-local bind space as
+ * `SKEL`. Each entry is a chain of cross-sections: `y` up the body, `u` half-width (side),
+ * `v` half-depth (front/back), `round` 0 = a hard chamfered slab, 1 = a true ellipse.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *  **THE HEAD IS THE PRODUCT.** The human asked for a head they can line up and stack
+ *  headshots on while training a horde, and BUILD 006 could not deliver one for a reason
+ *  that is measurable rather than aesthetic:
+ *
+ *      BUILD 006      drawn skull 0.27 m across · hitbox sphere 0.43 m across  → 59% larger
+ *      BUILD 007      drawn skull 0.35 m across · hitbox sphere 0.37 m across  →  6% larger
+ *
+ *  A hitbox 59% wider than the thing you are aiming at cannot be learned. You score crits you
+ *  did not aim for and miss ones you did, and the only conclusion available to the player is
+ *  "headshots are random" — which is what "headshots aren't that pleasant" means. The sphere
+ *  is now the drawn skull, plus a hair. It is 26% smaller in cross-section than BUILD 006's,
+ *  and that is the intended trade: a smaller box you can SEE beats a larger one you cannot.
+ *
+ *  Three things make it readable at 25 m and while strafing:
+ *   1. SIZE — 0.35 m across against a 0.556 m chest. The head is 63% of the torso's width.
+ *   2. A NECK — a real 0.15 m column, ~0.11 m of it bare between the trapezius and the skull
+ *      base, carrying the deepest painted AO on the body. The silhouette has a waist.
+ *   3. THRUST — the head bone sits 0.088 m FORWARD of the chest and `ANIM.headThrust` pitches
+ *      the neck further, so from any 3/4 angle the skull clears the shoulder mass instead of
+ *      being fused into it. That is what makes it a target rather than a bump.
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ */
+export interface SurfaceRing {
+  x?: number;
+  y: number;
+  z?: number;
+  u: number;
+  v: number;
+  round?: number;
+}
+
+export const SURFACE = {
+  /** Ring resolution. Facets are a feature (shapes.ts §1) — these are deliberately low. */
+  torsoSegments: 14,
+  headSegments: 14,
+  limbSegments: 10,
+  slabSegments: 8,
+
+  /** Hips → belly → chest → trapezius → neck. ONE chain, so the neck can never gap. */
+  torso: [
+    { y: 0.760, z: 0.005, u: 0.170, v: 0.140, round: 0.35 },
+    { y: 0.870, z: 0.000, u: 0.212, v: 0.162, round: 0.30 },
+    { y: 0.975, z: 0.000, u: 0.196, v: 0.156, round: 0.30 },
+    { y: 1.085, z: -0.004, u: 0.216, v: 0.182, round: 0.25 },
+    { y: 1.185, z: -0.008, u: 0.248, v: 0.180, round: 0.25 },
+    { y: 1.275, z: -0.012, u: 0.278, v: 0.176, round: 0.25 },
+    { y: 1.355, z: -0.024, u: 0.268, v: 0.163, round: 0.30 },
+    { y: 1.408, z: -0.038, u: 0.185, v: 0.128, round: 0.40 },
+    { y: 1.448, z: -0.052, u: 0.086, v: 0.088, round: 0.70 },
+    { y: 1.520, z: -0.070, u: 0.075, v: 0.080, round: 0.80 },
+  ] as readonly SurfaceRing[],
+
+  /** The skull. Starts BURIED in the neck so head rotation bends the column, never breaks it. */
+  //
+  // THE DEPTH IS CAPPED BY THE HITBOX, NOT BY ANATOMY. A skull is deeper than it is wide, and
+  // the first pass authored it that way (0.380 m deep against 0.350 m across). Measured from
+  // eight azimuths (`tools/zombie.mjs hitbox`), that cost 24 points of coverage the moment the
+  // player was beside the zombie rather than in front of it: 93.7% of the drawn head inside the
+  // hitbox disc head-on, **69.4% from the side, with 69 mm of head hanging outside the sphere**.
+  // Strafing past a train is exactly when you take these shots. The skull is now near-isotropic
+  // (0.356 × 0.340 × 0.323 m) so one sphere can be honest from every angle.
+  head: [
+    { y: 1.480, z: -0.062, u: 0.070, v: 0.070, round: 0.70 },
+    { y: 1.545, z: -0.078, u: 0.128, v: 0.134, round: 0.55 },
+    { y: 1.610, z: -0.086, u: 0.172, v: 0.168, round: 0.40 },
+    { y: 1.690, z: -0.082, u: 0.178, v: 0.170, round: 0.40 },
+    { y: 1.770, z: -0.074, u: 0.152, v: 0.143, round: 0.50 },
+    { y: 1.835, z: -0.068, u: 0.094, v: 0.088, round: 0.70 },
+  ] as readonly SurfaceRing[],
+
+  /** The brow shelf. A hard slab across the front — it is what makes a FACE read at 30 m. */
+  brow: { x: 0, y: 1.630, z: -0.208, w: 0.330, h: 0.112, d: 0.150 },
+  /** The slack jaw, hung off `BONE.JAW`. Most of the silhouette's "wrongness". */
+  jaw: { x: 0, y: 1.522, z: -0.178, w: 0.252, h: 0.140, d: 0.300 },
+
+  /**
+   * One arm, authored on the RIGHT (+X). The left is re-authored, not mirrored, so the two are
+   * not one drawing printed twice. Root ring sits INSIDE the chest — the shoulder-seam fix.
+   */
+  arm: [
+    { y: 1.452, u: 0.108, v: 0.108, round: 0.5 },
+    { y: 1.395, u: 0.124, v: 0.122, round: 0.4 },
+    { y: 1.310, u: 0.116, v: 0.114, round: 0.35 },
+    { y: 1.200, u: 0.106, v: 0.106, round: 0.35 },
+    { y: 1.110, u: 0.100, v: 0.100, round: 0.35 },
+    { y: 1.047, u: 0.096, v: 0.098, round: 0.35 },
+    { y: 0.985, u: 0.094, v: 0.094, round: 0.35 },
+    { y: 0.880, u: 0.090, v: 0.090, round: 0.35 },
+    { y: 0.790, u: 0.086, v: 0.086, round: 0.35 },
+    { y: 0.727, u: 0.084, v: 0.084, round: 0.4 },
+  ] as readonly SurfaceRing[],
+  /** The over-sized splayed hand — the part that actually comes at the player. */
+  hand: [
+    { y: 0.760, u: 0.086, v: 0.084, round: 0.5 },
+    { y: 0.700, z: -0.012, u: 0.104, v: 0.100, round: 0.35 },
+    { y: 0.640, z: -0.024, u: 0.118, v: 0.112, round: 0.3 },
+    { y: 0.585, z: -0.030, u: 0.110, v: 0.102, round: 0.25 },
+    { y: 0.545, z: -0.026, u: 0.078, v: 0.074, round: 0.4 },
+  ] as readonly SurfaceRing[],
+  /** Shoulder x of each arm chain in bind space (`SKEL` CLAV.x + ARM.x). */
+  armX: 0.248,
+  armXL: -0.256,
+  /** The left shoulder sits a touch higher — nothing on this body is symmetric. */
+  armDropL: 0.012,
+
+  /** One leg, authored on the RIGHT (+X). Root ring inside the pelvis. */
+  leg: [
+    { y: 0.905, u: 0.150, v: 0.148, round: 0.4 },
+    { y: 0.828, u: 0.146, v: 0.146, round: 0.35 },
+    { y: 0.740, u: 0.138, v: 0.140, round: 0.30 },
+    { y: 0.600, u: 0.126, v: 0.130, round: 0.30 },
+    { y: 0.470, u: 0.114, v: 0.120, round: 0.35 },
+    { y: 0.395, u: 0.108, v: 0.114, round: 0.35 },
+    { y: 0.320, u: 0.104, v: 0.108, round: 0.35 },
+    { y: 0.200, u: 0.096, v: 0.100, round: 0.35 },
+    { y: 0.090, u: 0.090, v: 0.094, round: 0.4 },
+    { y: 0.030, u: 0.088, v: 0.092, round: 0.5 },
+  ] as readonly SurfaceRing[],
+  legX: 0.132,
+  /** The foot slab, hung off `BONE.FOOT_*`. Sole at y ≈ 0, toes forward (-Z). */
+  foot: { x: 0.132, y: 0.062, z: -0.070, w: 0.215, h: 0.145, d: 0.320 },
+
+  /** The torn coat flap. Two slabs, off ONE shoulder blade, never mirrored. */
+  rag: [
+    { x: -0.185, y: 1.115, z: 0.150, w: 0.235, h: 0.440, d: 0.140 },
+    { x: -0.258, y: 0.930, z: 0.128, w: 0.170, h: 0.270, d: 0.148 },
+  ],
 } as const;
 
 /**
@@ -212,13 +500,60 @@ export const VARIANTS: readonly BodyVariant[] = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const HITBOX = {
-  /** Drawn head is 0.235 m across; the sphere is 0.43 m across. Forgiving, by design. */
-  headRadius: 0.215,
-  /** Where the head sphere sits, in HEAD-part local space. */
-  headCenterY: 0.115,
-  torsoRadius: 0.325,
-  /** Capsule from the pelvis joint up to here in CHEST local space. */
-  torsoTopY: 0.26,
+  /**
+   * ═══ THE SPHERE IS THE DRAWN SKULL — SOLVED, NOT ESTIMATED ═══
+   *
+   * `tools/combat.mjs` skins every cage vertex on the CPU with the shader's own palette, keeps
+   * the ones whose dominant bone is HEAD, and grid-searches the MINIMUM ENCLOSING SPHERE over
+   * 16 instances × 4 gait phases — every variant, every girth roll, every head tilt. The answer,
+   * to the millimetre, is **R 0.220 at (0, 0.100, −0.020) in HEAD-bone local**, and it contains
+   * **100.0%** of the drawn skull.
+   *
+   * WHAT WAS THERE BEFORE, measured the same way:
+   *   BUILD 006  R 0.215 @ (0, 0.115, 0)   — 59% wider than the head it was drawn around
+   *   BUILD 007  R 0.195 @ (0, 0.135, −0.005) — contains **70.1%** of the drawn skull
+   *
+   * Both are the same bug with opposite signs, and both produce the human's complaint. A sphere
+   * wider than the drawing rewards a visible miss and cannot be learned. A sphere NARROWER than
+   * the drawing — which is what shipped — punishes a visible hit, and it does it on the crown
+   * and the back of the head, i.e. on the *train*, where you are stacking crits on the back of
+   * skulls walking away from you. 30% of clean skull shots were scoring a body hit.
+   *
+   * The centre moved DOWN 35 mm as well as growing: the cage's mass is lower than the joint
+   * offset suggested, and the old centre was sitting near the top of the cranium. That is why
+   * the old sphere both missed the crown AND brushed the shoulder.
+   */
+  headRadius: 0.220,
+  /** Where the head sphere sits, in HEAD-BONE local space. The solved centre, above. */
+  headCenterY: 0.100,
+  headCenterZ: -0.020,
+  /**
+   * ═══ THE JAW IS PART OF THE HEAD ═══
+   *
+   * Measured: **31% of drawn-jaw shots registered nothing at all** and the rest scored a torso
+   * hit — the jaw hangs forward and down out of any sphere that fits the cranium (its verts sit
+   * a median 0.237 from the skull centre, outside even a 0.220 sphere).
+   *
+   * So the head is TWO spheres, and both score `'head'`. The minimum enclosing sphere of the
+   * drawn jaw is R 0.172 at (0, 0.015, −0.100) in JAW-bone local — 100% coverage. One extra
+   * ray/sphere test per body, and only when the cranium sphere already missed.
+   *
+   * This is also what CoD does: the chin and the neck are headshot surface, not body surface.
+   */
+  jawRadius: 0.172,
+  jawCenterY: 0.015,
+  jawCenterZ: -0.100,
+  /** `jawRadius / SKEL[JAW].radius` — the per-instance girth ratio's denominator. */
+  jawBindRadius: 0.120,
+  /**
+   * The torso capsule stops at the shoulder line rather than at the neck: its top cap sphere
+   * would otherwise swallow the head, and a head you can hit by aiming at the collarbone is a
+   * head nobody learns to aim at. `HITBOX.priority` still resolves head→torso, so the overlap
+   * that remains costs nothing.
+   */
+  torsoRadius: 0.290,
+  /** Capsule from the hips joint up to here in CHEST-BONE local space. */
+  torsoTopY: 0.045,
   /**
    * PART PRIORITY, NOT NEAREST-SURFACE. The six primitives overlap on purpose — a torso capsule
    * that stops short of the shoulders leaves a dead zone, and arms hanging forward genuinely
@@ -231,8 +566,46 @@ export const HITBOX = {
    * dismemberment costs you a deliberate shot at a limb that is clear of the silhouette.
    */
   priority: ['head', 'torso', 'limb'] as const,
+
+  /**
+   * ═══ EVERY RADIUS ABOVE IS A BIND-POSE NUMBER, AND THE INSTANCE SCALES IT BY GIRTH ═══
+   *
+   * `body.ts::reseed` rolls a per-instance girth for every bone (`gt` torso, `gh` head, `gl`
+   * limb — each already carrying the variant's overall scale `g`), and `rig.boneRadius(bone)`
+   * returns the result. The hitbox therefore scales by `rig.boneRadius(b) / SKEL[b].radius`,
+   * NOT by `height / BODY.height`.
+   *
+   * WHY IT MATTERS, measured: the height ratio only carries `g`. It misses the VARIANT term
+   * entirely — a `bloated` head is authored at 1.20× and a `gaunt` head at 0.90×, so the old
+   * `headRadius * (height / BODY.height)` gave the bloated zombie a hitbox 17% narrower than
+   * its own drawn skull and the gaunt one a hitbox 11% wider. Both directions are the exact
+   * complaint ("hitboxes I can't understand"): the one with the huge head was the hardest to
+   * crit, and the skinny one rewarded a miss.
+   */
+  /** `headRadius / SKEL[HEAD].radius`, `torsoRadius / SKEL[CHEST].radius` — see above. */
+  headBindRadius: 0.175,
+  torsoBindRadius: 0.240,
+  /**
+   * Limb capsules take `rig.boneRadius(bone)` DIRECTLY (upper arm 0.118, forearm 0.098, thigh
+   * 0.135, shin 0.105 at bind) times this.
+   *
+   * 1.38 is MEASURED, not chosen: `tools/combat.mjs` reports, per bone, the 99th percentile of
+   * the distance from a drawn vertex to its own bone segment, in units of `SKEL[b].radius` —
+   * arm 1.32, forearm 1.47, hand 1.26, thigh 1.44, shin 1.24, foot 1.22. `boneRadius` is the
+   * skin-solve's falloff support, which is deliberately tighter than the surface it produced;
+   * this is the ratio that turns it back into the surface.
+   *
+   * Being generous here is nearly free and never steals a shot: `HITBOX.priority` resolves
+   * head → torso → limb, so a limb capsule only ever catches a ray that already missed both.
+   */
+  limbGenerosity: 1.38,
+  /**
+   * LEGACY, kept only so a caller outside this module still resolves. The live path is
+   * `rig.boneRadius()`; nothing in `service.ts` reads these any more.
+   * @deprecated
+   */
   armRadius: 0.125,
-  legRadius: 0.145,
+  legRadius: 0.135,
   /**
    * Broad-phase sphere, centred at `position.y + height * broadCenter`. Every bullet trace
    * rejects 25 enemies with 25 ray/sphere tests before it touches a capsule.
@@ -332,10 +705,25 @@ export const ANIM = {
   armReach: 0.95,
   armReachRange: 7.0,
 
-  // ── head ───────────────────────────────────────────────────────────────────
+  // ── head / neck (BUILD 007) ────────────────────────────────────────────────
+  //
+  // The neck and the clavicles are new bones and they exist for one reason: to keep the head
+  // clear of the shoulder mass while the body stoops. A stooping rigid body drops its head
+  // between its shoulders and the target disappears; a stooping SKELETON pitches the spine and
+  // counter-pitches the neck, so the chest goes down and the face stays up and forward.
   headLoll: 0.15,
   headNod: 0.11,
   jawOpen: 0.42,
+  /** Fraction of the spine's forward pitch the neck cancels. 0 = head buried, 1 = head level. */
+  neckCounter: 0.78,
+  /** Fraction of the spine's twist the head cancels, so it keeps facing the way it walks. */
+  headCounterTwist: 0.60,
+  /** Constant forward thrust of the head on the neck, radians. Lead with the face. */
+  headThrust: 0.26,
+  /** The neck lolls a beat behind the head — the head is never rigidly bolted on. */
+  neckLoll: 0.34,
+  /** How much of the per-instance shoulder hike the clavicle carries (the rest is the chest). */
+  clavHike: 1.15,
 
   // ── attack ─────────────────────────────────────────────────────────────────
   /**
@@ -446,11 +834,21 @@ export interface EnemyDef {
   name: string;
   /** Base health at round 1, before the director's `hpScale`. */
   health: number;
-  /** Chase speed, m/s, before the director's `speedScale` and per-instance jitter. */
+  /**
+   * BASE chase speed, m/s — the SLOWEST tier. `SPEED_TIERS[t].speedMult` multiplies it at spawn,
+   * so this is the shambler's 1.62 and a sprinter-tier instance of the same kind is 4.13.
+   */
   speed: number;
-  /** ± fraction of per-instance speed variation. This is what strings a horde into a line. */
+  /**
+   * Kind-level ± speed variation, on top of the tier's own jitter. Near zero now: the TIER is
+   * where a horde's speed spread comes from, and stacking a wide kind jitter on top of it just
+   * blurs the three silhouettes back into one smear.
+   */
   speedJitter: number;
-  /** Multiplier applied while closing the last few metres — the "it noticed you" beat. */
+  /**
+   * FALLBACK "it noticed you" multiplier over the last few metres. `SPEED_TIERS[t].lungeMult`
+   * overrides it per instance — a sprinter that also lunges reads as a teleport.
+   */
   lungeMult: number;
   /** Fraction of chase speed retained during a melee wind-up. Low = you can walk out of it. */
   windupSpeedMult: number;
@@ -470,6 +868,113 @@ export interface EnemyDef {
   groanInterval: readonly [number, number];
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// SPEED TIERS — the answer to "zombies… aren't truly a threat".
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//  WHAT COD ACTUALLY DOES, and what we were doing instead.
+//
+//  Every zombie in Treyarch Zombies picks a MOVEMENT TIER at spawn — walk / run / sprint — from
+//  a round-driven distribution, and the distribution shifts toward the fast end every round
+//  until, in the low teens, essentially everything sprints. That single mechanic is why round 4
+//  and round 14 feel like different games even though the zombie is the same model: at round 4
+//  the horde is a tide you walk away from, at round 14 it is a pack that runs you down.
+//
+//  WE HAD ONE SPEED FOR THE WHOLE HORDE. `SHAMBLER.speed` × a director scalar that crept from
+//  1.00 to 1.55 over twenty rounds, plus ±16% of instance jitter. Every zombie in a round moved
+//  within ±16% of every other zombie in that round, and the fastest thing the game could ever
+//  produce was 2.51 m/s against a 5.4 m/s walk. Nothing in that arrangement can frighten you:
+//  you are never surprised by an individual, and the horde is never faster than your stroll.
+//
+//  A TIER IS NOT JUST A SPEED. A sprinter that also lunges is a teleport, so `lungeMult` — the
+//  "it noticed you" acceleration over the last few metres — comes DOWN as the tier goes up. The
+//  shambler lurches at you because it is slow; the sprinter does not need to.
+//
+//  THE CEILING IS DELIBERATE AND IT PROTECTS KITING. The fastest tier is 2.55× base = 4.13 m/s,
+//  which is 76% of the player's WALK (5.4) and 47% of their sprint (8.75). You can always
+//  out-walk the horde in a straight line — which is what makes a train possible — but you can no
+//  longer out-walk it around a corner, and standing still is now fatal. That is the trade.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+export interface SpeedTier {
+  /** Debug / HUD only. Never branch on it. */
+  id: string;
+  /** Multiplier on `EnemyDef.speed` (1.62 m/s for the shambler). */
+  speedMult: number;
+  /** Replaces `EnemyDef.lungeMult` for this instance. Falls as the tier rises — see above. */
+  lungeMult: number;
+  /** ± fraction of per-instance speed jitter INSIDE the tier. Small: the tier is the spread now. */
+  jitter: number;
+}
+
+/** Ordered slow → fast. `TIER_MIX` indexes into this; the order is load-bearing. */
+export const SPEED_TIERS: readonly SpeedTier[] = [
+  /** 1.62 m/s. The classic drag-foot. Round 1 is nothing but these. */
+  { id: 'shambler', speedMult: 1.00, lungeMult: 1.58, jitter: 0.10 },
+  /** 2.11 m/s. Walks with purpose. First appears at round 2, dominates rounds 5–7. */
+  { id: 'walker', speedMult: 1.30, lungeMult: 1.42, jitter: 0.09 },
+  /** 3.01 m/s. A jog you cannot ignore — faster than a player who is aiming down sights. */
+  { id: 'runner', speedMult: 1.86, lungeMult: 1.20, jitter: 0.08 },
+  /** 4.13 m/s. 76% of the player's walk. It closes the moment you stop moving. */
+  { id: 'sprinter', speedMult: 2.55, lungeMult: 1.06, jitter: 0.07 },
+];
+
+export const TIER_COUNT = 4;
+
+/**
+ * THE MIX, by round. Row `n-1` is round `n`; past the table the last row repeats forever.
+ * Each row is [shambler, walker, runner, sprinter] and MUST sum to 1 — `assertTierMix()` is
+ * called from `rollTier` in dev and the harness checks every row.
+ *
+ * The shape is CoD's: pure shamblers for a round, a slow bleed into walkers through the single
+ * digits, runners taking over around 8–10, and sprinters the clear majority from 11 on. Round
+ * 15 is 87% sprinters; the table saturates at 95% because a horde with literally zero variation
+ * stops reading as a crowd and starts reading as a spawner.
+ */
+export const TIER_MIX: readonly (readonly number[])[] = [
+  /* R1  */[1.00, 0.00, 0.00, 0.00],
+  /* R2  */[0.92, 0.08, 0.00, 0.00],
+  /* R3  */[0.78, 0.22, 0.00, 0.00],
+  /* R4  */[0.58, 0.38, 0.04, 0.00],
+  /* R5  */[0.38, 0.46, 0.16, 0.00],
+  /* R6  */[0.22, 0.46, 0.28, 0.04],
+  /* R7  */[0.12, 0.40, 0.36, 0.12],
+  /* R8  */[0.06, 0.31, 0.43, 0.20],
+  /* R9  */[0.02, 0.21, 0.47, 0.30],
+  /* R10 */[0.00, 0.13, 0.46, 0.41],
+  /* R11 */[0.00, 0.07, 0.41, 0.52],
+  /* R12 */[0.00, 0.03, 0.34, 0.63],
+  /* R13 */[0.00, 0.01, 0.26, 0.73],
+  /* R14 */[0.00, 0.00, 0.19, 0.81],
+  /* R15 */[0.00, 0.00, 0.13, 0.87],
+  /* R16 */[0.00, 0.00, 0.08, 0.92],
+  /* R17+*/[0.00, 0.00, 0.05, 0.95],
+];
+
+/** The distribution for a round, clamped to the table. Never allocates. */
+export function tierMixFor(round: number): readonly number[] {
+  const i = Math.max(0, Math.min(TIER_MIX.length - 1, Math.floor(round) - 1));
+  return TIER_MIX[i] as readonly number[];
+}
+
+/**
+ * Pick a tier index from one uniform sample in [0,1). Pure and deterministic: the same `u01`
+ * and round always give the same tier, which is what lets `tools/combat.mjs` verify the shipped
+ * distribution rather than a re-implementation of it.
+ */
+export function rollTier(u01: number, round: number): number {
+  const mix = tierMixFor(round);
+  let acc = 0;
+  for (let i = 0; i < TIER_COUNT; i++) {
+    acc += mix[i] as number;
+    if (u01 < acc) return i;
+  }
+  // Float slack on a row that sums to 0.9999999: take the fastest non-zero tier.
+  for (let i = TIER_COUNT - 1; i >= 0; i--) if ((mix[i] as number) > 0) return i;
+  return 0;
+}
+
 export const SHAMBLER: EnemyDef = {
   kind: 'shambler',
   name: 'SHAMBLER',
@@ -478,12 +983,20 @@ export const SHAMBLER: EnemyDef = {
    * Low enough that round 1 is a power fantasy, and the director scales it, not this file.
    */
   health: 150,
-  /** 1.62 m/s — 30% of the player's walk. See the kite table in the file header. */
+  /** 1.62 m/s at the SLOWEST tier — 30% of the player's walk. See `SPEED_TIERS` for the rest. */
   speed: 1.62,
-  speedJitter: 0.16,
+  /** 0.05, not 0.16: the tier spread replaced it. See the note on `EnemyDef.speedJitter`. */
+  speedJitter: 0.05,
   lungeMult: 1.58,
   windupSpeedMult: 0.22,
-  meleeDamage: 28,
+  /**
+   * 70 = 46.7% of the player's 150. Two hits leave you on 10 HP, three down you — which is
+   * CoD's own contract (50 damage against 100 health, 2 hits without Juggernog) expressed in
+   * this game's numbers. It was 28: FIVE hits, with 22 HP/s of regen after 4.5 s, so a swarm
+   * that landed four swings on you was a scratch you walked off. Being surrounded has to be
+   * the thing that kills you or none of the rest of this matters.
+   */
+  meleeDamage: 70,
   limbHealth: 52,
   oneLegSpeedMult: 0.62,
   mass: 1,
@@ -542,21 +1055,76 @@ export const SCHED = {
    * perfectly smooth and only the *decision* is staggered.
    */
   steerHz: 10,
-  /** Ground probe rate. A shambler at 1.6 m/s moves 8 cm between samples. */
-  groundHz: 12,
-  /** Hard capsule-vs-world correction rate. Steering already avoids walls; this is the backstop. */
-  collideHz: 24,
-  /** Vertical fall / climb rate limits, m/s, for the ground follower. */
-  fallSpeed: 14,
-  climbSpeed: 3.2,
+  //
+  // `groundHz`, `collideHz`, `fallSpeed` and `climbSpeed` USED TO LIVE HERE. They described the
+  // sampled ground-follow BUILD 006 deleted when the horde moved onto the shared swept-capsule
+  // mover (`ENEMY.gravity` in tuning.ts tells that story). Nothing has read them since; they are
+  // gone rather than left as four numbers that look tunable and are not.
+  //
+
   /**
-   * CONGA LINE. A neighbour this well-aligned between me and the player is not something to
-   * push away from — it is someone to queue behind. Separation is scaled down by
-   * `congaRelief` for those, which is precisely what turns a blob into the trainable snake
-   * the whole kiting skill is built on (GAME_BIBLE §4).
+   * ═══ THE CONGA LINE — two forces, and they are the whole training skill ═══
+   *
+   * 1. RELIEF. A neighbour this well-aligned between me and the player is not something to push
+   *    away from — it is someone to queue behind. Its separation is scaled by `congaRelief`,
+   *    which is what turns a pushing blob into a queue (GAME_BIBLE §4).
+   *
+   * 2. FOLLOW (new). Relief alone stops a queue being torn apart; it does not build one. The
+   *    failure it leaves is CORNERS: every body aims at the player's CURRENT position, so when
+   *    the player turns, the ten zombies behind them all cut the corner simultaneously and the
+   *    line becomes a fan. Measured on a 12 m circle before this term existed, the horde's mean
+   *    lateral deviation from the player's own recent path was metres, not centimetres — a mob,
+   *    not a train.
+   *
+   *    So a body that has a LEADER — a neighbour ahead of it, closer to the player, roughly in
+   *    the direction it is already going — steers partly at the LEADER instead of at the player.
+   *    Since "closer to the player" is a strict order, the follow graph is a forest and cannot
+   *    cycle; the body at the head of the line has no leader and pursues the player directly.
+   *
+   *    This is deliberately NOT pathfinding. The leader is a position, not a route, and the
+   *    follower still runs its own wall whiskers, its own separation and its own turn-rate cap.
+   *    It makes the horde walk the path you walked, which is exactly what makes a train readable
+   *    and mow-down-able — and it is the reason perfect pathfinding would ruin the game.
    */
   congaCos: 0.72,
   congaRelief: 0.28,
+  /**
+   * How far ahead a body will look for someone to queue behind, metres. 6.0 is measured: at 4.2
+   * a body only finds a leader once it is already shoulder to shoulder with it, which is far too
+   * late to bend its line, and the pack's cross-track width barely moved. See `tools/combat.mjs
+   * conga`, which runs the whole thing twice — once with `congaFollowWeight` forced to 0 — so
+   * every number here is a real A/B against BUILD 006's steering.
+   */
+  congaFollowRadius: 6.0,
+  /** …and how much closer to the player they must be before they count as a leader, metres. */
+  congaFollowLead: 0.55,
+  /** cos of the widest angle off my own line to the player that a leader may sit at. */
+  congaFollowCos: 0.42,
+  /**
+   * Weight of the follow heading against `ENEMY.seekWeight` (1.0).
+   *
+   * MEASURED across a 0 → 1.3 sweep at three round mixes: the pack's cross-track WIDTH — the
+   * number that says "a line, not a crescent wrapping round you" — falls from 4.3 m to ~3.1 m at
+   * round 1 and from 3.9 m to ~2.8 m at round 15, and the unbroken queue roughly doubles. Past
+   * ~1.3 the gain stops and the horde starts walking single file down your exact footprints,
+   * which reads as scripted and, worse, makes them trivially predictable.
+   */
+  congaFollowWeight: 0.9,
+  /**
+   * MAX VERTICAL SEPARATION, metres, between me and anyone I will queue behind.
+   *
+   * A conga line is a HORIZONTAL formation. Without this gate a body at the foot of a staircase
+   * happily picks a leader halfway up the flight, and because the follow heading outweighs
+   * `ENEMY.seekWeight` it overrides the wall-avoiding seek that is the only thing keeping the
+   * body ON the ramp — so the queue drives into the side of the stairs and the whole pack wedges
+   * at the bottom.
+   *
+   * MEASURED on `tools/stairs.mjs horde` (15 bodies up the east stair, player on the NE roof):
+   * ungated 1/15 reached the roof, gated 12/15 — identical to the follow term switched off
+   * entirely. Flat ground is unaffected, because there every neighbour is within a few cm of my
+   * own height and the gate never fires, so the conga A/B in `tools/combat.mjs` is untouched.
+   */
+  congaFollowRise: 1.0,
   /** Neighbours further than this are ignored by separation entirely. */
   neighbourRadius: 2.6,
 } as const;

@@ -63,7 +63,12 @@ import type {
   DamageInfo, Damageable, EnemyKind, GameCtx, RNG, RoundPhase, RoundService, System,
 } from '@/core/types';
 import { PALETTE, SEMANTIC } from '@/art/palette';
-import { ROUND } from '@/game/tuning';
+import { ROUND, VISUAL_ESCALATION, escalationAt } from '@/game/tuning';
+// The visual-escalation bus. NOT another game system — it is the same kind of module-level
+// singleton as `INK_GLOBALS`, and `game/enemies/body.ts` already imports this file for
+// `makeEnemyMaterial`. See the block at the top of `world/lighting.ts` for why it lives there
+// and why the director is its only producer.
+import { ESCALATION } from '@/world/lighting';
 
 import { ComboMeter } from '@/game/rounds/combo';
 import { Economy, loadMeta, type MetaSave, type RunStats } from '@/game/rounds/economy';
@@ -94,8 +99,31 @@ const _instaKill: DamageInfo = {
   knockback: 1,
   weaponId: 'insta_kill',
 };
-/** Enough to end anything the HP curve can produce (`ROUND.hpScaleMax` × brute HP × headroom). */
-const INSTA_KILL_DAMAGE = 1e7;
+/** Enough to end anything the HP curve can produce (`ROUND.hpMax` × brute HP × headroom). */
+const INSTA_KILL_DAMAGE = 1e10;
+
+/**
+ * ═══ THE HEALTH CURVE — Call of Duty: World at War / Black Ops, exactly ═══
+ *
+ *     round 1        150
+ *     rounds 2 … 9   previous + 100
+ *     round 10 +     previous × 1.1, compounding forever
+ *
+ * Every constant is in `ROUND` (see the long note there for why the KNEE is the design, and for
+ * the honest TTK arithmetic against the current arsenal). This is exported and PURE so
+ * `tools/combat.mjs` verifies the shipped curve rather than a re-implementation of it, and so a
+ * wall-buy or a Pack-a-Punch price can be quoted against real numbers when M4 lands.
+ */
+export function roundHealth(round: number): number {
+  const n = Math.max(1, Math.floor(round));
+  const capped = ROUND.hpCapRound > 0 ? Math.min(n, ROUND.hpCapRound) : n;
+  const L = Math.max(1, ROUND.hpLinearUntil);
+  const linearTop = ROUND.hpRound1 + (L - 1) * ROUND.hpAddPerRound;
+  const hp = capped <= L
+    ? ROUND.hpRound1 + (capped - 1) * ROUND.hpAddPerRound
+    : linearTop * Math.pow(ROUND.hpGrowth, capped - L);
+  return Math.min(ROUND.hpMax, hp);
+}
 
 /** Word pops the director stages itself. GOLD = reward, HOT/ACID stay reserved for enemies. */
 const MULTI_KILL_WORDS = ['', '', 'DOUBLE KILL', 'TRIPLE KILL', 'MULTI-KILL'] as const;
@@ -122,6 +150,14 @@ export class RoundSystem implements System, RoundService {
   private speedScale = 1;
   private liveCap = ROUND.liveCapMax;
   private surge = false;
+  /**
+   * The round the LOOK is set to, which is normally `_round` but is deliberately allowed to
+   * diverge: `setEscalation(n)` moves the picture without touching a single gameplay number, so
+   * the human can audit round 20's frame while standing in round 1's fight.
+   */
+  private escRound = 0;
+  /** One GOLD-ladder speed-line pulse per round, the first time the combo tops out. */
+  private comboPeaked = false;
 
   // ── run bookkeeping ───────────────────────────────────────────────────────
   private runStartedAt = 0;
@@ -228,10 +264,20 @@ export class RoundSystem implements System, RoundService {
       on('player:down', () => this.onPlayerDown()),
       on('player:revived', () => this.ctx?.hud.toast('BACK ON YOUR FEET')),
       on('player:died', () => this.onPlayerDied()),
+      /**
+       * A QUALITY CHANGE CLOBBERS THE ESCALATION, so it has to be re-pushed.
+       * `WorldSystem.init` re-runs `applyFog` on every `quality:changed` and writes the
+       * arena-derived fog range straight back over the round's tightened one; `ComicPipeline`
+       * .applyQuality resets its own uniforms the same way. Re-applying is a no-op for
+       * everything else because every escalation write is absolute.
+       */
+      on('quality:changed', () => ESCALATION.reapply()),
     );
 
     this.registerDebug(ctx);
   }
+
+
 
   /** Gameplay. Everything that decides anything runs here, at a fixed step. */
   fixedUpdate(dt: number, ctx: GameCtx): void {
@@ -300,9 +346,47 @@ export class RoundSystem implements System, RoundService {
     // increase into a combo decrease. Square root, so the window grows slower than the kill does.
     this.comboMeter.setRoundScale(Math.sqrt(this.hpScale));
 
+    // THE LOOK OF THE ROUND. Once, here, before anything else in the round happens — and then
+    // held perfectly still until the next `beginRound`. See `VISUAL_ESCALATION` in tuning.ts.
+    this.comboPeaked = false;
+    this.applyEscalation(this._round, this.surge);
+
     this.setPhase('active');
     ctx.events.emit('round:start', { round: this._round, toSpawn: this.toSpawn });
     if (this.surge) ctx.hud.toast(`SURGE · ROUND ${this._round} · DOUBLE POINTS`);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VISUAL ESCALATION — presentation only. Nothing in this block reads or writes a
+  // gameplay number, and nothing outside it drives the look.
+  //
+  // The human's brief was "so people dont get bored quick", and a single unchanging arena is
+  // the fastest way to bore someone however good it looks the first time. The curve lives in
+  // `game/tuning.ts::escalationAt`; the two consumers are the light rig and the post stack,
+  // which reach each other through the bus in `world/lighting.ts`.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** The round the picture is currently set to. Not necessarily the round you are fighting. */
+  get escalationRound(): number { return this.escRound; }
+
+  /**
+   * THE AUDIT HATCH — `CZ.setEscalation(20)`.
+   *
+   * Sets the LOOK to round `n` and nothing else: no spawns, no HP, no speed, no phase change.
+   * That separation is the point — the human can stand in an empty round-1 street and step the
+   * picture 1 → 20 without a fight in the way, and every state is absolute so stepping back
+   * down restores the shipped frame exactly. Pass no argument to resync with the live round.
+   */
+  setEscalation(n?: number): number {
+    const target = n === undefined ? this._round : Math.max(1, Math.floor(n));
+    const surge = ROUND.surgeEvery > 0 && target % ROUND.surgeEvery === 0;
+    this.applyEscalation(target, surge);
+    return this.escRound;
+  }
+
+  private applyEscalation(round: number, surge: boolean): void {
+    this.escRound = Math.max(1, Math.floor(round));
+    ESCALATION.apply(escalationAt(this.escRound, surge));
   }
 
   private tickActive(dt: number, ctx: GameCtx): void {
@@ -432,17 +516,20 @@ export class RoundSystem implements System, RoundService {
     return Math.max(ROUND.spawnIntervalMin, t);
   }
 
-  /** HP first (GAME_BIBLE §6): linear for the first stretch, compounding after. */
+  /** HP first (GAME_BIBLE §6). `roundHealth` is the whole curve; the surge is the only extra. */
   private hpScaleFor(n: number): number {
-    const L = Math.max(1, ROUND.hpLinearRounds);
-    let s: number;
-    if (n <= L) s = 1 + (n - 1) * ROUND.hpPerRound;
-    else s = (1 + (L - 1) * ROUND.hpPerRound) * Math.pow(ROUND.hpExponent, n - L);
+    let s = roundHealth(n) / ROUND.hpRound1;
     if (this.surge) s *= ROUND.surgeHpMult;
-    return Math.max(0.1, Math.min(ROUND.hpScaleMax, s));
+    return Math.max(0.1, s);
   }
 
-  /** Speed second, and hard-capped: a shambler that outruns the player is not kite-able. */
+  /**
+   * Speed second — and it is no longer the speed AXIS. `enemies/defs.ts::SPEED_TIERS` +
+   * `TIER_MIX` roll a walk/walker/runner/sprinter tier per instance from a round-driven
+   * distribution, exactly as CoD does. What survives here is a small, late, hard-capped creep on
+   * top of the tier so rounds past the mix's saturation still have somewhere to go. The cap is
+   * what keeps a train trainable: worst case is 4.63 m/s against a 5.4 m/s walk.
+   */
   private speedScaleFor(n: number): number {
     let s = 1;
     if (n >= ROUND.speedScaleStartRound) {
@@ -514,6 +601,26 @@ export class RoundSystem implements System, RoundService {
     if (this._phase === 'gameover' || this._phase === 'pre') return;
 
     const multi = economy.onKill(byCrit, ctx.time.elapsed);
+
+    /**
+     * PLAYING WELL LOOKS LOUDER (the fourth escalation channel: the comic language itself).
+     *
+     * One speed-line pulse the first time a round's chain reaches the top of the ladder. It is a
+     * ONE-SHOT into `RenderService.speedLines`, which is self-decaying — so it animates while it
+     * is alive and leaves nothing running at rest, which is how it satisfies ART §4.1 by
+     * construction rather than by measurement. Once per round, so a long ×5 chain is one beat
+     * and not a strobe.
+     *
+     * The line COLOUR is deliberately left alone: `game/vfx/service.ts` owns that knob globally
+     * and reverts it to INK on its own timer — `game/boons/effects.ts` declined to touch it for
+     * exactly this reason and so does this.
+     */
+    if (!this.comboPeaked &&
+        VISUAL_ESCALATION.comboPeakLines > 0 &&
+        this.comboMeter.multiplier >= ROUND.comboMaxMultiplier) {
+      this.comboPeaked = true;
+      ctx.renderer.speedLines(VISUAL_ESCALATION.comboPeakLines);
+    }
 
     if (multi >= 2) {
       const word = MULTI_KILL_WORDS[Math.min(multi, MULTI_KILL_WORDS.length - 1)];
@@ -694,6 +801,14 @@ export class RoundSystem implements System, RoundService {
       if (this.instaKillT > 0) b.push(`IK ${this.instaKillT.toFixed(0)}`);
       if (this.carnageT > 0) b.push(`CARN ${this.carnageT.toFixed(0)}`);
       return b.length > 0 ? b.join(' ') : '—';
+    });
+    // THE LOOK, on screen next to the fight it belongs to. `t` is the master escalation curve;
+    // `lamps` is how much of the city has gone dark. Reads the bus, not a private copy, so a
+    // desync between the director and what is actually on the glass is visible immediately.
+    d.watch('look', () => {
+      const e = ESCALATION.state;
+      if (!e) return '—';
+      return `r${e.round}${e.surge ? ' SURGE' : ''} t${e.t.toFixed(2)} lamps -${(e.lampFail * 100).toFixed(0)}%`;
     });
     d.watch('spawn veto', () => `${this.spawner?.rejectedVisible ?? 0} seen · ${this.spawner?.desperateSpawns ?? 0} far`);
     d.watch('spawn src', () => `${this.spawner?.ringSpawns ?? 0} ring · ${this.spawner?.doorSpawns ?? 0} door`);

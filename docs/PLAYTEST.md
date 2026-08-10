@@ -5,6 +5,60 @@ answered, and what they said. **Feedback in this file outranks the roadmap.** Ne
 
 ---
 
+# BUILD 007 — THE HORDE HAS A BODY
+
+**Date:** 2026-08-10 · **Milestone:** M4 · Five parallel passes (stairs, rig, combat, visual
+consistency, visual escalation) reconciled into one build.
+
+## → PLAY THIS BUILD AGAINST [`docs/HUMAN_JUDGE.md`](HUMAN_JUDGE.md)
+
+**14 items, each under a minute, in order.** That file is the deliverable for this build — it
+replaces the expensive AI look-and-feel review with the one reviewer who is actually good at it.
+Everything objective has already been measured and is listed at the bottom of it so you don't
+re-check it.
+
+## What this build answers, from your own words
+
+| you said | what happened |
+|---|---|
+| "**after the gravity changes i cant go upstairs**" | **Fixed.** Three independent causes, all measured, none of them the one guessed first. All 9 flights climb, verified headless *and* in the real browser with real key presses. |
+| "zombies… get stuck everywhere, slow, and aren't truly a threat" | Speed tiers (shambler → sprinter, mixed by round), CoD's real health curve, melee damage 28 → 70. Three on you drops you in 1.3 s. |
+| "zombies don't have understandable hitboxes, headshots aren't that pleasant" | The whole body is skinned now. The head hitbox was **59% wider than the drawn skull**; it now matches the drawing, solved from the posed mesh rather than estimated. |
+| "in cod u lined them and kept stacking headshots by making trains" | Conga steering: a body steers partly at its leader, so the pack forms a queue you can sweep instead of a crescent that wraps you. |
+| "as close as cod logic as possible" | Health curve is CoD WaW/BO1 exactly. Points already were. |
+| "lets continue for aaa+ graphics… so people dont get bored quick" | The night now escalates with the round — sky, fog, guttering street lamps, grade, soot. `CZ.setEscalation(20)` shows round 20's look instantly. Rooftops and catwalks got a dedicated readability pass. |
+
+## The one decision waiting on you
+
+Enemy health follows CoD's curve exactly, which means it never stops growing — **26 headshots at
+round 20** with the starting gun. Pack-a-Punch exists in code but nothing sells it yet. The last
+section of `HUMAN_JUDGE.md` lays out three options; pick one.
+
+## Bugs fixed during integration (found by measurement, not by looking)
+
+- **The stairs fix had been lost entirely.** A mid-workflow rollback reverted every pre-existing
+  file; four separate agents reported the regression and none of them owned the files. Re-applied
+  and re-verified from scratch.
+- **The conga steering broke every staircase for the horde** — bodies queued behind a leader
+  halfway up a flight, which overrode the wall-avoiding steering that keeps them on the ramp, and
+  the whole pack wedged at the bottom. 1 of 15 reached the roof; now 11. Fixed with a height gate.
+- `CZ.setEscalation` was being attached by a `setTimeout` from a file that didn't own
+  `window.CZ`; it is a real, typed entry on the console handle now.
+- The boot banner still said BUILD 005.
+
+## Known-imperfect, tracked, and not worth your time to confirm
+
+- A few bodies out of 25 can wedge briefly against thin roof railings in long sessions. Collision
+  solver limitation with thin slabs, not a movement bug.
+- The horde is slower up the **east stair specifically** than it should be — 11 of 15 arrive.
+- Cresting a ramp still gives a small hop. It may read as fine; item 2 asks you.
+
+## FEEDBACK — BUILD 007
+
+<!-- your answers from HUMAN_JUDGE.md land here -->
+
+---
+
 # BUILD 006 — M3.5 hardening pass
 
 **Date:** 2026-08-10 · **Milestone:** M3.5 (fix pass on BUILD 005) · No new features. One blocker

@@ -791,3 +791,397 @@ export function disposeProp(p: PropBuild): void {
 export function shapeRandom(seed: number): SeededRandom {
   return makeSeededRandom(seed);
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 4. SKINNABLE SURFACE CAGES
+//
+// Everything above builds *finished* `BufferGeometry`: non-indexed, flat-shaded, one buffer per
+// prop. That is exactly right for a static city and exactly wrong for a skinned character, for
+// two reasons that only show up once a mesh deforms:
+//
+//   1. A SKINNED VERTEX NEEDS AN IDENTITY. Skin weights are solved per *surface point*; a
+//      non-indexed buffer has already split every shared corner into three unrelated copies, so
+//      the same point can end up with three different weight sets and the mesh tears along every
+//      triangle edge the moment a joint bends.
+//   2. THE BODY AND ITS INK HULL MUST BE THE SAME SURFACE. The hull is an inverted, inflated
+//      copy; if it is derived by welding the finished body geometry (`makeHullGeometry`) its
+//      vertex ORDER is unrelated to the body's, so the per-vertex skin attributes have to be
+//      re-solved — and any disagreement shows up as the outline sliding off the silhouette.
+//
+// A `SurfaceCage` is the missing middle: an INDEXED triangle mesh whose topology is known
+// analytically (it was lofted, not welded), carrying smooth per-vertex normals. From one cage
+// you expand two geometries with IDENTICAL vertex ordering — flat normals for the body, smooth
+// normals for the hull — and any per-cage-vertex attribute (skin indices, skin weights, painted
+// AO) rides along into both for free.
+//
+// Nothing above this line changed. These are additions.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * An indexed triangle mesh with analytic topology, before it is expanded for the GPU.
+ * `position`/`normal` are 3 floats per vertex, `uv` is 2, and `index` is triangle triples.
+ */
+export interface SurfaceCage {
+  position: Float32Array;
+  /** Area-weighted smooth normals, computed from `index`. */
+  normal: Float32Array;
+  uv: Float32Array;
+  index: Uint32Array;
+  /** Vertex count (`position.length / 3`). */
+  count: number;
+}
+
+/**
+ * One cross-section of a lofted tube. Authored directly in the cage's own space — no local
+ * frame, no `place()` afterwards — because a skinned surface has to be authored in the same
+ * space as the skeleton that binds it.
+ */
+export interface LoftRing {
+  x: number;
+  y: number;
+  z: number;
+  /** Half-extent across the ring's local U axis (the "side" of the limb). */
+  u: number;
+  /** Half-extent across the ring's local V axis (front/back). */
+  v: number;
+  /** Roll of the cross-section about the chain tangent, radians. */
+  roll?: number;
+  /**
+   * 0 = a hard rounded-rectangle (chunky, bevelled, comic); 1 = a true ellipse. Anything under
+   * ~0.5 keeps the flat facets the cel bands need to break on — see the file header.
+   */
+  round?: number;
+}
+
+export interface LoftOptions {
+  capStart?: boolean;
+  capEnd?: boolean;
+  /** Hand-inked wobble, metres. Applied BEFORE normals, so the body and the hull agree. */
+  jitter?: number;
+  seed?: number;
+  /** Texture repeats per metre along the chain. */
+  vScale?: number;
+  /**
+   * How far past the end ring the cap pole is pushed, as a fraction of the end ring's mean
+   * radius. 0.35 reads as a rounded end (a limb); ~0.1 reads as a flat lid (a slab).
+   */
+  capBulge?: number;
+}
+
+const _lt = new Vector3();
+const _lu = new Vector3();
+const _lv = new Vector3();
+const _lref = new Vector3();
+const _lp = new Vector3();
+const _le1 = new Vector3();
+const _le2 = new Vector3();
+const _lfn = new Vector3();
+
+/** Superellipse cross-section: `round` 0 is boxy, 1 is elliptical. */
+function ringPoint(angle: number, round: number, out: { c: number; s: number }): void {
+  const k = 0.55 + 0.45 * Math.max(0, Math.min(1, round));
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  out.c = Math.sign(c) * Math.pow(Math.abs(c), k);
+  out.s = Math.sign(s) * Math.pow(Math.abs(s), k);
+}
+
+const _rp = { c: 0, s: 0 };
+
+/** Area-weighted vertex normals for an indexed cage. Overwrites `cage.normal`. */
+export function computeCageNormals(cage: SurfaceCage): SurfaceCage {
+  const { position, normal, index } = cage;
+  normal.fill(0);
+  for (let t = 0; t < index.length; t += 3) {
+    const a = (index[t] as number) * 3;
+    const b = (index[t + 1] as number) * 3;
+    const c = (index[t + 2] as number) * 3;
+    _le1.set(
+      (position[b] as number) - (position[a] as number),
+      (position[b + 1] as number) - (position[a + 1] as number),
+      (position[b + 2] as number) - (position[a + 2] as number),
+    );
+    _le2.set(
+      (position[c] as number) - (position[a] as number),
+      (position[c + 1] as number) - (position[a + 1] as number),
+      (position[c + 2] as number) - (position[a + 2] as number),
+    );
+    _lfn.copy(_le1).cross(_le2); // length ∝ triangle area — that IS the weighting
+    normal[a] += _lfn.x; normal[a + 1] += _lfn.y; normal[a + 2] += _lfn.z;
+    normal[b] += _lfn.x; normal[b + 1] += _lfn.y; normal[b + 2] += _lfn.z;
+    normal[c] += _lfn.x; normal[c + 1] += _lfn.y; normal[c + 2] += _lfn.z;
+  }
+  for (let i = 0; i < normal.length; i += 3) {
+    const l = Math.hypot(normal[i] as number, normal[i + 1] as number, normal[i + 2] as number);
+    if (l > 1e-9) {
+      normal[i] = (normal[i] as number) / l;
+      normal[i + 1] = (normal[i + 1] as number) / l;
+      normal[i + 2] = (normal[i + 2] as number) / l;
+    } else {
+      normal[i] = 0; normal[i + 1] = 1; normal[i + 2] = 0;
+    }
+  }
+  return cage;
+}
+
+/**
+ * Loft a closed tube through a chain of rings. The ring plane is perpendicular to the local
+ * chain tangent, so a bent chain lofts without pinching, and the seam is closed by index
+ * wrap-around rather than by duplicated vertices — which is what lets a skin weight be solved
+ * exactly once per surface point.
+ */
+export function loftTube(rings: readonly LoftRing[], segments: number, opts: LoftOptions = {}): SurfaceCage {
+  const n = rings.length;
+  if (n < 2) throw new Error('[art/shapes] loftTube needs at least two rings');
+  const seg = Math.max(3, segments);
+  const capStart = opts.capStart ?? true;
+  const capEnd = opts.capEnd ?? true;
+  const vScale = opts.vScale ?? 1;
+  const seed = opts.seed ?? 1;
+  const bulge = opts.capBulge ?? 0.35;
+
+  const startPole = capStart ? n * seg : -1;
+  const endPole = capEnd ? n * seg + (capStart ? 1 : 0) : -1;
+  const count = n * seg + (capStart ? 1 : 0) + (capEnd ? 1 : 0);
+
+  const position = new Float32Array(count * 3);
+  const uv = new Float32Array(count * 2);
+
+  // Arc length along the chain, for the V coordinate.
+  const arc = new Float32Array(n);
+  for (let i = 1; i < n; i++) {
+    const a = rings[i] as LoftRing;
+    const b = rings[i - 1] as LoftRing;
+    arc[i] = (arc[i - 1] as number) + Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const r = rings[i] as LoftRing;
+    const prev = rings[Math.max(0, i - 1)] as LoftRing;
+    const next = rings[Math.min(n - 1, i + 1)] as LoftRing;
+    _lt.set(next.x - prev.x, next.y - prev.y, next.z - prev.z);
+    if (_lt.lengthSq() < 1e-12) _lt.set(0, 1, 0);
+    _lt.normalize();
+    // A reference axis that is never parallel to the tangent, so the frame cannot degenerate.
+    _lref.set(0, 0, 1);
+    if (Math.abs(_lt.z) > 0.94) _lref.set(0, 1, 0);
+    _lu.copy(_lt).cross(_lref).normalize();
+    _lv.copy(_lu).cross(_lt).normalize();
+    const roll = r.roll ?? 0;
+    if (roll !== 0) {
+      const cr = Math.cos(roll);
+      const sr = Math.sin(roll);
+      _lp.copy(_lu).multiplyScalar(cr).addScaledVector(_lv, sr);
+      _lv.multiplyScalar(cr).addScaledVector(_lu, -sr);
+      _lu.copy(_lp);
+    }
+    const round = r.round ?? 0.25;
+    for (let j = 0; j < seg; j++) {
+      ringPoint((j / seg) * Math.PI * 2, round, _rp);
+      const vi = i * seg + j;
+      position[vi * 3] = r.x + _lu.x * _rp.c * r.u + _lv.x * _rp.s * r.v;
+      position[vi * 3 + 1] = r.y + _lu.y * _rp.c * r.u + _lv.y * _rp.s * r.v;
+      position[vi * 3 + 2] = r.z + _lu.z * _rp.c * r.u + _lv.z * _rp.s * r.v;
+      uv[vi * 2] = j / seg;
+      uv[vi * 2 + 1] = (arc[i] as number) * vScale;
+    }
+    // The caps are poles pushed a little past the end ring, so a limb end reads as rounded
+    // rather than as a lid — a flat lid catches the key light as a bright disc and breaks the
+    // ink. `capBulge` takes it back down to ~flat for slabs (feet, brow, jaw, coat flap).
+    if (i === 0 && capStart) {
+      const d = (r.u + r.v) * 0.5 * bulge;
+      position[startPole * 3] = r.x - _lt.x * d;
+      position[startPole * 3 + 1] = r.y - _lt.y * d;
+      position[startPole * 3 + 2] = r.z - _lt.z * d;
+      uv[startPole * 2] = 0.5;
+      uv[startPole * 2 + 1] = -d * vScale;
+    }
+    if (i === n - 1 && capEnd) {
+      const d = (r.u + r.v) * 0.5 * bulge;
+      position[endPole * 3] = r.x + _lt.x * d;
+      position[endPole * 3 + 1] = r.y + _lt.y * d;
+      position[endPole * 3 + 2] = r.z + _lt.z * d;
+      uv[endPole * 2] = 0.5;
+      uv[endPole * 2 + 1] = ((arc[n - 1] as number) + d) * vScale;
+    }
+  }
+
+  if (opts.jitter && opts.jitter > 0) {
+    const j = opts.jitter;
+    for (let i = 0; i < count; i++) {
+      position[i * 3] = (position[i * 3] as number) + (hash2(i, seed, 7) - 0.5) * 2 * j;
+      position[i * 3 + 1] = (position[i * 3 + 1] as number) + (hash2(i, seed, 71) - 0.5) * 2 * j;
+      position[i * 3 + 2] = (position[i * 3 + 2] as number) + (hash2(i, seed, 131) - 0.5) * 2 * j;
+    }
+  }
+
+  const triCount = (n - 1) * seg * 2 + (capStart ? seg : 0) + (capEnd ? seg : 0);
+  const index = new Uint32Array(triCount * 3);
+  let k = 0;
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = 0; j < seg; j++) {
+      const j2 = (j + 1) % seg;
+      const a = i * seg + j;
+      const b = i * seg + j2;
+      const c = (i + 1) * seg + j;
+      const d = (i + 1) * seg + j2;
+      // Winding chosen so the face normal comes out RADIALLY OUTWARD.
+      index[k++] = a; index[k++] = c; index[k++] = b;
+      index[k++] = b; index[k++] = c; index[k++] = d;
+    }
+  }
+  if (capStart) {
+    for (let j = 0; j < seg; j++) {
+      index[k++] = startPole; index[k++] = j; index[k++] = (j + 1) % seg;
+    }
+  }
+  if (capEnd) {
+    const base = (n - 1) * seg;
+    for (let j = 0; j < seg; j++) {
+      index[k++] = endPole; index[k++] = base + ((j + 1) % seg); index[k++] = base + j;
+    }
+  }
+
+  const cage: SurfaceCage = { position, normal: new Float32Array(count * 3), uv, index, count };
+  return computeCageNormals(cage);
+}
+
+/** Concatenate cages into one. Index offsets are applied; the inputs are left untouched. */
+export function mergeCages(cages: readonly SurfaceCage[]): SurfaceCage {
+  let count = 0;
+  let tris = 0;
+  for (const c of cages) {
+    count += c.count;
+    tris += c.index.length;
+  }
+  const out: SurfaceCage = {
+    position: new Float32Array(count * 3),
+    normal: new Float32Array(count * 3),
+    uv: new Float32Array(count * 2),
+    index: new Uint32Array(tris),
+    count,
+  };
+  let vo = 0;
+  let io = 0;
+  for (const c of cages) {
+    out.position.set(c.position, vo * 3);
+    out.normal.set(c.normal, vo * 3);
+    out.uv.set(c.uv, vo * 2);
+    for (let i = 0; i < c.index.length; i++) out.index[io + i] = (c.index[i] as number) + vo;
+    vo += c.count;
+    io += c.index.length;
+  }
+  return out;
+}
+
+/** A per-cage-vertex attribute that rides along into the expanded geometry. */
+export interface CageAttribute {
+  name: string;
+  itemSize: number;
+  /** `cage.count * itemSize` floats. */
+  data: Float32Array;
+}
+
+export interface CageExpandOptions {
+  /**
+   * `true` gives every triangle its own face normal — the crisp faceted look the cel shader
+   * wants, and the body mesh's setting. `false` uses the cage's smooth normals, which is what
+   * an inverted-hull silhouette needs so it inflates as one continuous shell.
+   */
+  flat?: boolean;
+  attributes?: readonly CageAttribute[];
+}
+
+/**
+ * Expand an indexed cage to the non-indexed buffer the renderer draws.
+ *
+ * Two calls on the SAME cage produce two geometries whose vertex `i` is the same surface point,
+ * differing only in the normal — which is precisely the guarantee the body/hull pair needs.
+ */
+export function cageToGeometry(cage: SurfaceCage, opts: CageExpandOptions = {}): BufferGeometry {
+  const flat = opts.flat ?? true;
+  const tri = cage.index.length;
+  const position = new Float32Array(tri * 3);
+  const normal = new Float32Array(tri * 3);
+  const uv = new Float32Array(tri * 2);
+  const extra = (opts.attributes ?? []).map((a) => ({
+    name: a.name,
+    itemSize: a.itemSize,
+    src: a.data,
+    dst: new Float32Array(tri * a.itemSize),
+  }));
+
+  for (let t = 0; t < tri; t += 3) {
+    const i0 = cage.index[t] as number;
+    const i1 = cage.index[t + 1] as number;
+    const i2 = cage.index[t + 2] as number;
+    if (flat) {
+      const a = i0 * 3;
+      const b = i1 * 3;
+      const c = i2 * 3;
+      _le1.set(
+        (cage.position[b] as number) - (cage.position[a] as number),
+        (cage.position[b + 1] as number) - (cage.position[a + 1] as number),
+        (cage.position[b + 2] as number) - (cage.position[a + 2] as number),
+      );
+      _le2.set(
+        (cage.position[c] as number) - (cage.position[a] as number),
+        (cage.position[c + 1] as number) - (cage.position[a + 1] as number),
+        (cage.position[c + 2] as number) - (cage.position[a + 2] as number),
+      );
+      _lfn.copy(_le1).cross(_le2);
+      if (_lfn.lengthSq() < 1e-16) _lfn.set(0, 1, 0); else _lfn.normalize();
+    }
+    for (let k = 0; k < 3; k++) {
+      const s = k === 0 ? i0 : k === 1 ? i1 : i2;
+      const d = t + k;
+      position[d * 3] = cage.position[s * 3] as number;
+      position[d * 3 + 1] = cage.position[s * 3 + 1] as number;
+      position[d * 3 + 2] = cage.position[s * 3 + 2] as number;
+      if (flat) {
+        normal[d * 3] = _lfn.x; normal[d * 3 + 1] = _lfn.y; normal[d * 3 + 2] = _lfn.z;
+      } else {
+        normal[d * 3] = cage.normal[s * 3] as number;
+        normal[d * 3 + 1] = cage.normal[s * 3 + 1] as number;
+        normal[d * 3 + 2] = cage.normal[s * 3 + 2] as number;
+      }
+      uv[d * 2] = cage.uv[s * 2] as number;
+      uv[d * 2 + 1] = cage.uv[s * 2 + 1] as number;
+      for (const e of extra) {
+        for (let c = 0; c < e.itemSize; c++) e.dst[d * e.itemSize + c] = e.src[s * e.itemSize + c] as number;
+      }
+    }
+  }
+
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new Float32BufferAttribute(position, 3));
+  geo.setAttribute('normal', new Float32BufferAttribute(normal, 3));
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  for (const e of extra) geo.setAttribute(e.name, new Float32BufferAttribute(e.dst, e.itemSize));
+  return geo;
+}
+
+/**
+ * A bevelled box as a CAGE rather than as finished geometry — for the handful of body parts
+ * (brow ridge, jaw, feet, coat flap) whose read is a hard slab, not a swept limb. Built as four
+ * lofted rings so it shares the loft's topology guarantees; the chamfer comes from the ring
+ * profile, exactly as `bevelBox`'s does from its hull.
+ */
+export function boxCage(
+  cx: number, cy: number, cz: number,
+  w: number, h: number, d: number,
+  opts: { round?: number; jitter?: number; seed?: number; segments?: number } = {},
+): SurfaceCage {
+  const round = opts.round ?? 0.18;
+  const hh = h * 0.5;
+  return loftTube(
+    [
+      { x: cx, y: cy - hh * 0.92, z: cz, u: w * 0.42, v: d * 0.42, round },
+      { x: cx, y: cy - hh * 0.45, z: cz, u: w * 0.5, v: d * 0.5, round },
+      { x: cx, y: cy + hh * 0.45, z: cz, u: w * 0.5, v: d * 0.5, round },
+      { x: cx, y: cy + hh * 0.92, z: cz, u: w * 0.42, v: d * 0.42, round },
+    ],
+    opts.segments ?? 8,
+    { jitter: opts.jitter, seed: opts.seed, capStart: true, capEnd: true, capBulge: 0.18 },
+  );
+}

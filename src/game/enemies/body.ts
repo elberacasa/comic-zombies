@@ -1,34 +1,35 @@
 /**
- * THE SHAMBLER'S BODY — procedural geometry, the bone-less rig, and the drawn animation.
+ * THE SHAMBLER'S BODY — one continuous skinned surface, the drawn animation, and the materials.
  *
  * ═══════════════════════════════════════════════════════════════════════════════════════════
- *  ONE ZOMBIE = TWO DRAW CALLS. Read this before changing anything structural.
+ *  ONE ZOMBIE IS STILL TWO DRAW CALLS. Read this before changing anything structural.
  *
- *  The brief is a *hierarchical mesh group* — pelvis → torso → head + four limbs (M2 §2). The
- *  literal reading of that is fourteen `Mesh`es plus fourteen silhouette hulls per zombie:
- *  28 draw calls each, 700 for a horde of twenty-five, against a whole-frame budget of 350 with
- *  an arena that already spends ~145. That reading is unshippable.
+ *  BUILD 006 baked fourteen rigid boxes into one buffer with a per-vertex part index and posed
+ *  them with a `mat4[14]` uniform. That kept the draw calls down and it is why this file did not
+ *  need rewriting from scratch — but rigid parts pivot on their own surface, so every joint
+ *  either tore a hole or drove one box through another, and the 8 px enemy ink line drew the
+ *  hole twice. See the long note in `defs.ts` above `BONE`.
  *
- *  So the hierarchy is real but it is *not* the scene graph. Every part is baked into ONE merged
- *  buffer carrying a per-vertex `aPart` index, and the fourteen part transforms are uploaded as
- *  a `mat4[14]` uniform which the vertex shader applies before the model matrix. That is rigid
- *  skinning with one bone per vertex, done by hand, because `InkMaterial` is a raw
- *  `ShaderMaterial` with no skinning chunks and it is not ours to change.
+ *  BUILD 007 keeps the exact same GPU shape — ONE shared geometry, a per-instance uniform, two
+ *  meshes — and replaces the rigid part index with real four-influence linear blend skinning:
  *
- *      1 body mesh + 1 inverted-hull mesh   =  2 draw calls per zombie
- *      ~0.9 k triangles + ~1.1 k hull       =  ~2.0 k triangles per zombie
+ *      1 body mesh + 1 inverted-hull mesh   =  2 draw calls per zombie   (unchanged)
+ *      21 bones × 3 vec4 rows               =  63 vec4 uniforms per instance
  *
- *  And because the geometry is SHARED by every instance — variants and per-instance proportions
- *  live entirely in the part matrices — the whole horde costs two buffers of VRAM and boot
- *  builds them exactly once.
+ *  The geometry is a `SurfaceCage` (art/shapes §4): an INDEXED loft whose topology this file
+ *  authored, so the body mesh and the hull mesh are expanded from the same cage with the same
+ *  vertex ordering — flat normals for the body, smooth normals for the hull — and the skin
+ *  weights are solved exactly once and ride into both. BUILD 006 welded the hull out of the
+ *  finished body geometry per part, which is why the hull could never have been skinned.
  * ═══════════════════════════════════════════════════════════════════════════════════════════
  *
  * THE SHADER PATCH. `makeEnemyMaterial()` (world/lighting.ts) is the mandated recipe and we do
- * not fork it; we take the material it returns and insert five lines at the top of `main()`
- * that shadow `position` and `normal` with their posed values. Shadowing a global with a local
- * is legal GLSL, and it means the ~90 lines of ink shading below never have to know the rig
- * exists — so a future edit to `InkMaterial` cannot silently break the zombies. The same five
- * lines go into the hull shader from `buildOutlineHull()`.
+ * not fork it; we take the material it returns and insert a few lines at the top of `main()`
+ * that shadow `position` and `normal` with their skinned values. Shadowing a global with a local
+ * is legal GLSL, and it means the ~90 lines of ink shading never have to know the rig exists —
+ * so a future edit to `InkMaterial` cannot silently break the zombies. The same lines go into
+ * the hull shader from `buildOutlineHull()` and into the prepass material below. All three share
+ * ONE `Float32Array` by reference, so they cannot pose differently.
  *
  * ART DIRECTION, non-negotiable (ART §9 — the human asked for this by name):
  *   • flesh is `ACID`, on BOTH cel bands, straight out of `makeEnemyMaterial()`
@@ -36,21 +37,22 @@
  *   • the silhouette is `READABILITY.ENEMY_OUTLINE_PX` = 8 px, the heaviest line in the game,
  *     against a 6 px cap on the heaviest prop in the arena
  *   • the boil is `ENEMY_BOIL` (0.08); the city inks at `ENV_BOIL` (0.03)
+ *   • the ANIMATION IS STILL DRAWN, not interpolated: hold frames on the 12 Hz clock, off-beat
+ *     limb timing, squash and stretch. Skinning changed the deformation, not the timing.
  */
 
 import {
   BufferGeometry,
-  Euler,
-  Float32BufferAttribute,
-  Matrix4,
   Mesh,
-  Quaternion,
   ShaderMaterial,
   Sphere,
   Vector3,
 } from 'three';
 import { PALETTE, hexMix } from '@/art/palette';
-import { bevelBox, jitterVertices, makeHullGeometry, place } from '@/art/shapes';
+import {
+  boxCage, cageToGeometry, loftTube, mergeCages,
+  type CageAttribute, type LoftRing, type SurfaceCage,
+} from '@/art/shapes';
 import {
   LAYER, buildOutlineHull, setInkColor, setInkEmissive, type InkMaterial,
 } from '@/render/materials';
@@ -58,212 +60,230 @@ import { makeEnemyMaterial } from '@/world/lighting';
 import { Rng } from '@/core/rng';
 import { TAU, clamp01, easeOutBack, easeOutExpo, holdThenEase, lerp, smoothstep } from '@/core/mathx';
 import {
-  ANIM, BODY, HITBOX, LIMB, LIMB_ROOT, PART, PART_COUNT, PART_PARENT,
-  type BodyVariant, type EnemyStateName,
+  ANIM, BODY, BONE, BONE_COUNT, BONE_PARENT, HITBOX, LIMB_ROOT, LIMB_TIP, SKEL, SURFACE,
+  type BodyVariant, type EnemyStateName, type SurfaceRing,
 } from '@/game/enemies/defs';
+import {
+  BonePalette, OY, OZ, POSE_STRIDE, RX, RY, RZ, SKIN_DECL, SKIN_INFLUENCES, SKIN_MAIN,
+  SX, SY, SZ, clearPose, makePoseBuffer, solveAo, solveSkin,
+} from '@/game/enemies/rig';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. GEOMETRY — built once at boot, shared by every zombie that will ever exist.
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** A chunky bevelled mass. The bevel is the ink line (shapes.ts §1), so never skip it. */
-function mass(size: readonly [number, number, number], seed: number): BufferGeometry {
-  return bevelBox(size[0], size[1], size[2], Math.min(size[0], size[1], size[2]) * BODY.bevel, seed);
+/**
+ * One lofted region of the body, with the bones it is allowed to bind to.
+ *
+ * The candidate gate is CORRECTNESS, not an optimisation: in the bind pose the right forearm
+ * passes within 6 cm of the right thigh, and an ungated nearest-bone solve welds them together
+ * the first time the zombie takes a step. Gating by region is what a rigger does by hand with
+ * an envelope; here it is four lines of data.
+ */
+interface Region {
+  name: string;
+  cage: SurfaceCage;
+  bones: readonly number[];
+  /** Bones this surface must NOT darken itself with. See `rig.ts::solveAo`. */
+  aoExclude: readonly number[];
+}
+
+interface SlabSpec {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+  h: number;
+  d: number;
+}
+
+/** `SurfaceRing[]` → `LoftRing[]`, offset into place. */
+function toRings(src: readonly SurfaceRing[], dx = 0, dy = 0): LoftRing[] {
+  const out: LoftRing[] = [];
+  for (let i = 0; i < src.length; i++) {
+    const r = src[i] as SurfaceRing;
+    out.push({ x: (r.x ?? 0) + dx, y: r.y + dy, z: r.z ?? 0, u: r.u, v: r.v, round: r.round });
+  }
+  return out;
+}
+
+function slab(s: SlabSpec, seed: number): SurfaceCage {
+  return boxCage(s.x, s.y, s.z, s.w, s.h, s.d, {
+    round: 0.16,
+    jitter: BODY.jitter,
+    seed,
+    segments: SURFACE.slabSegments,
+  });
 }
 
 /**
- * Painted AO (ART §2.5 — "ambient occlusion is painted, not computed"). Every part darkens
- * toward the joint it hangs from, written into the `color` attribute, which `InkMaterial` reads
- * as `vAo` and multiplies into the key term. It deepens the cel break without touching the hue,
- * which matters a great deal here: the reserved `ACID` channel has to survive intact.
+ * The whole body, as a list of lofted regions in BIND space.
  *
- * `jointAtTop` is true for limbs (they hang from y = 0) and false for the torso stack (each
- * segment is joined at its base).
+ * Every limb's ROOT RING SITS INSIDE the mass it hangs off — the deltoid ring is inside the
+ * chest, the hip ring is inside the pelvis, the skull's base ring is inside the neck. That is
+ * the shoulder-seam fix: two surfaces that overlap inside an opaque volume can never open a gap
+ * between them, whatever the joint does, and the ink hull draws the union's outer edge only.
  */
-function paintAo(geo: BufferGeometry, topY: number, bottomY: number, jointAtTop: boolean): BufferGeometry {
-  const pos = geo.getAttribute('position');
-  const col = new Float32Array(pos.count * 3);
-  const span = Math.max(1e-3, topY - bottomY);
-  for (let i = 0; i < pos.count; i++) {
-    // `t` = 0 at the joint, 1 at the free end.
-    const up = (pos.getY(i) - bottomY) / span;
-    const t = jointAtTop ? 1 - up : up;
-    const ao = BODY.aoMin + (1 - BODY.aoMin) * smoothstep(clamp01(t * 1.25));
-    col[i * 3] = ao;
-    col[i * 3 + 1] = ao;
-    col[i * 3 + 2] = ao;
-  }
-  geo.setAttribute('color', new Float32BufferAttribute(col, 3));
-  return geo;
-}
+function buildRegions(): Region[] {
+  const B = BONE;
+  const S = SURFACE;
+  const out: Region[] = [];
 
-/** Concatenate two part sub-meshes (both non-indexed position/normal/uv). Disposes the inputs. */
-function joinGeo(a: BufferGeometry, b: BufferGeometry): BufferGeometry {
-  const out = new BufferGeometry();
-  for (const name of ['position', 'normal', 'uv'] as const) {
-    const pa = a.getAttribute(name);
-    const pb = b.getAttribute(name);
-    if (!pa || !pb) continue;
-    const size = pa.itemSize;
-    const arr = new Float32Array(pa.count * size + pb.count * size);
-    arr.set(pa.array as Float32Array, 0);
-    arr.set(pb.array as Float32Array, pa.count * size);
-    out.setAttribute(name, new Float32BufferAttribute(arr, size));
+  // ── torso: hips → belly → chest → trapezius → neck, as ONE chain ───────────
+  out.push({
+    name: 'torso',
+    cage: loftTube(toRings(S.torso), S.torsoSegments, {
+      jitter: BODY.jitter, seed: 11, capBulge: 0.28,
+    }),
+    bones: [B.HIPS, B.SPINE, B.CHEST, B.NECK, B.HEAD, B.CLAV_R, B.CLAV_L, B.THIGH_R, B.THIGH_L],
+    aoExclude: [B.HIPS, B.SPINE, B.CHEST],
+  });
+
+  // ── the skull. Base ring is buried in the neck, so head rotation BENDS the column. ──
+  out.push({
+    name: 'head',
+    cage: loftTube(toRings(S.head), S.headSegments, { jitter: BODY.jitter, seed: 23 }),
+    bones: [B.NECK, B.HEAD],
+    aoExclude: [B.HEAD, B.NECK],
+  });
+  out.push({
+    name: 'brow',
+    cage: slab(S.brow, 29),
+    bones: [B.HEAD],
+    aoExclude: [B.HEAD],
+  });
+  out.push({
+    name: 'jaw',
+    cage: slab(S.jaw, 31),
+    bones: [B.HEAD, B.JAW],
+    aoExclude: [B.JAW],
+  });
+
+  // ── arms. Authored per side rather than mirrored: negating X flips the loft's handedness
+  //    and inverts every normal, and a re-seeded jitter means the two arms are not one drawing
+  //    printed twice. ──
+  const arms = [
+    { dx: S.armX, dy: 0, clav: B.CLAV_R, up: B.ARM_R, fore: B.FORE_R, hand: B.HAND_R, seed: 37, tag: 'R' },
+    { dx: S.armXL, dy: S.armDropL, clav: B.CLAV_L, up: B.ARM_L, fore: B.FORE_L, hand: B.HAND_L, seed: 41, tag: 'L' },
+  ] as const;
+  for (const a of arms) {
+    out.push({
+      name: `arm${a.tag}`,
+      cage: loftTube(toRings(S.arm, a.dx, a.dy), S.limbSegments, { jitter: BODY.jitter, seed: a.seed }),
+      bones: [B.CHEST, a.clav, a.up, a.fore, a.hand],
+      aoExclude: [a.up, a.fore, a.clav],
+    });
+    out.push({
+      name: `hand${a.tag}`,
+      cage: loftTube(toRings(S.hand, a.dx, a.dy), S.limbSegments, { jitter: BODY.jitter, seed: a.seed + 1 }),
+      bones: [a.fore, a.hand],
+      aoExclude: [a.hand, a.fore],
+    });
   }
-  a.dispose();
-  b.dispose();
+
+  // ── legs ──────────────────────────────────────────────────────────────────
+  const legs = [
+    { dx: S.legX, thigh: B.THIGH_R, shin: B.SHIN_R, foot: B.FOOT_R, seed: 53, tag: 'R' },
+    { dx: -S.legX, thigh: B.THIGH_L, shin: B.SHIN_L, foot: B.FOOT_L, seed: 59, tag: 'L' },
+  ] as const;
+  for (const l of legs) {
+    out.push({
+      name: `leg${l.tag}`,
+      cage: loftTube(toRings(S.leg, l.dx), S.limbSegments, { jitter: BODY.jitter, seed: l.seed }),
+      bones: [B.HIPS, l.thigh, l.shin, l.foot],
+      aoExclude: [l.thigh, l.shin],
+    });
+    out.push({
+      name: `foot${l.tag}`,
+      cage: slab({ x: l.dx, y: S.foot.y, z: S.foot.z, w: S.foot.w, h: S.foot.h, d: S.foot.d }, l.seed + 1),
+      bones: [l.shin, l.foot],
+      aoExclude: [l.foot, l.shin],
+    });
+  }
+
+  // ── the asymmetry: a torn flap of coat off ONE shoulder blade. Never mirrored. ──
+  // 0.13+ deep, not 0.045: a coat flap thinner than the ink band renders as a solid black blob.
+  for (let i = 0; i < S.rag.length; i++) {
+    out.push({
+      name: `rag${i}`,
+      cage: slab(S.rag[i] as SlabSpec, 71 + i * 2),
+      bones: [B.CHEST, B.RAG],
+      aoExclude: [B.RAG],
+    });
+  }
+
   return out;
 }
 
 /**
- * The fourteen parts, each authored with **its joint at the origin** so a rotation is a rotation
- * about that joint and nothing else. Limbs hang down -Y; torso segments stack up +Y.
- *
- * Proportions are the caricature in `defs.BODY`: heavy hiked shoulders, a small dropped head, a
- * slack jaw, long hanging arms with over-sized hands, short bent legs. An inker exaggerates the
- * read and throws the anatomy away.
+ * BOOT ASSERT: nothing on this body may be thinner than the ink line can survive. The measured
+ * failure (BUILD 002, 5.6 m, 1568×716) was ~40% of the body rendering as solid ink because the
+ * inverted hull's two inflated faces met in the middle — which costs the reserved ACID channel,
+ * the one thing ART §9 says an enemy exists to carry. Loud, not silent: this is content data
+ * and a human edits it.
  */
-function buildParts(): BufferGeometry[] {
-  const parts: BufferGeometry[] = new Array(PART_COUNT) as BufferGeometry[];
-
-  // ── pelvis ────────────────────────────────────────────────────────────────
-  parts[PART.PELVIS] = paintAo(place(mass(BODY.pelvis, 11), { y: 0.02 }), 0.16, -0.12, true);
-
-  // ── belly: cocked a few degrees, because nothing on this body is square ────
-  const belly = mass(BODY.belly, 13);
-  place(belly, { y: BODY.belly[1] * 0.42, rz: 0.05 });
-  parts[PART.BELLY] = paintAo(belly, 0.30, -0.02, false);
-
-  // ── chest: the mass, plus two hiked shoulder lumps that carry the silhouette ──
-  let chest = mass(BODY.chest, 17);
-  place(chest, { y: BODY.chest[1] * 0.44, rz: -0.04 });
-  for (const sx of [1, -1]) {
-    const lump = mass([0.215, 0.18, 0.235], 19 + sx);
-    place(lump, {
-      x: sx * BODY.chest[0] * 0.42,
-      y: BODY.chest[1] * 0.78 + (sx > 0 ? 0.02 : 0.05),
-      rz: sx * 0.22,
-    });
-    chest = joinGeo(chest, lump);
+function assertInkFloor(): void {
+  const thin: string[] = [];
+  const check = (label: string, u: number, v: number): void => {
+    if (Math.min(u, v) < BODY.minHalfWidth) thin.push(`${label} ${(Math.min(u, v) * 2).toFixed(3)}m`);
+  };
+  const checkSlab = (label: string, w: number, h: number, d: number): void => {
+    const m = Math.min(w, h, d);
+    if (m < BODY.minSlabDim) thin.push(`${label} slab ${m.toFixed(3)}m`);
+  };
+  const chain = (label: string, rings: readonly SurfaceRing[]): void => {
+    for (let i = 0; i < rings.length; i++) {
+      const r = rings[i] as SurfaceRing;
+      check(`${label}[${i}]`, r.u, r.v);
+    }
+  };
+  chain('torso', SURFACE.torso);
+  chain('head', SURFACE.head);
+  chain('arm', SURFACE.arm);
+  chain('hand', SURFACE.hand);
+  chain('leg', SURFACE.leg);
+  checkSlab('brow', SURFACE.brow.w, SURFACE.brow.h, SURFACE.brow.d);
+  checkSlab('jaw', SURFACE.jaw.w, SURFACE.jaw.h, SURFACE.jaw.d);
+  checkSlab('foot', SURFACE.foot.w, SURFACE.foot.h, SURFACE.foot.d);
+  for (let i = 0; i < SURFACE.rag.length; i++) {
+    const r = SURFACE.rag[i] as SlabSpec;
+    checkSlab(`rag${i}`, r.w, r.h, r.d);
   }
-  parts[PART.CHEST] = paintAo(chest, 0.42, -0.02, false);
-
-  // ── head: skull + a heavy brow ridge. The brow is what makes it read as a FACE at 30 m. ──
-  let head = mass(BODY.head, 23);
-  place(head, { y: BODY.head[1] * 0.42, rx: 0.06 });
-  const brow = mass(BODY.brow, 29);
-  place(brow, { y: BODY.head[1] * 0.52, z: -BODY.head[2] * 0.44 });
-  head = joinGeo(head, brow);
-  parts[PART.HEAD] = paintAo(head, 0.30, -0.06, false);
-
-  // ── jaw: hangs open. A slack jaw is most of the silhouette's "wrongness". ──
-  const jaw = mass(BODY.jaw, 31);
-  place(jaw, { y: -BODY.jaw[1] * 0.4, z: -0.02 });
-  parts[PART.JAW] = paintAo(jaw, 0.04, -0.14, true);
-
-  // ── arms ──────────────────────────────────────────────────────────────────
-  for (const [idx, seed] of [[PART.ARM_UR, 37], [PART.ARM_UL, 41]] as const) {
-    const g = mass(BODY.upperArm, seed);
-    place(g, { y: -BODY.upperArm[1] * 0.5, rz: idx === PART.ARM_UR ? 0.04 : -0.07 });
-    parts[idx] = paintAo(g, 0.02, -BODY.upperArm[1], true);
+  for (let b = 0; b < BONE_COUNT; b++) {
+    const r = (SKEL[b] as { radius: number }).radius;
+    if (r < BODY.minHalfWidth) thin.push(`bone${b} radius ${r.toFixed(3)}`);
   }
-  for (const [idx, seed] of [[PART.ARM_LR, 43], [PART.ARM_LL, 47]] as const) {
-    let g = mass(BODY.lowerArm, seed);
-    place(g, { y: -BODY.lowerArm[1] * 0.5 });
-    // A splayed, over-sized hand — the part the player actually sees coming at them.
-    const hand = mass(BODY.hand, seed + 1);
-    place(hand, {
-      y: -BODY.lowerArm[1] - BODY.hand[1] * 0.35,
-      rz: idx === PART.ARM_LR ? 0.3 : -0.22,
-      rx: 0.2,
-    });
-    g = joinGeo(g, hand);
-    parts[idx] = paintAo(g, 0.02, -BODY.lowerArm[1] - BODY.hand[1], true);
+  if (thin.length > 0) {
+    console.error(
+      `[enemies/body] ${thin.length} surface section(s) are under the ${(BODY.minHalfWidth * 2).toFixed(3)} m `
+      + `ink floor and will render as solid ink at range (ART §9): ${thin.join(', ')}`,
+    );
   }
-
-  // ── legs ──────────────────────────────────────────────────────────────────
-  for (const [idx, seed] of [[PART.LEG_UR, 53], [PART.LEG_UL, 59]] as const) {
-    const g = mass(BODY.thigh, seed);
-    place(g, { y: -BODY.thigh[1] * 0.5 });
-    parts[idx] = paintAo(g, 0.02, -BODY.thigh[1], true);
-  }
-  for (const [idx, seed] of [[PART.LEG_LR, 61], [PART.LEG_LL, 67]] as const) {
-    let g = mass(BODY.shin, seed);
-    place(g, { y: -BODY.shin[1] * 0.5 });
-    const foot = mass(BODY.foot, seed + 1);
-    place(foot, { y: -BODY.shin[1] - BODY.foot[1] * 0.3, z: -BODY.foot[2] * 0.22 });
-    g = joinGeo(g, foot);
-    parts[idx] = paintAo(g, 0.02, -BODY.shin[1] - BODY.foot[1], true);
-  }
-
-  // ── the asymmetry part: a torn flap of coat off one shoulder blade ─────────
-  // 0.13 deep, not 0.045: a coat flap thinner than the ink band renders as a black blob.
-  let rag = mass([0.23, 0.42, 0.135], 71);
-  place(rag, { y: -0.18, rz: 0.16, rx: -0.1 });
-  const rag2 = mass([0.16, 0.26, 0.125], 73);
-  place(rag2, { x: -0.09, y: -0.36, rz: 0.42 });
-  rag = joinGeo(rag, rag2);
-  parts[PART.RAG] = paintAo(rag, 0.02, -0.62, true);
-
-  for (let i = 0; i < PART_COUNT; i++) jitterVertices(parts[i], BODY.jitter, 100 + i * 13);
-  return parts;
 }
 
 /**
- * Concatenate the parts into one buffer, tagging every vertex with the index of the part it
- * belongs to. `aPart` is the entire rig, as far as the GPU is concerned.
+ * THE EYE SOCKETS. Two recesses under the brow shelf, painted straight into the AO channel
+ * rather than modelled: at 25 m a modelled socket is sub-pixel, but a dark VALUE under the brow
+ * survives the ink line, the halftone and the bloom, and it is what makes the head read as a
+ * face rather than as a lump. Costs nothing per frame — it is baked at boot.
  */
-function concatParts(parts: readonly BufferGeometry[], withColor: boolean): BufferGeometry {
-  let total = 0;
-  for (const p of parts) total += p.getAttribute('position').count;
-
-  const position = new Float32Array(total * 3);
-  const normal = new Float32Array(total * 3);
-  const uv = new Float32Array(total * 2);
-  const colors = withColor ? new Float32Array(total * 3) : null;
-  const aPart = new Float32Array(total);
-
-  let v = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const pos = p.getAttribute('position');
-    const nrm = p.getAttribute('normal');
-    const tex = p.getAttribute('uv');
-    const col = p.getAttribute('color');
-    for (let k = 0; k < pos.count; k++, v++) {
-      position[v * 3] = pos.getX(k);
-      position[v * 3 + 1] = pos.getY(k);
-      position[v * 3 + 2] = pos.getZ(k);
-      if (nrm) {
-        normal[v * 3] = nrm.getX(k);
-        normal[v * 3 + 1] = nrm.getY(k);
-        normal[v * 3 + 2] = nrm.getZ(k);
-      }
-      if (tex) {
-        uv[v * 2] = tex.getX(k);
-        uv[v * 2 + 1] = tex.getY(k);
-      }
-      if (colors) {
-        const a = col ? col.getX(k) : 1;
-        colors[v * 3] = a;
-        colors[v * 3 + 1] = a;
-        colors[v * 3 + 2] = a;
-      }
-      aPart[v] = i;
-    }
+function paintSockets(cage: SurfaceCage, ao: Float32Array, offset: number): void {
+  const zFront = SURFACE.brow.z - SURFACE.brow.d * 0.5;
+  for (let i = 0; i < cage.count; i++) {
+    const x = cage.position[i * 3] as number;
+    const y = cage.position[i * 3 + 1] as number;
+    const z = cage.position[i * 3 + 2] as number;
+    if (z > zFront + 0.075) continue;                 // not on the face
+    if (y > SURFACE.brow.y - 0.005 || y < SURFACE.brow.y - 0.085) continue;
+    const ax = Math.abs(x);
+    if (ax > 0.155) continue;
+    // Two sockets, not one band: fade out across the bridge of the nose.
+    const bridge = smoothstep(clamp01((ax - 0.022) / 0.045));
+    const edge = 1 - smoothstep(clamp01((ax - 0.100) / 0.055));
+    const k = bridge * edge;
+    const j = offset + i;
+    ao[j] = Math.max(BODY.aoMin * 0.72, (ao[j] as number) * (1 - BODY.aoSocket * k));
   }
-
-  const geo = new BufferGeometry();
-  geo.setAttribute('position', new Float32BufferAttribute(position, 3));
-  geo.setAttribute('normal', new Float32BufferAttribute(normal, 3));
-  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
-  if (colors) geo.setAttribute('color', new Float32BufferAttribute(colors, 3));
-  geo.setAttribute('aPart', new Float32BufferAttribute(aPart, 1));
-  // The rest pose's bounds are not the ANIMATED bounds — a wind-up throws the arms well outside
-  // them, and a body culled mid-swing pops. Frustum culling reads this, so it is authored
-  // generously rather than computed.
-  geo.boundingSphere = new Sphere(new Vector3(0, BODY.height * 0.5, 0), BODY.height * 0.95);
-  return geo;
 }
 
 export interface EnemyGeometrySet {
@@ -271,38 +291,71 @@ export interface EnemyGeometrySet {
   hull: BufferGeometry;
   triangles: number;
   hullTriangles: number;
+  /** Cage vertex count — the number of surface points the skin was solved for. */
+  skinVertices: number;
   dispose(): void;
 }
 
 /**
  * Build the shared geometry. Called exactly once, from `EnemySystem.init`.
  *
- * The hull is welded PER PART before concatenation: `makeHullGeometry` averages normals across
- * coincident vertices so the inverted hull inflates as one continuous shell instead of blowing
- * apart into slivers (art/shapes note #1) — but welding ACROSS two parts would give one vertex
- * two conflicting `aPart` values and tear the rig apart the first time an arm moved. Weld inside
- * a part; concatenate between them.
+ * Order matters: the regions are lofted in BIND space → the skin is solved per region against
+ * its gated bone set → the AO is solved → the cages are merged → the merged cage is expanded
+ * TWICE with identical vertex ordering. The body gets face normals (crisp facets for the cel
+ * bands); the hull gets the cage's smooth normals so it inflates as one continuous shell.
  */
 export function buildEnemyGeometry(): EnemyGeometrySet {
-  const parts = buildParts();
-  const body = concatParts(parts, true);
+  assertInkFloor();
+  const regions = buildRegions();
 
-  const hullParts: BufferGeometry[] = new Array(PART_COUNT) as BufferGeometry[];
-  for (let i = 0; i < PART_COUNT; i++) {
-    const welded = makeHullGeometry(parts[i]);
-    const flat = welded.index ? welded.toNonIndexed() : welded;
-    if (flat !== welded) welded.dispose();
-    hullParts[i] = flat;
+  let total = 0;
+  for (const r of regions) total += r.cage.count;
+
+  const skinIndex = new Float32Array(total * SKIN_INFLUENCES);
+  const skinWeight = new Float32Array(total * SKIN_INFLUENCES);
+  const ao = new Float32Array(total);
+
+  let offset = 0;
+  for (const r of regions) {
+    solveSkin(r.cage.position, r.cage.count, r.bones, skinIndex, skinWeight, offset);
+    solveAo(r.cage.position, r.cage.normal, r.cage.count, r.aoExclude, ao, offset);
+    if (r.name === 'head') paintSockets(r.cage, ao, offset);
+    offset += r.cage.count;
   }
-  const hull = concatParts(hullParts, false);
-  for (const g of hullParts) g.dispose();
-  for (const g of parts) g.dispose();
+
+  // `InkMaterial` reads the painted AO out of `color.r` (see its VERT), so the channel is
+  // replicated rather than packed — three declares `attribute vec3 color` or nothing at all.
+  const colors = new Float32Array(total * 3);
+  for (let i = 0; i < total; i++) {
+    const a = ao[i] as number;
+    colors[i * 3] = a;
+    colors[i * 3 + 1] = a;
+    colors[i * 3 + 2] = a;
+  }
+
+  const merged = mergeCages(regions.map((r) => r.cage));
+  const skinAttrs: CageAttribute[] = [
+    { name: 'aSkinIndex', itemSize: SKIN_INFLUENCES, data: skinIndex },
+    { name: 'aSkinWeight', itemSize: SKIN_INFLUENCES, data: skinWeight },
+  ];
+  const body = cageToGeometry(merged, {
+    flat: true,
+    attributes: [...skinAttrs, { name: 'color', itemSize: 3, data: colors }],
+  });
+  const hull = cageToGeometry(merged, { flat: false, attributes: skinAttrs });
+
+  // The bind pose's bounds are not the ANIMATED bounds — a wind-up throws the arms well outside
+  // them, and a body culled mid-swing pops. Frustum culling reads this, so it is authored
+  // generously rather than computed.
+  body.boundingSphere = new Sphere(new Vector3(0, BODY.height * 0.5, 0), BODY.height * 0.95);
+  hull.boundingSphere = new Sphere(new Vector3(0, BODY.height * 0.5, 0), BODY.height * 0.95);
 
   return {
     body,
     hull,
     triangles: body.getAttribute('position').count / 3,
     hullTriangles: hull.getAttribute('position').count / 3,
+    skinVertices: merged.count,
     dispose(): void {
       body.dispose();
       hull.dispose();
@@ -314,38 +367,19 @@ export function buildEnemyGeometry(): EnemyGeometrySet {
 // 2. THE SHADER PATCH
 // ═════════════════════════════════════════════════════════════════════════════
 
-const SKIN_DECL = /* glsl */ `
-attribute float aPart;
-uniform mat4 uPart[${PART_COUNT}];
-`;
-
-/**
- * Inserted at the top of `main()`. `position` and `normal` are attributes, i.e. globals, and a
- * local declaration legally shadows a global in GLSL — so every line after this one sees the
- * POSED vertex and the rest of the shader is untouched. That is why this patch is a five-line
- * insertion at one well-known marker rather than surgery on expressions we do not own.
- */
-const SKIN_MAIN = /* glsl */ `
-  vec3 czRawPosition = position;
-  vec3 czRawNormal = normal;
-  mat4 czPartMatrix = uPart[int(aPart + 0.5)];
-  vec3 position = (czPartMatrix * vec4(czRawPosition, 1.0)).xyz;
-  vec3 normal = normalize(mat3(czPartMatrix) * czRawNormal);
-`;
-
 const MAIN_MARKER = 'void main() {';
 
 /**
- * Patch a vertex shader to apply the rig. Loud on failure: a silently un-rigged zombie is a
- * T-posing statue sliding across the plaza, which is far worse than a console error.
+ * Patch a vertex shader to apply the skin. Loud on failure: a silently un-skinned zombie is a
+ * bind-pose statue sliding across the plaza, which is far worse than a console error.
  */
-function patchPartSkinning(src: string, label: string): string {
+function patchSkinning(src: string, label: string): string {
   const at = src.indexOf(MAIN_MARKER);
   if (at < 0) {
     console.error(
-      `[enemies/body] could not patch the rig into the ${label} vertex shader — ` +
-      `"${MAIN_MARKER}" not found. Zombies will not animate. Someone changed ` +
-      `render/materials/index.ts; re-anchor this patch.`,
+      `[enemies/body] could not patch the rig into the ${label} vertex shader — `
+      + `"${MAIN_MARKER}" not found. Zombies will not animate. Someone changed `
+      + 'render/materials/index.ts; re-anchor this patch.',
     );
     return src;
   }
@@ -359,21 +393,20 @@ function patchPartSkinning(src: string, label: string): string {
  * `render/renderer.ts` fills a view-normal + depth buffer before the beauty pass, and the ink
  * pass, the screen-space rim and the boil gate all read it. It used to do that with a single
  * stock `MeshNormalMaterial` forced onto the whole scene through `scene.overrideMaterial` —
- * which has neither our `aPart` attribute nor our `uPart` uniform. So every zombie wrote its
- * UNPOSED geometry (all fourteen parts collapsed onto the body origin) into the prepass while
- * the beauty pass drew it posed. Measured result, at 2–15 m: the ink pass read the CITY's depth
- * across the zombie's silhouette and inked arcade railings, kerbs and bins straight through the
- * torso; the body got no interior line of its own; the always-on ART §9 enemy rim, gated on that
- * same depth via `nearerMask`, never drew; and `boilNear` sampled a background distance. The
- * enemy — the one thing §9 says must be the most legible object in the frame — was the only
- * translucent thing in it.
+ * which has neither our skin attributes nor our `uBone` uniform. So every zombie wrote its
+ * UNSKINNED bind pose into the prepass while the beauty pass drew it posed. Measured result, at
+ * 2–15 m: the ink pass read the CITY's depth across the zombie's silhouette and inked arcade
+ * railings, kerbs and bins straight through the torso; the body got no interior line of its own;
+ * the always-on ART §9 enemy rim, gated on that same depth via `nearerMask`, never drew; and
+ * `boilNear` sampled a background distance. The enemy — the one thing §9 says must be the most
+ * legible object in the frame — was the only translucent thing in it.
  *
  * The renderer now swaps materials per object and honours `mesh.userData.czPrepassMaterial`, so
- * the fix is simply to publish a rigged normal material here. It is deliberately a hand-written
+ * the fix is simply to publish a skinned normal material here. It is deliberately a hand-written
  * ShaderMaterial rather than a patched `MeshNormalMaterial`: it is nine lines, it cannot be
- * broken by a three.js include being reshuffled, and it goes through the SAME
- * `patchPartSkinning()` as the body and the hull — so the three shaders cannot pose differently.
- * Output matches `MeshNormalMaterial` exactly: `normalize(view normal) * 0.5 + 0.5`.
+ * broken by a three.js include being reshuffled, and it goes through the SAME `patchSkinning()`
+ * as the body and the hull — so the three shaders cannot pose differently. Output matches
+ * `MeshNormalMaterial` exactly: `normalize(view normal) * 0.5 + 0.5`.
  *
  * The hull needs no equivalent: it lives on `LAYER.OUTLINE`, which the prepass mask excludes.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -396,14 +429,14 @@ void main() {
 export interface EnemyMaterialPair {
   body: InkMaterial;
   hull: ShaderMaterial;
-  /** Rigged stand-in for the renderer's normal/depth prepass. See the block comment above. */
+  /** Skinned stand-in for the renderer's normal/depth prepass. See the block comment above. */
   prepass: ShaderMaterial;
   outlinePx: number;
 }
 
 /**
- * One enemy's materials, sharing one `mat4[14]` uniform object so the body and its silhouette
- * can never pose differently.
+ * One enemy's materials, sharing ONE bone palette `Float32Array` by reference so the body, its
+ * silhouette and the prepass can never pose differently.
  *
  * `makeEnemyMaterial()` is called per instance rather than cloned: `ShaderMaterial.clone()` runs
  * `UniformsUtils.clone()`, which DEEP-COPIES uniform values — that would fork every zombie off
@@ -415,21 +448,20 @@ export interface EnemyMaterialPair {
  * N uniform uploads, not N shader compiles.
  */
 export function makeEnemyMaterials(
-  matrices: readonly Matrix4[], hue: number, presence: number,
+  palette: Float32Array, hue: number, presence: number,
 ): EnemyMaterialPair {
   const recipe = makeEnemyMaterial({ hue, presence, name: 'Ink_shambler' });
   const body = recipe.material;
-  body.vertexShader = patchPartSkinning(body.vertexShader, 'ink');
-  body.uniforms.uPart = { value: matrices };
+  body.vertexShader = patchSkinning(body.vertexShader, 'ink');
+  body.uniforms.uBone = { value: palette };
   // Painted AO lives in the geometry's `color` attribute; switch the shader over to reading it.
   body.vertexColors = true;
   body.uniforms.uVertexAo!.value = BODY.aoStrength;
 
   // THE HEAVIEST INK WEIGHT IN THE GAME (ART §9): 8 px, against a 6 px cap on the heaviest prop
   // in the arena. `buildOutlineHull` builds its own material on every call — verified against
-  // `render/materials/index.ts` — so an enemy's line weight cannot leak into the city's the way
-  // the M1.5 report described. A scratch geometry is passed and immediately freed: we want the
-  // material and its uniform block, not the mesh.
+  // `render/materials/index.ts` — so an enemy's line weight cannot leak into the city's. A
+  // scratch geometry is passed and immediately freed: we want the material, not the mesh.
   const scratch = new BufferGeometry();
   const hullMesh = buildOutlineHull(scratch, {
     thickness: recipe.outlinePx,
@@ -439,24 +471,22 @@ export function makeEnemyMaterials(
     weld: false,
   });
   const hull = hullMesh.material as ShaderMaterial;
-  hull.vertexShader = patchPartSkinning(hull.vertexShader, 'outline');
-  hull.uniforms.uPart = { value: matrices };
+  hull.vertexShader = patchSkinning(hull.vertexShader, 'outline');
+  hull.uniforms.uBone = { value: palette };
   scratch.dispose();
 
-  // The prepass material shares the very same `matrices` array by reference, so the buffer the
-  // ink pass reads can never disagree with the body it is drawn over — not even by one frame.
   const prepass = new ShaderMaterial({
     name: 'Prepass_shambler',
-    vertexShader: patchPartSkinning(PREPASS_VERT, 'prepass'),
+    vertexShader: patchSkinning(PREPASS_VERT, 'prepass'),
     fragmentShader: PREPASS_FRAG,
-    uniforms: { uPart: { value: matrices } },
+    uniforms: { uBone: { value: palette } },
   });
 
   return { body, hull, prepass, outlinePx: recipe.outlinePx };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 3. THE RIG
+// 3. THE ANIMATION
 // ═════════════════════════════════════════════════════════════════════════════
 
 /** Everything the pose evaluator needs. The service fills a module-level scratch instance. */
@@ -484,37 +514,17 @@ export interface PoseArgs {
 }
 
 // ── module scratch — nothing below this line allocates ──────────────────────
-const _q = new Quaternion();
-const _qp = new Quaternion();
-const _v = new Vector3();
-const _s = new Vector3();
-const _e = new Euler(0, 0, 0, 'YXZ');
-const _wPos: Vector3[] = [];
-const _wQuat: Quaternion[] = [];
-for (let i = 0; i < PART_COUNT; i++) {
-  _wPos.push(new Vector3());
-  _wQuat.push(new Quaternion());
-}
-/** Per-part local pose, refilled per enemy: [rx, ry, rz, ox, oy, oz, sx, sy, sz]. */
-const _pose = new Float32Array(PART_COUNT * 9);
+const _pose = makePoseBuffer();
+const _local = new Vector3();
 
-const RX = 0, RY = 1, RZ = 2, OX = 3, OY = 4, OZ = 5, SX = 6, SY = 7, SZ = 8;
-
-function clearPose(): void {
-  for (let i = 0; i < PART_COUNT; i++) {
-    const b = i * 9;
-    _pose[b + RX] = 0; _pose[b + RY] = 0; _pose[b + RZ] = 0;
-    _pose[b + OX] = 0; _pose[b + OY] = 0; _pose[b + OZ] = 0;
-    _pose[b + SX] = 1; _pose[b + SY] = 1; _pose[b + SZ] = 1;
+/** Every bone under (and including) a limb's root — what a dismemberment collapses. */
+const LIMB_CHAIN: readonly (readonly number[])[] = LIMB_ROOT.map((root) => {
+  const chain = [root];
+  for (let i = 0; i < BONE_COUNT; i++) {
+    if (chain.indexOf(BONE_PARENT[i] as number) >= 0 && chain.indexOf(i) < 0) chain.push(i);
   }
-}
-
-/**
- * A severed part is scaled to a speck rather than to zero: a zero matrix makes the shader's
- * `normalize(mat3(m) * normal)` produce NaN, and NaN in a hull's inflation direction is how you
- * get a triangle stretching to the horizon. At 1e-4 the triangles are sub-pixel and degenerate.
- */
-const SEVERED_SCALE = 1e-4;
+  return chain;
+});
 
 /**
  * How far toward `HOT` a single instance's flesh may be shifted. Both endpoints are ART §9
@@ -534,13 +544,30 @@ const SEVERED_SCALE = 1e-4;
 const HUE_SPREAD = 0.05;
 
 /**
- * One zombie's renderable body: two meshes, fourteen matrices, and the per-instance proportions
- * that stop it being a twin of the one next to it.
+ * One zombie's renderable body: two meshes, one skeleton instance, and the per-instance
+ * proportions that stop it being a twin of the one next to it.
  */
 export class EnemyBody {
   readonly mesh: Mesh;
   readonly hull: Mesh;
-  readonly matrices: Matrix4[] = [];
+  /**
+   * ── THE BONE API (the combat agent's entry point) ───────────────────────────────────────
+   * The posed skeleton. Everything on it is enemy-local and valid immediately after `pose()`.
+   * Attach hitboxes, decals, blood emitters and severed-limb props to REAL bones through this
+   * instead of guessing offsets:
+   *
+   *     body.rig.boneSegment(BONE.FORE_R, a, b);      // a capsule that is actually the forearm
+   *     body.rig.boneRadius(BONE.FORE_R);             // …and its radius, instance-scaled
+   *     body.rig.bonePoint(BONE.HEAD, out);           // the skull's joint
+   *     body.rig.boneMatrix(BONE.JAW);                // full transform; DO NOT MUTATE
+   *     body.rig.boneLocal(BONE.HAND_R, offset, out); // hand-local → enemy-local
+   *
+   * See the header of `rig.ts` for the full contract. The convenience wrappers below
+   * (`headPoint`, `torsoSegment`, `limbSegment`) are the six primitives `HITBOX` describes and
+   * are what `EnemySystem.raycast` uses; anything finer-grained goes through `rig`.
+   * ────────────────────────────────────────────────────────────────────────────────────────
+   */
+  readonly rig = new BonePalette();
   readonly material: InkMaterial;
   readonly hullMaterial: ShaderMaterial;
   /** Published on the mesh as `userData.czPrepassMaterial`; the renderer swaps it in. */
@@ -548,11 +575,7 @@ export class EnemyBody {
   /** Full-weight ink for this instance — `READABILITY.ENEMY_OUTLINE_PX` × presence. */
   readonly outlinePx: number;
 
-  /** Rest offset of each part from its parent, after variant + per-instance variation. */
-  private readonly rest: Vector3[] = [];
-  /** Per-part scale — this is where a "gaunt" and a "bloated" actually differ. */
-  private readonly scale: Vector3[] = [];
-  private readonly severed = [false, false, false, false];
+  private readonly severedLimb = [false, false, false, false];
 
   private variant: BodyVariant;
   /** Which leg drags. The most-noticed piece of per-instance character. */
@@ -562,9 +585,13 @@ export class EnemyBody {
   private heightScale = 1;
   /**
    * ── THE SILHOUETTE VARIATION SET (M2 §2: "no two are twins") ──────────────────────────
-   * These five are deliberately in the OUTLINE, not in the proportions: a bold line erases
-   * interior detail, so scale jitter on a limb's width is invisible at fighting range while a
-   * dead arm, a lolling head or an off-axis torso are readable at 25 m in one glance.
+   * These are deliberately in the OUTLINE, not in the surface detail: a bold line erases
+   * interior detail, so a thickness tweak is invisible at fighting range while a dead arm, a
+   * lolling head or an off-axis torso are readable at 25 m in one glance.
+   *
+   * BUILD 007 adds the one thing rigid parts could not do: BONE-LENGTH variation. A skeleton
+   * can give this zombie a 30% longer forearm and the skin stretches to match, which changes
+   * the SHAPE of the silhouette and not merely its pose.
    */
   private armDragSide = 0;
   /** Length multiplier on the dragging arm — 1.12–1.30, i.e. it visibly hangs lower. */
@@ -584,12 +611,8 @@ export class EnemyBody {
   constructor(geo: EnemyGeometrySet, variant: BodyVariant, hue: number, presence: number) {
     this.variant = variant;
     this.baseHue = hue;
-    for (let i = 0; i < PART_COUNT; i++) {
-      this.matrices.push(new Matrix4());
-      this.rest.push(new Vector3());
-      this.scale.push(new Vector3(1, 1, 1));
-    }
-    const mats = makeEnemyMaterials(this.matrices, hue, presence);
+
+    const mats = makeEnemyMaterials(this.rig.data, hue, presence);
     this.material = mats.body;
     this.hullMaterial = mats.hull;
     this.prepassMaterial = mats.prepass;
@@ -640,6 +663,7 @@ export class EnemyBody {
     const head = variant.head * rng.range(0.93, 1.08);
     const reach = variant.reach * rng.range(0.95, 1.06);
     this.heightScale = g;
+
     // ── the silhouette roll ───────────────────────────────────────────────────────────────
     // Every one of these is authored as SIGN × MAGNITUDE rather than as a symmetric range,
     // because a symmetric range's most likely value is ZERO — which is exactly how twenty-five
@@ -667,52 +691,64 @@ export class EnemyBody {
      */
     this.setHue(hexMix(this.baseHue, PALETTE.HOT, rng.range(0, HUE_SPREAD)));
 
-    const B = BODY;
-    const set = (i: number, x: number, y: number, z: number): void => {
-      this.rest[i].set(x * g, y * g, z * g);
-    };
-    const sc = (i: number, x: number, y: number, z: number): void => {
-      this.scale[i].set(x, y, z);
-    };
+    // ── BONE LENGTHS. The whole skeleton scales by `g` first (rest offsets are parent-relative,
+    //    so scaling every one of them scales the body about the feet), then each chain takes its
+    //    own multiplier on top. ──
+    const rig = this.rig;
+    const B = BONE;
+    rig.reset();
+    for (let b = 0; b < BONE_COUNT; b++) rig.scaleBoneLength(b, g);
 
-    set(PART.PELVIS, 0, B.hipY, 0);
-    set(PART.BELLY, 0, B.bellyY * torso, 0);
-    set(PART.CHEST, 0, B.chestY * torso, 0);
-    set(PART.HEAD, 0, B.headY * torso, 0.015);
-    set(PART.JAW, 0, B.jawY * head, B.jawZ * head);
+    for (const b of [B.SPINE, B.CHEST, B.NECK, B.HEAD, B.CLAV_R, B.CLAV_L] as const) {
+      rig.scaleBoneLength(b, torso);
+    }
+    rig.scaleBoneLength(B.JAW, head);
+
     // The dead arm is LONGER as well as slacker — the two together are what make it read as a
     // limb hanging wrong rather than as an animation glitch.
     const reachR = reach * (this.armDragSide === 0 ? this.armDragLen : 1);
     const reachL = reach * (this.armDragSide === 1 ? this.armDragLen : 1);
-    set(PART.ARM_UR, B.shoulderR * torso, B.shoulderY * torso + this.shoulderHike, 0);
-    set(PART.ARM_UL, B.shoulderL * torso, B.shoulderYL * torso - this.shoulderHike, 0);
-    set(PART.ARM_LR, 0, B.elbowY * limb * reachR, 0);
-    set(PART.ARM_LL, 0, B.elbowY * limb * reachL, 0);
-    set(PART.LEG_UR, B.hipX * torso, B.hipOffY, 0);
-    set(PART.LEG_UL, -B.hipX * torso, B.hipOffY, 0);
-    set(PART.LEG_LR, 0, B.kneeY * limb, 0);
-    set(PART.LEG_LL, 0, B.kneeY * limb, 0);
-    set(PART.RAG, -0.17 * torso, -0.02, -0.15 * torso);
+    rig.scaleBoneLength(B.ARM_R, limb);
+    rig.scaleBoneLength(B.ARM_L, limb);
+    rig.scaleBoneLength(B.FORE_R, limb * reachR);
+    rig.scaleBoneLength(B.FORE_L, limb * reachL);
+    rig.scaleBoneLength(B.HAND_R, limb * reachR);
+    rig.scaleBoneLength(B.HAND_L, limb * reachL);
+    for (const b of [B.THIGH_R, B.THIGH_L, B.SHIN_R, B.SHIN_L, B.FOOT_R, B.FOOT_L] as const) {
+      rig.scaleBoneLength(b, limb);
+    }
 
-    sc(PART.PELVIS, torso, g, torso);
-    sc(PART.BELLY, torso * rng.range(0.97, 1.10), torso, torso);
-    sc(PART.CHEST, torso, torso, torso * rng.range(0.94, 1.05));
-    sc(PART.HEAD, head, head, head);
-    sc(PART.JAW, head, head, head);
-    sc(PART.ARM_UR, limb, limb * reachR, limb);
-    sc(PART.ARM_UL, limb * rng.range(0.90, 1.12), limb * reachL, limb);
-    sc(PART.ARM_LR, limb, limb * reachR, limb);
-    sc(PART.ARM_LL, limb, limb * reachL, limb);
-    sc(PART.LEG_UR, limb, limb, limb);
-    sc(PART.LEG_UL, limb, limb, limb);
-    sc(PART.LEG_LR, limb, limb, limb);
-    sc(PART.LEG_LL, limb, limb, limb);
-    sc(PART.RAG, torso, torso * rng.range(0.8, 1.3), torso);
+    // ── BONE GIRTH. This is where a "gaunt" and a "bloated" actually differ. Not inherited
+    //    down the chain (see `BonePalette.compose`), so a fat belly cannot shear the legs. ──
+    const gt = g * torso;
+    const gh = g * head;
+    const gl = g * limb;
+    rig.setBoneGirth(B.HIPS, gt, g, gt);
+    rig.setBoneGirth(B.SPINE, gt * rng.range(0.97, 1.10), gt, gt);
+    rig.setBoneGirth(B.CHEST, gt, gt, gt * rng.range(0.94, 1.05));
+    // The NECK deliberately does not fatten with the torso: a bloated zombie with a bloated
+    // neck loses the one silhouette notch that makes its head a target.
+    const gn = g * lerp(1, torso, 0.35);
+    rig.setBoneGirth(B.NECK, gn, gt, gn);
+    rig.setBoneGirth(B.HEAD, gh, gh, gh);
+    rig.setBoneGirth(B.JAW, gh, gh, gh);
+    rig.setBoneGirth(B.CLAV_R, gt, gt, gt);
+    rig.setBoneGirth(B.CLAV_L, gt, gt, gt);
+    rig.setBoneGirth(B.ARM_R, gl, gl, gl);
+    rig.setBoneGirth(B.ARM_L, gl * rng.range(0.90, 1.12), gl, gl);
+    rig.setBoneGirth(B.FORE_R, gl, gl, gl);
+    rig.setBoneGirth(B.FORE_L, gl, gl, gl);
+    rig.setBoneGirth(B.HAND_R, gl, gl, gl);
+    rig.setBoneGirth(B.HAND_L, gl, gl, gl);
+    for (const b of [B.THIGH_R, B.THIGH_L, B.SHIN_R, B.SHIN_L, B.FOOT_R, B.FOOT_L] as const) {
+      rig.setBoneGirth(b, gl, gl, gl);
+    }
+    rig.setBoneGirth(B.RAG, gt, gt * rng.range(0.8, 1.3), gt);
 
-    this.severed[0] = false;
-    this.severed[1] = false;
-    this.severed[2] = false;
-    this.severed[3] = false;
+    this.severedLimb[0] = false;
+    this.severedLimb[1] = false;
+    this.severedLimb[2] = false;
+    this.severedLimb[3] = false;
   }
 
   setVisible(v: boolean): void {
@@ -732,33 +768,35 @@ export class EnemyBody {
     setInkEmissive(this.material, hue, 0.16);
   }
 
+  /** Take a limb off: collapse its whole bone chain. Blended vertices stay → a ragged stump. */
   sever(limb: number): void {
-    this.severed[limb] = true;
+    this.severedLimb[limb] = true;
+    for (const b of LIMB_CHAIN[limb] as readonly number[]) this.rig.setSevered(b, true);
   }
 
   isSevered(limb: number): boolean {
-    return this.severed[limb];
+    return this.severedLimb[limb] as boolean;
   }
 
   // ── the animation ────────────────────────────────────────────────────────
 
   /**
-   * Evaluate every layer, compose the fourteen matrices, and leave them in `this.matrices`
-   * (which the two materials already point at — no upload call needed).
+   * Evaluate every layer, compose the bone palette, and leave it in `this.rig.data` (which the
+   * three materials already point at — no upload call needed).
    *
    * Layer order is load-bearing: gait → state pose → additive flinch. The flinch is LAST and
    * ADDITIVE so a bullet visibly moves a body that is mid-swing, which is the whole of
    * "a zombie that absorbs a bullet without visibly reacting is a bug".
    */
   pose(a: PoseArgs): void {
-    clearPose();
+    clearPose(_pose);
     this.poseGait(a);
     if (a.state === 'attack') this.poseAttack(a);
     if (a.state === 'climb') this.poseClimb(a);
     if (a.state === 'spawn') this.poseSpawn(a);
     if (a.state === 'death') this.poseDeath(a);
     this.poseFlinch(a);
-    this.compose();
+    this.rig.compose(_pose);
   }
 
   /**
@@ -766,6 +804,11 @@ export class EnemyBody {
    * onto the 12 Hz clock — so each of these curves is a staircase, not a curve, and the body
    * holds a pose for ~5 frames at 60 fps before jumping to the next (ART §8). Smooth
    * interpolation is the enemy; we want the uncanny stop-motion of animated ink.
+   *
+   * SKINNING DID NOT CHANGE THE TIMING. Every amplitude, every phase offset and every held beat
+   * below is BUILD 006's, because the brief was "smooth deformation with jerky timing" — the
+   * deformation is what got better, and letting the timing drift smooth with it would have
+   * thrown away the whole art direction to buy nothing.
    */
   private poseGait(a: PoseArgs): void {
     const ph = a.gait;
@@ -774,17 +817,18 @@ export class EnemyBody {
     const c = Math.cos(ph * TAU);
     const s2 = Math.sin(ph * TAU * 2);
 
-    // ── pelvis: roll, twist, and a hard drop on every foot-plant. This is the weight. ──
-    const p = PART.PELVIS * 9;
+    // ── hips: roll, twist, and a hard drop on every foot-plant. This is the weight. ──
+    const p = BONE.HIPS * POSE_STRIDE;
     _pose[p + RZ] += s * ANIM.hipRoll * amp;
     _pose[p + RY] += s * ANIM.hipTwist * amp;
     _pose[p + OY] += -Math.abs(s) * ANIM.bobDown * amp;
 
     // ── spine: a permanent hunch, a counter-twist, and squash/stretch on twos ──
-    // SIGN: a part ABOVE its joint leans BACK for a positive rx (see the note on ANIM.windupLean),
+    // SIGN: a bone ABOVE its joint leans BACK for a positive rx (see the note on ANIM.windupLean),
     // so the hunch — which is forward — is negative all the way up the spine.
-    const b = PART.BELLY * 9;
-    _pose[b + RX] += -this.variant.stoop * 0.45;
+    const spinePitch = -this.variant.stoop * 0.45;
+    const b = BONE.SPINE * POSE_STRIDE;
+    _pose[b + RX] += spinePitch;
     // Off-axis: this body is bent sideways and turned a few degrees off its own heading, for
     // its whole life. It is a rest-pose property, so it costs nothing per frame and it survives
     // the 12 Hz pose clock intact.
@@ -793,59 +837,89 @@ export class EnemyBody {
     _pose[b + SX] += -s2 * ANIM.squash * 0.5 * amp;
     _pose[b + SZ] += -s2 * ANIM.squash * 0.5 * amp;
 
-    const ch = PART.CHEST * 9;
-    _pose[ch + RX] += -(this.variant.stoop * 0.55 + ANIM.hunch * a.speed01);
-    _pose[ch + RY] += -s * ANIM.spineTwist * amp + this.torsoTwist;
-    _pose[ch + RZ] += this.shoulderHike * 1.4 + this.torsoLean * 0.55;
+    const chestPitch = -(this.variant.stoop * 0.55 + ANIM.hunch * a.speed01);
+    const ch = BONE.CHEST * POSE_STRIDE;
+    _pose[ch + RX] += chestPitch;
+    const chestTwist = -s * ANIM.spineTwist * amp + this.torsoTwist;
+    _pose[ch + RY] += chestTwist;
+    _pose[ch + RZ] += this.shoulderHike * 0.5 + this.torsoLean * 0.55;
     // The stretch has to travel: a stretched belly must lift the chest or the torso pulls apart.
     _pose[ch + OY] += s2 * ANIM.squash * 0.16 * amp;
 
-    // ── head: lolls on its own slower beat, and is never quite level ─────────
-    const h = PART.HEAD * 9;
-    _pose[h + RZ] += this.headTilt + Math.sin(ph * TAU + 1.15) * ANIM.headLoll * amp;
-    _pose[h + RX] += -this.variant.stoop * 0.6 + Math.sin(ph * TAU * 2 + 0.6) * ANIM.headNod * amp;
-    _pose[h + RY] += -_pose[ch + RY] * 0.6;
+    // ── clavicles: the hiked shoulder now has a BONE. One rises, the other drops — a single
+    //    signed rotation does both, because they sit on opposite sides of the spine. ──
+    _pose[BONE.CLAV_R * POSE_STRIDE + RZ] += this.shoulderHike * ANIM.clavHike;
+    _pose[BONE.CLAV_L * POSE_STRIDE + RZ] += this.shoulderHike * ANIM.clavHike;
 
-    const j = PART.JAW * 9;
+    // ── neck + head: THE READ. The body stoops; the face does not go with it. ──
+    //
+    // The neck pitches FORWARD (thrust), which pushes the skull clear of the shoulder mass, and
+    // the head then counter-pitches by `neckCounter` of everything the spine and chest did, so
+    // the face comes back up and stays pointed at the player. A rigid rig could not do this —
+    // there was no neck to pitch — and that is precisely why BUILD 006's head sank between the
+    // shoulders whenever the stoop was doing its job.
+    const nk = BONE.NECK * POSE_STRIDE;
+    _pose[nk + RX] += -ANIM.headThrust;
+    _pose[nk + RZ] += this.headTilt * 0.35
+      + Math.sin(ph * TAU + 1.55) * ANIM.headLoll * ANIM.neckLoll * amp;
+
+    const h = BONE.HEAD * POSE_STRIDE;
+    _pose[h + RX] += ANIM.headThrust * 0.75
+      - (spinePitch + chestPitch) * ANIM.neckCounter
+      + Math.sin(ph * TAU * 2 + 0.6) * ANIM.headNod * amp;
+    _pose[h + RZ] += this.headTilt * 0.65 + Math.sin(ph * TAU + 1.15) * ANIM.headLoll * amp;
+    _pose[h + RY] += -chestTwist * ANIM.headCounterTwist;
+
+    const j = BONE.JAW * POSE_STRIDE;
     _pose[j + RX] += ANIM.jawOpen * (0.55 + 0.45 * Math.sin(ph * TAU * 0.5 + 2.1));
 
     // ── legs: one drags, and they are off-beat by `limpAsym`, not a clean half cycle ──
-    this.poseLeg(PART.LEG_UR, PART.LEG_LR, ph, amp, this.dragSide === 0);
-    this.poseLeg(PART.LEG_UL, PART.LEG_LL, ph + 0.5 + ANIM.limpAsym, amp, this.dragSide === 1);
+    this.poseLeg(BONE.THIGH_R, BONE.SHIN_R, BONE.FOOT_R, ph, amp, this.dragSide === 0);
+    this.poseLeg(
+      BONE.THIGH_L, BONE.SHIN_L, BONE.FOOT_L, ph + 0.5 + ANIM.limpAsym, amp, this.dragSide === 1);
 
     // ── arms: lag the legs by 0.37 of a cycle. 0.5 reads as walking; 0.37 reads as wrong. ──
     const reach = 1 - smoothstep(clamp01((a.targetDist - 1.2) / ANIM.armReachRange));
     this.poseArm(
-      PART.ARM_UR, PART.ARM_LR, ph + ANIM.armLag, amp, reach, 1, this.armDragSide === 0);
+      BONE.ARM_R, BONE.FORE_R, BONE.HAND_R, ph + ANIM.armLag, amp, reach, 1,
+      this.armDragSide === 0);
     this.poseArm(
-      PART.ARM_UL, PART.ARM_LL, ph + ANIM.armLag + 0.5 + ANIM.limpAsym * 0.5, amp, reach, -1,
-      this.armDragSide === 1);
+      BONE.ARM_L, BONE.FORE_L, BONE.HAND_L, ph + ANIM.armLag + 0.5 + ANIM.limpAsym * 0.5, amp,
+      reach, -1, this.armDragSide === 1);
 
     // ── the rag swings a beat behind everything else ─────────────────────────
-    const r = PART.RAG * 9;
+    const r = BONE.RAG * POSE_STRIDE;
     _pose[r + RX] += 0.18 + c * 0.16 * amp;
     _pose[r + RZ] += s * 0.13 * amp;
   }
 
-  private poseLeg(upper: number, lower: number, ph: number, amp: number, drag: boolean): void {
+  private poseLeg(
+    upper: number, lower: number, foot: number, ph: number, amp: number, drag: boolean,
+  ): void {
     const swing = Math.sin(ph * TAU);
-    const u = upper * 9;
-    const l = lower * 9;
+    const u = upper * POSE_STRIDE;
+    const l = lower * POSE_STRIDE;
     const k = drag ? ANIM.dragLeg : 1;
-    _pose[u + RX] += swing * ANIM.thighSwing * amp * k;
+    const thigh = swing * ANIM.thighSwing * amp * k;
+    _pose[u + RX] += thigh;
     // Knees only bend one way. `max(0, …)` is what stops a shin folding forward through a thigh.
     const bend = Math.max(0, Math.sin((ph + 0.28) * TAU));
-    _pose[l + RX] += -(bend * ANIM.kneeBend * amp * k + (drag ? 0.34 : 0.06));
+    const shin = -(bend * ANIM.kneeBend * amp * k + (drag ? 0.34 : 0.06));
+    _pose[l + RX] += shin;
     if (drag) _pose[u + RZ] += 0.16;
+    // THE FOOT IS A BONE NOW, and it earns its keep: it cancels most of the leg's accumulated
+    // pitch so the sole stays roughly parallel to the ground through the whole stride. The
+    // rigid rig welded the foot to the shin, which pointed it at the sky on every swing.
+    _pose[foot * POSE_STRIDE + RX] += -(thigh + shin) * 0.72 - (drag ? 0.18 : 0.04);
   }
 
   private poseArm(
-    upper: number, lower: number, ph: number, amp: number, reach: number, side: number,
-    drag: boolean,
+    upper: number, lower: number, hand: number, ph: number, amp: number, reach: number,
+    side: number, drag: boolean,
   ): void {
     const swing = Math.sin(ph * TAU);
-    const u = upper * 9;
-    const l = lower * 9;
+    const u = upper * POSE_STRIDE;
+    const l = lower * POSE_STRIDE;
     const k = drag ? ANIM.dragArm : 1;
     // Hanging and swinging far away; reaching for you the closer you get. The DEAD arm barely
     // swings, hangs further forward and off the body, and keeps a folded elbow — so even at a
@@ -854,6 +928,10 @@ export class EnemyBody {
     _pose[u + RZ] += side * (0.13 + reach * 0.1);
     _pose[l + RX] += -ANIM.armDroop - Math.max(0, swing) * 0.22 * amp * k + reach * 0.34;
     _pose[l + RZ] += side * 0.08;
+    // The hand curls as the arm reaches — one joint further out than the rig used to have. A
+    // splayed hand thrown at the camera is the last frame before a hit.
+    _pose[hand * POSE_STRIDE + RX] += -0.22 + reach * 0.55;
+    _pose[hand * POSE_STRIDE + RZ] += side * (0.22 - reach * 0.12);
     if (drag) {
       _pose[u + RX] += this.armDragDroop;
       _pose[u + RZ] += side * 0.16;
@@ -873,20 +951,24 @@ export class EnemyBody {
     const arm = lerp(ANIM.windupArm * rise, ANIM.strikeArm, hit);
     const lean = lerp(ANIM.windupLean * rise, ANIM.strikeLean, hit);
 
-    _pose[PART.CHEST * 9 + RX] += lean;
-    _pose[PART.BELLY * 9 + RX] += lean * 0.4;
-    _pose[PART.PELVIS * 9 + OZ] += -ANIM.strikeLunge * hit;
-    _pose[PART.PELVIS * 9 + OY] += -0.06 * rise;
-    _pose[PART.HEAD * 9 + RX] += lean * 0.55;
-    _pose[PART.JAW * 9 + RX] += ANIM.windupJaw * Math.max(rise, hit);
+    _pose[BONE.CHEST * POSE_STRIDE + RX] += lean;
+    _pose[BONE.SPINE * POSE_STRIDE + RX] += lean * 0.4;
+    _pose[BONE.HIPS * POSE_STRIDE + OZ] += -ANIM.strikeLunge * hit;
+    _pose[BONE.HIPS * POSE_STRIDE + OY] += -0.06 * rise;
+    // The head stays ON the player through the whole swing rather than riding the lean. That is
+    // both the horror beat and the reason the crit is still there to take while it commits.
+    _pose[BONE.NECK * POSE_STRIDE + RX] += lean * 0.30;
+    _pose[BONE.HEAD * POSE_STRIDE + RX] += -lean * 0.55;
+    _pose[BONE.JAW * POSE_STRIDE + RX] += ANIM.windupJaw * Math.max(rise, hit);
 
-    for (const [u, l, side] of [
-      [PART.ARM_UR, PART.ARM_LR, 1],
-      [PART.ARM_UL, PART.ARM_LL, -1],
+    for (const [u, l, hd, side] of [
+      [BONE.ARM_R, BONE.FORE_R, BONE.HAND_R, 1],
+      [BONE.ARM_L, BONE.FORE_L, BONE.HAND_L, -1],
     ] as const) {
-      _pose[u * 9 + RX] += arm;
-      _pose[u * 9 + RZ] += side * (0.55 * rise - 0.35 * hit);
-      _pose[l * 9 + RX] += -0.55 * rise + 0.5 * hit;
+      _pose[u * POSE_STRIDE + RX] += arm;
+      _pose[u * POSE_STRIDE + RZ] += side * (0.55 * rise - 0.35 * hit);
+      _pose[l * POSE_STRIDE + RX] += -0.55 * rise + 0.5 * hit;
+      _pose[hd * POSE_STRIDE + RX] += 0.6 * rise - 0.45 * hit;
     }
   }
 
@@ -921,55 +1003,63 @@ export class EnemyBody {
     // Dead-weight sway, on the same slow beat as the head loll. Dies as the body gets support.
     const sway = Math.sin(t * TAU * 1.5) * ANIM.climbSway * (1 - plantK);
 
-    const p = PART.PELVIS * 9;
+    const p = BONE.HIPS * POSE_STRIDE;
     _pose[p + OZ] += -ANIM.climbPull * haul;
     _pose[p + RZ] += sway;
     _pose[p + RX] += -0.32 * haul;
 
     // Torso: arched back while hanging, folded forward over the lip as it comes up.
-    const b = PART.BELLY * 9;
+    const b = BONE.SPINE * POSE_STRIDE;
     _pose[b + RX] += lerp(0.22, ANIM.climbFold * 0.45, haul);
-    const ch = PART.CHEST * 9;
+    const ch = BONE.CHEST * POSE_STRIDE;
     _pose[ch + RX] += lerp(0.34, ANIM.climbFold, haul);
     _pose[ch + RZ] += sway * 0.6;
 
-    // Head up at the ledge the whole way — a zombie climbing toward you looks AT you.
-    _pose[PART.HEAD * 9 + RX] += lerp(0.55, 0.1, haul);
-    _pose[PART.JAW * 9 + RX] += ANIM.windupJaw * (0.5 + 0.5 * (1 - haul));
+    // Head up at the ledge the whole way — a zombie climbing toward you looks AT you. The neck
+    // takes part of it so the skull is not simply glued to the chest's arc.
+    _pose[BONE.NECK * POSE_STRIDE + RX] += lerp(0.18, -0.05, haul);
+    _pose[BONE.HEAD * POSE_STRIDE + RX] += lerp(0.55, 0.42, haul) - ANIM.climbFold * haul * 0.5;
+    _pose[BONE.JAW * POSE_STRIDE + RX] += ANIM.windupJaw * (0.5 + 0.5 * (1 - haul));
 
     // Arms: straight overhead on the lip, elbows folding as they pull.
-    for (const [u, l, side] of [
-      [PART.ARM_UR, PART.ARM_LR, 1],
-      [PART.ARM_UL, PART.ARM_LL, -1],
+    for (const [u, l, hd, side] of [
+      [BONE.ARM_R, BONE.FORE_R, BONE.HAND_R, 1],
+      [BONE.ARM_L, BONE.FORE_L, BONE.HAND_L, -1],
     ] as const) {
-      _pose[u * 9 + RX] += ANIM.climbArmUp * (1 - plantK * 0.55);
-      _pose[u * 9 + RZ] += side * (0.34 + sway * 0.5);
-      _pose[l * 9 + RX] += ANIM.climbElbow * haul;
+      _pose[u * POSE_STRIDE + RX] += ANIM.climbArmUp * (1 - plantK * 0.55);
+      _pose[u * POSE_STRIDE + RZ] += side * (0.34 + sway * 0.5);
+      _pose[l * POSE_STRIDE + RX] += ANIM.climbElbow * haul;
+      _pose[hd * POSE_STRIDE + RX] += -0.45 + 0.35 * haul;
     }
 
     // Legs: dead and hanging, then one knee thrown onto the ledge. The asymmetry is the read.
-    const lead = this.dragSide === 0 ? PART.LEG_UL : PART.LEG_UR;
-    const leadLow = lead === PART.LEG_UL ? PART.LEG_LL : PART.LEG_LR;
-    const trail = lead === PART.LEG_UL ? PART.LEG_UR : PART.LEG_UL;
-    const trailLow = trail === PART.LEG_UR ? PART.LEG_LR : PART.LEG_LL;
-    _pose[lead * 9 + RX] += ANIM.climbKnee * plantK;
-    _pose[leadLow * 9 + RX] += -ANIM.climbKnee * 0.85 * plantK - 0.2;
-    _pose[trail * 9 + RX] += -0.28 * (1 - plantK) + 0.35 * plantK;
-    _pose[trailLow * 9 + RX] += -0.55 * (1 - plantK * 0.6);
+    const lead = this.dragSide === 0 ? BONE.THIGH_L : BONE.THIGH_R;
+    const leadLow = lead === BONE.THIGH_L ? BONE.SHIN_L : BONE.SHIN_R;
+    const trail = lead === BONE.THIGH_L ? BONE.THIGH_R : BONE.THIGH_L;
+    const trailLow = trail === BONE.THIGH_R ? BONE.SHIN_R : BONE.SHIN_L;
+    _pose[lead * POSE_STRIDE + RX] += ANIM.climbKnee * plantK;
+    _pose[leadLow * POSE_STRIDE + RX] += -ANIM.climbKnee * 0.85 * plantK - 0.2;
+    _pose[trail * POSE_STRIDE + RX] += -0.28 * (1 - plantK) + 0.35 * plantK;
+    _pose[trailLow * POSE_STRIDE + RX] += -0.55 * (1 - plantK * 0.6);
 
     // The rag hangs straight down — the one part that is honest about which way gravity is.
-    _pose[PART.RAG * 9 + RX] += 0.42 * (1 - haul * 0.5);
+    _pose[BONE.RAG * POSE_STRIDE + RX] += 0.42 * (1 - haul * 0.5);
   }
 
   /** Comic pop-in: squashed flat, overshoot past full height, settle. */
   private poseSpawn(a: PoseArgs): void {
     const k = easeOutBack(clamp01(a.spawn01), (ANIM.spawnOvershoot - 1) * 6.8);
-    const p = PART.PELVIS * 9;
+    const p = BONE.HIPS * POSE_STRIDE;
     _pose[p + SY] *= lerp(ANIM.spawnSquash, 1, k);
     const sxz = lerp(1 + (1 - ANIM.spawnSquash) * 0.7, 1, k);
     _pose[p + SX] *= sxz;
     _pose[p + SZ] *= sxz;
     _pose[p + OY] += -(1 - k) * 0.35;
+    // The spine carries the squash up the body, or only the hips inflate and the pop-in reads
+    // as a hovering torso. One line the rigid rig could not have: the surface is continuous.
+    const b = BONE.SPINE * POSE_STRIDE;
+    _pose[b + SY] *= lerp(ANIM.spawnSquash + 0.2, 1, k);
+    _pose[b + OY] += -(1 - k) * 0.10;
   }
 
   /**
@@ -981,23 +1071,31 @@ export class EnemyBody {
   private poseDeath(a: PoseArgs): void {
     const k = easeOutExpo(clamp01(a.death01 * 3.4));
     // Blown BACKWARD: positive rx arches the torso back, which is the comic impact frame.
-    _pose[PART.CHEST * 9 + RX] += ANIM.deathArch * k;
-    _pose[PART.HEAD * 9 + RX] += ANIM.deathArch * 0.8 * k;
-    _pose[PART.JAW * 9 + RX] += 1.3 * k;
-    _pose[PART.PELVIS * 9 + OY] += -0.16 * k;
-    _pose[PART.PELVIS * 9 + SY] *= 1 - 0.12 * k;
-    for (const [u, side] of [[PART.ARM_UR, 1], [PART.ARM_UL, -1]] as const) {
-      _pose[u * 9 + RX] += -ANIM.deathArmFling * k;
-      _pose[u * 9 + RZ] += side * 1.05 * k;
+    _pose[BONE.CHEST * POSE_STRIDE + RX] += ANIM.deathArch * k;
+    _pose[BONE.NECK * POSE_STRIDE + RX] += ANIM.deathArch * 0.50 * k;
+    _pose[BONE.HEAD * POSE_STRIDE + RX] += ANIM.deathArch * 0.55 * k;
+    _pose[BONE.JAW * POSE_STRIDE + RX] += 1.3 * k;
+    _pose[BONE.HIPS * POSE_STRIDE + OY] += -0.16 * k;
+    _pose[BONE.HIPS * POSE_STRIDE + SY] *= 1 - 0.12 * k;
+    for (const [u, hd, side] of [
+      [BONE.ARM_R, BONE.HAND_R, 1],
+      [BONE.ARM_L, BONE.HAND_L, -1],
+    ] as const) {
+      _pose[u * POSE_STRIDE + RX] += -ANIM.deathArmFling * k;
+      _pose[u * POSE_STRIDE + RZ] += side * 1.05 * k;
+      _pose[hd * POSE_STRIDE + RZ] += side * 0.5 * k;
     }
-    _pose[PART.LEG_UR * 9 + RX] += 0.5 * k;
-    _pose[PART.LEG_UL * 9 + RX] += 0.5 * k;
+    _pose[BONE.THIGH_R * POSE_STRIDE + RX] += 0.5 * k;
+    _pose[BONE.THIGH_L * POSE_STRIDE + RX] += 0.5 * k;
   }
 
   /**
    * ADDITIVE, applied after everything else. `leanX` / `leanZ` come from a bouncy spring in
    * `reactions.ts`, so a hit throws the body, overshoots and comes back; the shudder is the
    * high-frequency channel ART §9 reserves for enemies and nothing else in the frame.
+   *
+   * The neck is in the chain now, which is what lets a headshot flinch actually SNAP the head:
+   * `ANIM.flinchHeadMult` used to multiply a rotation that had nowhere to travel.
    */
   private poseFlinch(a: PoseArgs): void {
     if (a.leanX === 0 && a.leanZ === 0 && a.shudder === 0) return;
@@ -1005,109 +1103,66 @@ export class EnemyBody {
     const lz = a.leanZ * ANIM.flinchLean;
     const sh = a.shudder * ANIM.shudderAmp;
 
-    _pose[PART.PELVIS * 9 + RZ] += lx * 0.45;
-    _pose[PART.PELVIS * 9 + RX] += lz * 0.45;
-    _pose[PART.BELLY * 9 + RZ] += lx * 0.30;
-    _pose[PART.BELLY * 9 + RX] += lz * 0.35;
-    _pose[PART.CHEST * 9 + RZ] += lx * 0.55 + sh;
-    _pose[PART.CHEST * 9 + RX] += lz * 0.60;
-    _pose[PART.HEAD * 9 + RZ] += lx * 0.90 - sh * 2.2;
-    _pose[PART.HEAD * 9 + RX] += lz * 1.15;
+    _pose[BONE.HIPS * POSE_STRIDE + RZ] += lx * 0.45;
+    _pose[BONE.HIPS * POSE_STRIDE + RX] += lz * 0.45;
+    _pose[BONE.SPINE * POSE_STRIDE + RZ] += lx * 0.30;
+    _pose[BONE.SPINE * POSE_STRIDE + RX] += lz * 0.35;
+    _pose[BONE.CHEST * POSE_STRIDE + RZ] += lx * 0.55 + sh;
+    _pose[BONE.CHEST * POSE_STRIDE + RX] += lz * 0.60;
+    _pose[BONE.NECK * POSE_STRIDE + RZ] += lx * 0.60 - sh * 1.1;
+    _pose[BONE.NECK * POSE_STRIDE + RX] += lz * 0.70;
+    _pose[BONE.HEAD * POSE_STRIDE + RZ] += lx * 0.90 - sh * 2.2;
+    _pose[BONE.HEAD * POSE_STRIDE + RX] += lz * 1.15;
     // Arms fly. A flinch you can only see in the torso reads as a wobble, not as an impact.
     for (const [u, l, side] of [
-      [PART.ARM_UR, PART.ARM_LR, 1],
-      [PART.ARM_UL, PART.ARM_LL, -1],
+      [BONE.ARM_R, BONE.FORE_R, 1],
+      [BONE.ARM_L, BONE.FORE_L, -1],
     ] as const) {
-      _pose[u * 9 + RX] += lz * 0.8;
-      _pose[u * 9 + RZ] += lx * 0.7 + side * sh * 1.6;
-      _pose[l * 9 + RX] += lz * 0.5;
+      _pose[u * POSE_STRIDE + RX] += lz * 0.8;
+      _pose[u * POSE_STRIDE + RZ] += lx * 0.7 + side * sh * 1.6;
+      _pose[l * POSE_STRIDE + RX] += lz * 0.5;
     }
-  }
-
-  /**
-   * Local pose → fourteen enemy-local matrices, in one forward pass. `PART_PARENT` is monotonic
-   * by construction, so a parent is always already resolved when its child is reached.
-   *
-   * Scale is deliberately NOT inherited: a part's world transform is built from its parent's
-   * POSITION AND ROTATION only, and its own scale is applied last. Inheriting a non-uniform
-   * scale down a chain skews every child's rotation — which is exactly how a "bloated" variant
-   * ends up with sheared legs.
-   */
-  private compose(): void {
-    for (let i = 0; i < PART_COUNT; i++) {
-      const b = i * 9;
-      _e.set(_pose[b + RX], _pose[b + RY], _pose[b + RZ], 'YXZ');
-      _q.setFromEuler(_e);
-      _v.set(
-        this.rest[i].x + _pose[b + OX],
-        this.rest[i].y + _pose[b + OY],
-        this.rest[i].z + _pose[b + OZ],
-      );
-      const parent = PART_PARENT[i];
-      if (parent < 0) {
-        _wPos[i].copy(_v);
-        _wQuat[i].copy(_q);
-      } else {
-        _qp.copy(_wQuat[parent]);
-        _wPos[i].copy(_v).applyQuaternion(_qp).add(_wPos[parent]);
-        _wQuat[i].copy(_qp).multiply(_q);
-      }
-      const sv = this.scale[i];
-      _s.set(sv.x * _pose[b + SX], sv.y * _pose[b + SY], sv.z * _pose[b + SZ]);
-      if (this.severedPart(i)) _s.multiplyScalar(SEVERED_SCALE);
-      this.matrices[i].compose(_wPos[i], _wQuat[i], _s);
-    }
-  }
-
-  /** True when this part belongs to a limb that has been shot off. */
-  private severedPart(i: number): boolean {
-    if (this.severed[LIMB.ARM_R] && (i === PART.ARM_UR || i === PART.ARM_LR)) return true;
-    if (this.severed[LIMB.ARM_L] && (i === PART.ARM_UL || i === PART.ARM_LL)) return true;
-    if (this.severed[LIMB.LEG_R] && (i === PART.LEG_UR || i === PART.LEG_LR)) return true;
-    if (this.severed[LIMB.LEG_L] && (i === PART.LEG_UL || i === PART.LEG_LL)) return true;
-    return false;
   }
 
   // ── hitbox anchors, read straight off the posed rig ───────────────────────
   //
-  // WHAT YOU SEE IS WHAT YOU HIT. These are derived from the SAME stepped matrices the mesh is
-  // drawn with, not from a smooth parallel rig — so a head that is being held for five frames
-  // is also being *aimed at* for those five frames. A hitbox that leads the drawing is the
-  // single most infuriating bug a shooter can ship.
+  // WHAT YOU SEE IS WHAT YOU HIT. These are derived from the SAME stepped bone matrices the
+  // mesh is drawn with, not from a smooth parallel rig — so a head that is being held for five
+  // frames is also being *aimed at* for those five frames. A hitbox that leads the drawing is
+  // the single most infuriating bug a shooter can ship.
+  //
+  // Anything the combat agent needs beyond these six primitives comes off `this.rig` directly.
 
-  /** Head sphere centre, in enemy-local space. */
+  /** Head sphere centre, in enemy-local space. Dead centre of the DRAWN cranium. */
   headPoint(out: Vector3): Vector3 {
-    return out.set(0, HITBOX.headCenterY, 0).applyMatrix4(this.matrices[PART.HEAD]);
+    _local.set(0, HITBOX.headCenterY, HITBOX.headCenterZ);
+    return this.rig.boneLocal(BONE.HEAD, _local, out);
   }
 
   /** Torso capsule, in enemy-local space. */
   torsoSegment(a: Vector3, b: Vector3): void {
-    a.setFromMatrixPosition(this.matrices[PART.PELVIS]);
-    b.set(0, HITBOX.torsoTopY, 0).applyMatrix4(this.matrices[PART.CHEST]);
+    this.rig.bonePoint(BONE.HIPS, a);
+    _local.set(0, HITBOX.torsoTopY, 0);
+    this.rig.boneLocal(BONE.CHEST, _local, b);
   }
 
   /**
    * Limb capsule, in enemy-local space: shoulder→hand or hip→foot as ONE capsule. A capsule per
    * bone would be more accurate and would cost twice the ray tests for a target nobody is meant
-   * to be sniping — limbs are the dismemberment surface, not a precision one.
+   * to be sniping — limbs are the dismemberment surface, not a precision one. The combat agent
+   * can build the per-bone version from `rig.boneSegment()` whenever that changes.
    * Returns false when the limb is already gone.
    */
   limbSegment(limb: number, a: Vector3, b: Vector3): boolean {
-    if (this.severed[limb]) return false;
-    const root = LIMB_ROOT[limb];
-    // The rig pairs upper/lower consecutively — see `PART` in defs.ts.
-    const tip = root + 1;
-    a.setFromMatrixPosition(this.matrices[root]);
-    const len = limb < 2
-      ? BODY.lowerArm[1] + BODY.hand[1] * 0.5
-      : BODY.shin[1] + BODY.foot[1] * 0.5;
-    b.set(0, -len, 0).applyMatrix4(this.matrices[tip]);
+    if (this.severedLimb[limb]) return false;
+    this.rig.bonePoint(LIMB_ROOT[limb] as number, a);
+    this.rig.boneTip(LIMB_TIP[limb] as number, b);
     return true;
   }
 
   /** Local-space position of the joint a severed limb came off — where the ink spray belongs. */
   limbRootPoint(limb: number, out: Vector3): Vector3 {
-    return out.setFromMatrixPosition(this.matrices[LIMB_ROOT[limb]]);
+    return this.rig.bonePoint(LIMB_ROOT[limb] as number, out);
   }
 
   dispose(): void {

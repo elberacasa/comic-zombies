@@ -26,8 +26,12 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import type { Pass } from 'three/addons/postprocessing/Pass.js';
 import type { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
+import { PALETTE, hexMix } from '@/art/palette';
+import { ESCALATION, type EscalationSink } from '@/world/lighting';
+import type { EscalationState } from '@/game/tuning';
+
 import {
-  buildPass, collectUniforms, makeCommonUniforms,
+  buildPass, collectUniforms, makeCommonUniforms, tintVec,
   type CommonUniforms, type PassChunk, type Uniform, type Uniforms,
 } from './passes/common';
 import { makeInkChunk, setInkSources, setInkViewDirs, type InkPassOptions } from './passes/ink';
@@ -81,7 +85,16 @@ export interface PipelineQuality {
   inkThickness: number;
 }
 
-export class ComicPipeline {
+/**
+ * How strong the split-tone tints are, matching `passes/grade.ts`'s own defaults. Read here
+ * rather than imported because `makeGradeUniforms` bakes them into a vector — this is the amount
+ * the escalation re-authors that vector at, and it is deliberately UNCHANGED by the round: an
+ * ember shift is a hue move (see `world/lighting.ts::ember`), never a strength move.
+ */
+const GRADE_SHADOW_TINT = 0.16;
+const GRADE_HIGH_TINT = 0.12;
+
+export class ComicPipeline implements EscalationSink {
   readonly composer: EffectComposer;
   readonly common: CommonUniforms;
   /** Every chunk uniform, flat, addressable by name. Drive the look from here. */
@@ -193,6 +206,64 @@ export class ComicPipeline {
 
     this.htPitchCss = this.u('uHtPitch').value;
     this.setSize(width, height, pixelRatio);
+    // Self-register with the visual-escalation bus. Nothing is pushed until the first round
+    // begins; a pipeline rebuilt mid-run (context loss) is brought straight up to date.
+    ESCALATION.attach(this);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // VISUAL ESCALATION — the grade, the panel and the plate, per round.
+  //
+  // Every value written here is ABSOLUTE and derived from the round, never a delta — so
+  // applying the same round twice is a no-op and jumping round 20 → round 1 restores the
+  // shipped look exactly. Called once per round from `game/rounds/director.ts`; there is no
+  // per-frame path into any of it, which is how ART §4.1 survives an escalating grade.
+  //
+  // Nothing below adds a pass, a texture or a render target: it is seven scalars and two
+  // vec3s on shaders that already run. The measured cost of the whole escalation is 0 draw
+  // calls and 0 triangles.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** The round the LOOK is set to. 0 before the first round. */
+  private _escRound = 0;
+  get escalationRound(): number { return this._escRound; }
+
+  applyEscalation(e: Readonly<EscalationState>): void {
+    this._escRound = e.round;
+
+    // ── the grade hardens ─────────────────────────────────────────────────
+    this.u('uGradeContrast').value = e.contrast;
+    this.u('uGradeSaturation').value = e.saturation;
+    this.u('uGradeExposure').value = e.exposure;
+    // A CHEAPER PRESS: 24 → 17 posterize steps. Fewer inks, a coarser separation, the look of
+    // a book printed in a hurry. The Bayer dither is untouched, so this reads as a rougher
+    // screen rather than as banding.
+    this.u('uGradeLevels').value = e.levels;
+
+    /**
+     * SPLIT TONE. `tintVec` returns a MULTIPLICATIVE tint normalised about its own mean, so a
+     * hue swap here cannot change the frame's overall brightness — only which way the darks and
+     * the lights lean. The shadows bruise NIGHT_B → HOT and the highlights cool from GOLD to
+     * RUST, which is the entire "the night turns hostile" beat expressed in two vec3s.
+     *
+     * ART §9: HOT here is a 16%-strength multiplicative lean on the DARK end of a full-frame
+     * grade, not a surface colour — it cannot compete with an enemy silhouette because it is
+     * applied to the enemy too, and the reserved-channel probe reads green dominance, which
+     * neither HOT nor RUST carries.
+     */
+    (this.u<Vector3>('uGradeShadowTint').value).copy(
+      tintVec(hexMix(PALETTE.NIGHT_B, PALETTE.HOT, e.shadowEmber), GRADE_SHADOW_TINT));
+    (this.u<Vector3>('uGradeHighTint').value).copy(
+      tintVec(hexMix(PALETTE.GOLD, PALETTE.RUST, e.highEmber), GRADE_HIGH_TINT));
+
+    // ── the panel closes in ───────────────────────────────────────────────
+    // Written straight onto `passes/vignette.ts`'s uniforms; that file is untouched.
+    this.u('uVigAmount').value = e.vignette;
+    this.u('uVigInner').value = e.vignetteInner;
+
+    // ── the comic language gets denser ────────────────────────────────────
+    this.u('uOvSpeedCount').value = e.speedCount;
+    this.u('uOvSoot').value = e.soot;
   }
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -377,6 +448,7 @@ export class ComicPipeline {
   get panelFrame(): number { return this.u('uFrame').value; }
 
   dispose(): void {
+    ESCALATION.detach(this);
     for (const p of this.ownedPasses) p.dispose();
     this.composer.dispose();
   }

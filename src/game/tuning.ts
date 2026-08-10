@@ -168,6 +168,14 @@ export const MOVE = {
   /** Collision resolve iterations per substep. 4 handles a corner (3 planes) with margin. */
   collisionIterations: 4,
 
+  /**
+   * Hard cap on a single depenetration correction, metres. Above this the solver is escaping,
+   * not contacting, and the player feels a teleport. Measured worst pre-fix displacement on the
+   * fire escape was 3.38 m in ONE substep. The horde keeps the looser 1.5 m mover default — see
+   * `motion/mover.ts::MotionParams.maxCorrection` for why the two must not be unified.
+   */
+  maxCorrection: 0.5,
+
   /** Max distance moved per collision substep. Below `radius` so nothing tunnels at high speed. */
   maxSubstepDistance: 0.3,
 
@@ -1378,8 +1386,24 @@ export const ENEMY = {
    */
   verticalMeleeGate: 1.7,
   meleeWindup: 0.42,
-  meleeDamage: 28,
+  /**
+   * SHARED DEFAULT — a kind may override it (`EnemyDef.meleeDamage`, and the shambler does).
+   * 70 of the player's 150: CoD's "half your health, two hits down you without Juggernog",
+   * expressed in this game's numbers. See the long note on `SHAMBLER.meleeDamage`.
+   */
+  meleeDamage: 70,
   meleeCooldown: 1.1,
+  /**
+   * ± fraction of jitter on each swing's cooldown, so a pack does not lock into one metronome.
+   *
+   * WHY IT IS NOT COSMETIC. Every zombie enters `attack` at the same trigger (inside
+   * `meleeRange`) and leaves it after a fixed `SWING_TIME`, so five bodies that arrive together
+   * synchronise permanently: all five wind up on the same frame, all five land on the same
+   * frame, and 350 damage arrives as ONE event you cannot react to and cannot read. Being
+   * surrounded should be a drum roll of separate hits you are frantically walking out of. 0.22
+   * de-phases a pack inside two swing cycles and is far too small to be felt as a delay.
+   */
+  meleeCooldownJitter: 0.22,
 
   /** Flinch: seconds of stagger per hit, and the knockback impulse per unit of damage. */
   flinchTime: 0.12,
@@ -1571,44 +1595,68 @@ export const ROUND = {
   spawnBurstMax: 3,
 
   /**
-   * HP scaling: rounds 1..`hpLinearRounds` scale linearly at `hpPerRound`, then compound at
-   * `hpExponent`. Shambler base is 150 HP and the inkslinger does 105 to a head, so:
-   * R1 = 150 (2 headshots) · R10 = 339 (4) · R15 = 522 (5) · R20 = 802 (8).
-   * The exponent is where a run's ceiling lives — raise it and rounds get short and brutal,
-   * drop it and round 25 never ends.
+   * ═══════════════════════════════════════════════════════════════════════════════════════
+   *  THE HEALTH CURVE — Call of Duty: World at War / Black Ops, exactly.
+   *
+   *      round 1        = 150 HP
+   *      rounds 2 … 9   = previous + 100          (250, 350, 450, 550, 650, 750, 850, 950)
+   *      round 10 +     = previous × 1.1          (compounding, forever)
+   *
+   *  R1 150 · R5 550 · R10 1045 · R15 1683 · R20 2711 · R25 4365 · R30 7030.
+   *
+   *  WHY THIS EXACT SHAPE, and not the smooth exponential we shipped. Treyarch's curve has a
+   *  KNEE, and the knee is the design. The +100 stretch is FLAT in ratio terms — round 2 is
+   *  1.67× round 1, but round 9 is only 1.13× round 8 — so the first nine rounds get steadily
+   *  EASIER relative to the round before them, which is exactly the "I'm getting good at this"
+   *  slope a new player needs. Then round 10 flips to a constant 10% compound and every round
+   *  after it is the same amount harder than the last, forever. A single smooth exponent (what
+   *  `hpExponent: 1.06` was) cannot produce both halves, and what it produced instead was a
+   *  first ten rounds that were too soft and a saturation cap that made round 20 and round 40
+   *  numerically identical.
+   *
+   *  THE THING THE LEAD MUST KNOW, stated plainly rather than hidden in a cap: the inkslinger
+   *  does 105 to a head, so this curve is 2 headshots at R1, 6 at R5, 10 at R10, 17 at R15 and
+   *  26 at R20. In CoD you answer round 15 with Pack-a-Punch; here `weapons/defs.ts::UPGRADE`
+   *  exists (`damageMult` 2.1 → 220/head, i.e. 8 headshots at R15) but nothing in M3 sells it.
+   *  THE CURVE IS NOT THE PROBLEM — the missing damage economy is, and capping HP to hide it is
+   *  what produced the previous build's flat late game. `hpCapRound` below is the one-number
+   *  escape hatch if the human wants the old behaviour back before M4 lands the upgrade.
+   * ═══════════════════════════════════════════════════════════════════════════════════════
    */
-  hpPerRound: 0.14,
-  hpLinearRounds: 10,
-  hpExponent: 1.06,
+  /** Round 1 health. `EnemyDef.health` matches it, so `hpScale` is 1.0 at round 1. */
+  hpRound1: 150,
+  /** Flat addition per round through `hpLinearUntil`. */
+  hpAddPerRound: 100,
+  /** Last round of the +100 stretch. Round `hpLinearUntil + 1` is the first compounding one. */
+  hpLinearUntil: 9,
+  /** Compound factor from `hpLinearUntil + 1` on. CoD's is exactly 1.1. */
+  hpGrowth: 1.1,
   /**
-   * HP SATURATION — and the single most important number in the late game.
-   *
-   * It was 40, which is not a cap, it is a rounding error: nothing reached it before round 60,
-   * so the curve compounded unopposed and rounds 10+ turned into emptying magazines into the
-   * same shambler. MEASURED with a perfect-aim, never-dying driver (an upper bound on any
-   * human): R1 0.50 kills/s · R5 0.58 · R10 0.18 · R20 0.12, with round 20 projecting to nine
-   * minutes. That is not a curve, it is a table of numbers crossing a line.
-   *
-   * The cause is TTK against a fixed weapon. The inkslinger does 105 to a head and M3 has no
-   * wall-buy and no Pack-a-Punch, so the ONLY damage growth a player has is boons. At 1.09 the
-   * HP curve doubled every 8 rounds and left that behind: 2 headshots at R1, 4 at R10, 9 at R20,
-   * 13 at R25 — past a 12-round magazine.
-   *
-   * 1.06 + a 4.2 ceiling holds the worst case at 630 HP = 6 headshots forever, reached around
-   * round 20, and hands the escalation back to COUNT and LIVE CAP — which is GAME_BIBLE §6's own
-   * ordering anyway (HP first, THEN speed, THEN composition) and is the axis a player can
-   * actually play against. Raise this the day M4 lands a damage upgrade the player can buy.
+   * Round past which health STOPS growing. 0 = never (CoD's own behaviour, and the default).
+   * Set it to e.g. 15 to freeze the late game at 1683 HP while the damage economy is missing —
+   * one number, one place, and the curve below it is untouched.
    */
-  hpScaleMax: 4.2,
+  hpCapRound: 0,
+  /** Absolute numeric guard. CoD clamps around 1e6 too; nothing reaches it before round ~100. */
+  hpMax: 1_000_000,
 
   /**
-   * Speed scaling starts only after HP scaling has done its work — speed is scarier than HP,
-   * and it is also what kills kiting if it goes too far. `speedScaleMax` 1.55 puts a late
-   * shambler at 2.51 m/s against a 5.4 m/s walk: still trainable into a conga line.
+   * ═══ SPEED SCALING IS NO LONGER THE SPEED AXIS ═══
+   *
+   * `enemies/defs.ts::SPEED_TIERS` + `TIER_MIX` now carry the whole escalation: a per-instance
+   * walk / walker / runner / sprinter tier rolled at spawn from a round-driven distribution,
+   * exactly as CoD does it. That takes the horde from a single 1.62–2.51 m/s band to a mix
+   * spanning 1.62–4.13 m/s that shifts fast as the rounds climb.
+   *
+   * What is left here is a small late-game creep on TOP of the tier, so rounds past the point
+   * where the mix saturates (~17) still have somewhere to go. Kept tiny and kept late: the
+   * sprinter tier is already 76% of the player's walk, and `speedScaleMax` 1.12 puts the
+   * absolute worst case at 4.63 m/s — still under 5.4, so a straight line is still an escape and
+   * a train is still trainable. That last clause is the entire reason for the cap.
    */
-  speedPerRound: 0.03,
-  speedScaleStartRound: 4,
-  speedScaleMax: 1.55,
+  speedPerRound: 0.012,
+  speedScaleStartRound: 12,
+  speedScaleMax: 1.12,
 
   // ── THE BEAT (GAME_BIBLE §6: horde silence → title card → intermission → the drop) ───────
 
@@ -2177,9 +2225,342 @@ export const VFX = {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+// VISUAL ESCALATION — "so people dont get bored quick" (BUILD 007).
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//  A SINGLE UNCHANGING ARENA IS THE FASTEST WAY TO BORE SOMEONE, no matter how good it looks
+//  the first time. Round 15 has to LOOK different from round 1, and the difference has to be
+//  cumulative — a curve the player rides, not a switch that flips.
+//
+//  THE THREE ERAS, and they fall straight out of `curve` below rather than being three
+//  hand-authored presets (a preset is a switch; a curve is a slide):
+//
+//      rounds 1–5    t ≤ 0.14   a cool sodium-lit night. The shipped look, untouched.
+//      rounds 6–12   t 0.2–0.7  the sky bruises, lamps start failing, the grade hardens
+//      rounds 13+    t → 1      genuinely apocalyptic: ember horizon, a third of the city's
+//                               practicals dead, soot on the plate, a tight hot vignette
+//
+//  ═══ THE THREE CONSTRAINTS EVERY NUMBER BELOW IS FITTED TO ═══
+//
+//  1. **ART §4.1 — STILLNESS.** Every one of these values is recomputed exactly ONCE, in
+//     `RoundSystem.beginRound`, and then held perfectly still for the whole round. There is no
+//     per-frame term, no lerp-toward, no clock anywhere in the escalation path. A creeping
+//     grade is the human's single loudest past complaint and it is not coming back. The look
+//     changes BETWEEN rounds; within a round the frame is bit-static.
+//
+//  2. **ART §9 — RESERVED CHANNELS.** `ACID` and `HOT` belong to enemies. The apocalyptic sky
+//     is driven toward `RUST` (SEMANTIC.fire — explicitly NOT reserved), with `HOT` allowed
+//     only in `skyEmberHot`: the narrow horizon rim, which the sky shader already multiplies by
+//     0.22 and which is 60+ metres behind anything a player shoots. Nothing large, near or
+//     mid-frame may take a reserved hue. Verified with the squint probe, not asserted.
+//
+//  3. **THE VALUE STRUCTURE MUST SURVIVE.** The consistency pass measured the frame back into
+//     shape; an apocalyptic round 20 that collapses into a two-value void undoes it. So the
+//     AMBIENT FLOOR barely moves (`ambientGainPeak` 0.94 — it is the height of the floor the
+//     whole frame stands on, see `world/lighting.ts::AMBIENT_LEVEL`), failing lamps DIM rather
+//     than switch off (`lampFailDim`), and the horizon glow comes UP as the key comes down so
+//     the frame loses warmth from the top and regains it at the back.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+export const VISUAL_ESCALATION = {
+  /** Master switch. `false` pins every round at the round-1 look. */
+  enabled: true,
+
+  /**
+   * The round the look is fully escalated at, and holds from. 15 because that is the number the
+   * human said out loud ("round 15 look different from round 1") and because the combat pass put
+   * the speed-tier mix at saturation there too — the picture and the fight peak together.
+   */
+  peakRound: 15,
+  /**
+   * Ease on `t = ((round-1)/(peakRound-1)) ^ curve`. ABOVE 1 ON PURPOSE — the change is
+   * back-loaded so the opening rounds stay the clean sodium night the whole art direction was
+   * tuned against, and the escalation is something the player earns rather than something that
+   * starts happening immediately. At 1.6: round 5 → 0.14, round 10 → 0.49, round 15 → 1.
+   */
+  curve: 1.6,
+
+  // ── SKY ──────────────────────────────────────────────────────────────────────────────────
+  // Drives the `SkyMaterial` uniforms through `ArenaLighting`. The sky is a fifth of the frame
+  // and it is the cheapest large-area change available: no geometry, no draw call, no pass.
+
+  /** How far the horizon glow (`uGlow`) rides SODIUM → RUST → HOT. */
+  skyEmberRust: 0.85,
+  /** …and then the last leg toward HOT. Small: this is the only reserved hue in the sky. */
+  skyEmberHot: 0.30,
+  /** Gain on the horizon glow at peak. It gets BRIGHTER as the key light dies — see §3 above. */
+  skyGlowGainPeak: 2.6,
+  /** How far the zenith sinks toward INK. The top of the sky closes down. */
+  skyDeepenPeak: 0.48,
+  /** How far the horizon band itself warms NIGHT_B → RUST. */
+  skyHorizonEmberPeak: 0.34,
+  /**
+   * ADDED to whatever cover the arena authored (0.38 today). Relative, not absolute, so this
+   * section cannot silently drift away from `world/arena.ts` if the sky is ever re-authored.
+   */
+  cloudAddPeak: 0.38,
+  /** MULTIPLIES the arena's star density. The overcast swallows them. */
+  starMulPeak: 0.21,
+
+  // ── FOG ──────────────────────────────────────────────────────────────────────────────────
+  // Aerial perspective is a VALUE tool before it is an atmosphere tool (see `lighting.ts`), so
+  // this is the escalation's main lever on depth. Enemies are `fog: 0` and never fade, so
+  // tightening the fog RAISES enemy contrast against the city rather than hiding a threat.
+
+  /** How far the near fog colour warms NIGHT_B → RUST. */
+  fogNearEmberPeak: 0.30,
+  /** …and the far fog colour, which is also the value the backdrop resolves to. Kept smaller. */
+  fogFarEmberPeak: 0.16,
+  /**
+   * Fog far distance at peak, metres, as a FRACTION of the arena-derived range. 0.80 pulls a
+   * 230 m range in to 184 m — the far perimeter starts to go, the world closes in, and the
+   * 198 m diagonal is still not fully fogged (which would erase the whole rescale).
+   */
+  fogFarScalePeak: 0.76,
+  /** Same for fog near. Slightly stronger, so the banded steps bunch toward the player. */
+  fogNearScalePeak: 0.74,
+
+  // ── THE LIGHT RIG ────────────────────────────────────────────────────────────────────────
+
+  /** How far the warm key rides toward RUST. The sodium street light turns to firelight. */
+  keyEmberPeak: 0.55,
+  /** Multiplier on key intensity at peak. The city stops being well lit. */
+  keyGainPeak: 0.94,
+  /** Multiplier on the cool fill. The pretty teal bounce retreats hardest. */
+  fillGainPeak: 0.82,
+  /**
+   * Multiplier on the AMBIENT FLOOR. 0.94, and it is deliberately the smallest move in the
+   * file: `AMBIENT_LEVEL` is what keeps every shadow-side surface above
+   * `READABILITY.ENV_VALUE_FLOOR`. Drop this to 0.8 and round 20 measures as BUILD 001 did.
+   */
+  ambientGainPeak: 1.0,
+  /** How far the ambient floor's hue warms toward RUST. Bruised darks, same value. */
+  ambientEmberPeak: 0.30,
+
+  // ── THE CITY ACCUMULATES DAMAGE ──────────────────────────────────────────────────────────
+  // Procedural, deterministic, and free: every practical carries a per-lamp hash baked into its
+  // glow geometry, and one uniform decides how many of them are below the cut. Same hash on the
+  // CPU drives the real `PointLight`, so the drawn light and the sampled light never disagree.
+
+  /** Fraction of practicals that have failed by peak. 0.30 = roughly one lamp in three. */
+  lampFailPeak: 0.36,
+  /**
+   * What a "failed" lamp drops to, NOT zero. A dead lamp removes its ground pool, and a pool is
+   * what makes a light read as landing on a floor — kill 30% of them outright and the streets
+   * lose 30% of their staged islands, which is the value collapse §3 forbids. A guttering lamp
+   * at 0.26 still lays a shape; it just stops being a place you want to stand.
+   */
+  lampFailDim: 0.26,
+  /** How far the surviving SODIUM practicals ride toward RUST. GOLD lamps never move (§9). */
+  lampEmberPeak: 0.40,
+
+  // ── THE GRADE ────────────────────────────────────────────────────────────────────────────
+  // All existing `passes/grade.ts` uniforms — no new shader code, so this composes with
+  // everything instead of being a separate overlay laid on top of the picture.
+
+  /** `uGradeContrast`. A harder page as the night gets worse. */
+  contrastStart: 1.12,
+  contrastPeak: 1.14,
+  /** `uGradeSaturation`. The ink gets louder, never muddier. */
+  saturationStart: 1.28,
+  saturationPeak: 1.46,
+  /** `uGradeExposure`. Small — this is the one knob that can eat the midtone band wholesale. */
+  exposureStart: 1.22,
+  exposurePeak: 1.20,
+  /**
+   * `uGradeLevels` — posterize steps per channel. 24 → 17 is a CHEAPER PRESS: fewer inks, a
+   * coarser separation, the look of a book printed in a hurry. The Bayer dither is still on, so
+   * this reads as a rougher screen rather than as banding.
+   */
+  levelsStart: 24,
+  levelsPeak: 21,
+  /** How far the shadow tint rides NIGHT_B → HOT. Multiplicative and tiny — see `tintVec`. */
+  shadowEmberPeak: 0.55,
+  /** How far the highlight tint rides GOLD → RUST. */
+  highEmberPeak: 0.60,
+
+  // ── FRAME FURNITURE ──────────────────────────────────────────────────────────────────────
+
+  /** `uVigAmount` / `uVigInner`. The panel closes in on you. */
+  vignetteStart: 0.62,
+  vignettePeak: 0.68,
+  vignetteInnerStart: 0.42,
+  vignetteInnerPeak: 0.39,
+  /**
+   * `uOvSoot` — static ink build-up on the plate, drawn on the frame's own dot lattice at a free
+   * plate angle. NOT a particle, NOT a clock: a pure function of `gl_FragCoord`, so it is
+   * bit-identical frame to frame (§4.1) and reads as a page that has been through fifteen
+   * rounds. Concentrated toward the frame edge where the vignette already lives, so it costs
+   * the midtone band almost nothing.
+   */
+  sootPeak: 0.30,
+  /** `uOvSpeedCount` — the comic language gets denser as the rounds get faster. */
+  speedCountStart: 120,
+  speedCountPeak: 168,
+
+  // ── SURGE ROUNDS GET THEIR OWN LOOK ──────────────────────────────────────────────────────
+  // The director already marks them (`ROUND.surgeEvery`). A surge is a PUSH on top of wherever
+  // the curve currently is, not a separate preset — so surge round 5 and surge round 20 are
+  // both recognisably "the loud one" without either of them leaving its own era.
+
+  /** Extra ember on the sky and the key. This is the beat that says "this one is different". */
+  surgeEmber: 0.26,
+  /** Extra gain on the horizon glow. */
+  surgeGlowGain: 0.45,
+  /** Additive push on grade saturation / contrast. */
+  surgeSaturation: 0.07,
+  surgeContrast: 0.025,
+  /** The panel tightens. */
+  surgeVignette: 0.035,
+  surgeVignetteInner: -0.03,
+  /** Extra ember on the surviving lamps — the whole street turns the colour of the round. */
+  surgeLampEmber: 0.25,
+
+  /**
+   * PLAYING WELL LOOKS LOUDER. One GOLD speed-line pulse the first time a round's combo hits its
+   * top multiplier — a one-shot into the renderer's own self-decaying overlay, not a driven
+   * uniform, so it obeys §4.1 by construction (it animates while it is ALIVE and nothing at
+   * rest). 0 disables it.
+   */
+  comboPeakLines: 0.55,
+};
+
+/**
+ * THE ESCALATION STATE — every number the look derives from the round, in one bag.
+ *
+ * Deliberately SCALARS ONLY, no colours. `game/tuning.ts` owns *how far*; `world/lighting.ts`
+ * and `render/pipeline.ts` own *toward what*, because that is where the palette lives and
+ * ARCHITECTURE §1.7 says no system file carries a raw hue. That split is also why this type can
+ * be `import type`'d by the world and render layers without creating a runtime edge from either
+ * of them into `game/**`.
+ */
+export interface EscalationState {
+  /** The round this state was computed for. */
+  round: number;
+  /** The master curve, 0 at round 1 → 1 at `peakRound`. Every field below is derived from it. */
+  t: number;
+  surge: boolean;
+
+  // sky
+  skyEmberRust: number;
+  skyEmberHot: number;
+  skyGlowGain: number;
+  skyDeepen: number;
+  skyHorizonEmber: number;
+  cloudAdd: number;
+  starMul: number;
+
+  // fog
+  fogNearEmber: number;
+  fogFarEmber: number;
+  fogNearScale: number;
+  fogFarScale: number;
+
+  // rig
+  keyEmber: number;
+  keyGain: number;
+  fillGain: number;
+  ambientGain: number;
+  ambientEmber: number;
+
+  // the city
+  lampFail: number;
+  lampFailDim: number;
+  lampEmber: number;
+
+  // grade
+  contrast: number;
+  saturation: number;
+  exposure: number;
+  levels: number;
+  shadowEmber: number;
+  highEmber: number;
+
+  // frame furniture
+  vignette: number;
+  vignetteInner: number;
+  soot: number;
+  speedCount: number;
+}
+
+const _esc: EscalationState = {
+  round: 1, t: 0, surge: false,
+  skyEmberRust: 0, skyEmberHot: 0, skyGlowGain: 1, skyDeepen: 0, skyHorizonEmber: 0,
+  cloudAdd: 0, starMul: 1,
+  fogNearEmber: 0, fogFarEmber: 0, fogNearScale: 1, fogFarScale: 1,
+  keyEmber: 0, keyGain: 1, fillGain: 1, ambientGain: 1, ambientEmber: 0,
+  lampFail: 0, lampFailDim: 1, lampEmber: 0,
+  contrast: 1, saturation: 1, exposure: 1, levels: 24, shadowEmber: 0, highEmber: 0,
+  vignette: 0, vignetteInner: 0, soot: 0, speedCount: 120,
+};
+
+const lerp01 = (a: number, b: number, t: number): number => a + (b - a) * t;
+const sat01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+/**
+ * The whole escalation curve, PURE and allocation-free.
+ *
+ * Returns a SHARED module-level object — read it now, never retain it. Every consumer copies the
+ * few numbers it cares about into uniforms during the same synchronous call, exactly like the
+ * event bus's scratch vectors. It is called once per round, so this costs nothing measurable;
+ * the reason it is shared rather than fresh is that a per-round allocation in a 40-round run is
+ * a per-round allocation, and ARCHITECTURE §1.5 does not carve out an exception for "rare".
+ */
+export function escalationAt(round: number, surge = false): Readonly<EscalationState> {
+  const V = VISUAL_ESCALATION;
+  const n = Math.max(1, Math.floor(round));
+  const span = Math.max(2, Math.floor(V.peakRound));
+  const raw = V.enabled ? sat01((n - 1) / (span - 1)) : 0;
+  const t = Math.pow(raw, Math.max(0.05, V.curve));
+  const s = surge && V.enabled ? 1 : 0;
+
+  _esc.round = n;
+  _esc.t = t;
+  _esc.surge = surge;
+
+  _esc.skyEmberRust = sat01(V.skyEmberRust * t + V.surgeEmber * s);
+  _esc.skyEmberHot = sat01(V.skyEmberHot * t + V.surgeEmber * 0.5 * s);
+  _esc.skyGlowGain = lerp01(1, V.skyGlowGainPeak, t) + V.surgeGlowGain * s;
+  _esc.skyDeepen = sat01(V.skyDeepenPeak * t);
+  _esc.skyHorizonEmber = sat01(V.skyHorizonEmberPeak * t + V.surgeEmber * 0.35 * s);
+  _esc.cloudAdd = V.cloudAddPeak * t;
+  _esc.starMul = lerp01(1, V.starMulPeak, t);
+
+  _esc.fogNearEmber = sat01(V.fogNearEmberPeak * t);
+  _esc.fogFarEmber = sat01(V.fogFarEmberPeak * t);
+  _esc.fogNearScale = lerp01(1, V.fogNearScalePeak, t);
+  _esc.fogFarScale = lerp01(1, V.fogFarScalePeak, t);
+
+  _esc.keyEmber = sat01(V.keyEmberPeak * t + V.surgeEmber * s);
+  _esc.keyGain = lerp01(1, V.keyGainPeak, t);
+  _esc.fillGain = lerp01(1, V.fillGainPeak, t);
+  _esc.ambientGain = lerp01(1, V.ambientGainPeak, t);
+  _esc.ambientEmber = sat01(V.ambientEmberPeak * t);
+
+  _esc.lampFail = sat01(V.lampFailPeak * t);
+  _esc.lampFailDim = V.lampFailDim;
+  _esc.lampEmber = sat01(V.lampEmberPeak * t + V.surgeLampEmber * s);
+
+  _esc.contrast = lerp01(V.contrastStart, V.contrastPeak, t) + V.surgeContrast * s;
+  _esc.saturation = lerp01(V.saturationStart, V.saturationPeak, t) + V.surgeSaturation * s;
+  _esc.exposure = lerp01(V.exposureStart, V.exposurePeak, t);
+  _esc.levels = Math.round(lerp01(V.levelsStart, V.levelsPeak, t));
+  _esc.shadowEmber = sat01(V.shadowEmberPeak * t);
+  _esc.highEmber = sat01(V.highEmberPeak * t);
+
+  _esc.vignette = sat01(lerp01(V.vignetteStart, V.vignettePeak, t) + V.surgeVignette * s);
+  _esc.vignetteInner = sat01(
+    lerp01(V.vignetteInnerStart, V.vignetteInnerPeak, t) + V.surgeVignetteInner * s);
+  _esc.soot = sat01(V.sootPeak * t);
+  _esc.speedCount = Math.round(lerp01(V.speedCountStart, V.speedCountPeak, t));
+
+  return _esc;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 // Aggregate — for a debug UI that wants to walk every section generically.
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-export const TUNING = { PLAYER, MOVE, CAMERA, WEAPON, ENEMY, ROUND, VFX };
+export const TUNING = { PLAYER, MOVE, CAMERA, WEAPON, ENEMY, ROUND, VFX, VISUAL_ESCALATION };
 
 export type TuningSection = keyof typeof TUNING;

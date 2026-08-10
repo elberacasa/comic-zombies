@@ -57,13 +57,14 @@ import {
 import { ENEMY } from '@/game/tuning';
 import { NAV_CLIMB, NAV_DROP, NAV_WALK, buildNav, type NavGraph } from '@/world/nav';
 import {
-  ANIM, BODY, HITBOX, LIMB_COUNT, NAV, OUTLINE, POOL, SCHED, VARIANTS, defFor, type EnemyDef,
-  type EnemyStateName,
+  ANIM, BODY, BONE, HITBOX, LIMB_BONES, LIMB_CAPSULES, LIMB_COUNT, LIMB_SEGMENTS, NAV,
+  OUTLINE, POOL, SCHED, SPEED_TIERS, VARIANTS, defFor, rollTier,
+  type EnemyDef, type EnemyStateName,
 } from '@/game/enemies/defs';
 import { EnemyBody, buildEnemyGeometry, type EnemyGeometrySet, type PoseArgs } from '@/game/enemies/body';
 import { HitReactions } from '@/game/enemies/reactions';
 import {
-  detourInto, enter, integrateVelocity, separationInto, stateSpeedMult, steerInto, stepState,
+  crowdInto, detourInto, enter, integrateVelocity, stateSpeedMult, steerInto, stepState,
   strikeConnects, tickUnstick, turnToward, type AiAgent, type Neighbour,
 } from '@/game/enemies/ai';
 
@@ -75,6 +76,8 @@ const _v1 = new Vector3();
 const _v2 = new Vector3();
 const _v3 = new Vector3();
 const _sep = new Vector3();
+/** The conga follow heading — a unit vector at the body I am queueing behind, or zero. */
+const _follow = new Vector3();
 const _toPlayer = new Vector3();
 const _capA = new Vector3();
 const _capB = new Vector3();
@@ -93,13 +96,30 @@ const _poseArgs: PoseArgs = {
 /** Candidate headings the wedge rescue sweeps around the player, starting directly behind. */
 const RESCUE_HEADINGS = 8;
 
-/** Hitbox anchor slots, in the order `Enemy.hWorld` stores them. */
+/**
+ * Hitbox anchor slots, in the order `Enemy.hWorld` stores them.
+ *
+ * ═══ A LIMB IS TWO CAPSULES NOW, NOT ONE ═══
+ * BUILD 007 shipped one shoulder→hand capsule per limb, which the rig agent flagged as the next
+ * change. It matters because the capsule is a straight tube between the two ends: with the elbow
+ * bent — which is every reaching, swinging or dragging pose the animator wrote — that tube
+ * leaves the arm entirely and hangs in the air in front of the chest. A bullet through empty
+ * space scored a limb hit, and the shot that visibly clipped the forearm missed. Splitting at
+ * the elbow and the knee costs at most four extra ray/capsule tests on a body whose head AND
+ * torso have already been missed, and it is the difference between a hitbox you can learn and
+ * one you cannot.
+ */
 const H_HEAD = 0;
-const H_TORSO_A = 1;
-const H_TORSO_B = 2;
-/** Limb `i` occupies `H_LIMB + i * 2` and `+ 1`. */
-const H_LIMB = 3;
-const H_COUNT = 11;
+/** The second head primitive: the jaw. Scores `'head'` — the chin is not a body shot. */
+const H_JAW = 1;
+const H_TORSO_A = 2;
+const H_TORSO_B = 3;
+/**
+ * Limb capsule `s` (`s = limb * LIMB_SEGMENTS + 0|1|2`, upper → mid → tip) occupies
+ * `H_LIMB + s * 2` and `+ 1`.
+ */
+const H_LIMB = 4;
+const H_COUNT = H_LIMB + LIMB_CAPSULES * 2;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Ray tests — allocation-free, scalar where it matters.
@@ -223,9 +243,19 @@ class Enemy implements Damageable, AiAgent, Neighbour {
   heightToPlayer = 0;
   staggerT = 0;
   canMelee = true;
+  swingJitter = 1;
   yaw = 0;
 
-  /** Chase speed for THIS instance: def × director scale × per-instance jitter. */
+  /**
+   * SPEED TIER index into `SPEED_TIERS` — walk / walker / runner / sprinter, rolled at spawn
+   * from `TIER_MIX[round]`. This is the CoD mechanic that turns the horde from slow-and-
+   * inevitable into a genuine threat; see the long note above `SPEED_TIERS` in defs.ts.
+   */
+  tier = 0;
+  /** `SPEED_TIERS[tier].lungeMult`, cached so the hot loop does not index the table. */
+  lungeMult = 1;
+
+  /** Chase speed for THIS instance: def × director scale × tier × per-instance jitter. */
   baseSpeed = 1;
   radius: number = BODY.radius;
   height: number = BODY.height;
@@ -281,6 +311,19 @@ class Enemy implements Damageable, AiAgent, Neighbour {
   /** Enemy-local hitbox anchors, refreshed on the pose tick. */
   readonly hLocal: Vector3[] = [];
   readonly limbLive = [true, true, true, true];
+  /**
+   * PER-INSTANCE hitbox radii, metres, refreshed on the pose tick from `rig.boneRadius()`.
+   *
+   * They are not `HITBOX.<x> * (height / BODY.height)` any more. That ratio only carries the
+   * variant's overall scale and misses its per-chain girth roll entirely — see the note on
+   * `HITBOX.headBindRadius`. A `bloated` head is authored 1.20× and was getting a hitbox 17%
+   * narrower than the skull the player is aiming at.
+   */
+  headRadius: number = HITBOX.headRadius;
+  jawRadius: number = HITBOX.jawRadius;
+  torsoRadius: number = HITBOX.torsoRadius;
+  /** One radius per limb capsule, in `H_LIMB` order (upper R, lower R, upper L, lower L, …). */
+  readonly limbRadius = new Float32Array(LIMB_CAPSULES);
 
   /** Set by `raycast()` so `takeDamage()` knows WHICH limb the trace actually hit. */
   pendingLimb = -1;
@@ -399,6 +442,23 @@ export class EnemySystem implements System, EnemyService {
   private stepCount = 0;
   private variantCursor = 0;
 
+  /**
+   * THE ROUND, as the horde knows it — the only input to the speed-tier roll.
+   *
+   * It arrives on `round:start` rather than as a `spawn()` argument because `EnemyService` is
+   * frozen in `core/types.ts` and `spawn(kind, position, hpScale, speedScale)` has no room for
+   * it. NOTE FOR THE LEAD: if the contract ever reopens, a fifth `round` argument is strictly
+   * better than this listener — the director already knows the number and passing it removes an
+   * ordering assumption (a spawn racing ahead of `round:start` would roll on the old mix).
+   * `RoundSystem` emits `round:start` before its first `roundOpenDelay` elapses, so today that
+   * race cannot happen.
+   */
+  private _round = 1;
+  private offRound: (() => void) | null = null;
+
+  /** Live count per `SPEED_TIERS` index. Debug/harness only; recomputed on demand. */
+  readonly tierCounts = new Int32Array(SPEED_TIERS.length);
+
   /** Reusable payloads. Emitting must not allocate — this runs on every bullet. */
   private readonly meleeInfo: DamageInfo = {
     amount: 0,
@@ -494,16 +554,43 @@ export class EnemySystem implements System, EnemyService {
       return `${stuck} / detour ${detour}`;
     });
     ctx.debug.watch('frozen', () => `${this.frozenCount}`);
+    // The tier mix is the milestone's headline mechanic and it is invisible in a screenshot,
+    // so it goes on the debug overlay: slow → fast, live counts.
+    ctx.debug.watch('tiers', () => {
+      this.countTiers();
+      let s = '';
+      for (let i = 0; i < SPEED_TIERS.length; i++) {
+        s += `${i > 0 ? '/' : ''}${this.tierCounts[i]}`;
+      }
+      return `${s} (R${this._round})`;
+    });
     ctx.debug.watch('zombie draws', () => (this._alive.length + this.dying.length) * 2);
     ctx.debug.watch('zombie tris', () =>
       Math.round((this._alive.length + this.dying.length) * (g.triangles + g.hullTriangles)));
 
+    this.offRound = ctx.events.on('round:start', (p) => { this._round = Math.max(1, p.round); });
+
     this.installDebugKeys(ctx);
   }
+
+  /** Refresh `tierCounts` from the live horde. O(alive), no allocation. */
+  countTiers(): void {
+    this.tierCounts.fill(0);
+    for (let i = 0; i < this._alive.length; i++) {
+      const t = this._alive[i].tier;
+      if (t >= 0 && t < this.tierCounts.length) this.tierCounts[t]++;
+    }
+  }
+
+  /** The round the tier roll is using. Set by `round:start`; 1 before any director speaks. */
+  get round(): number { return this._round; }
+  set round(n: number) { this._round = Math.max(1, Math.floor(n)); }
 
   dispose(): void {
     this.offKeys?.();
     this.offKeys = null;
+    this.offRound?.();
+    this.offRound = null;
     for (const e of this.pool) e.body.dispose();
     this.pool.length = 0;
     this.free.length = 0;
@@ -589,8 +676,11 @@ export class EnemySystem implements System, EnemyService {
         // route is still a clumping fluid rather than a queue of rail-followers.
         this.climbCommitted = false;
         const target = this.routeTarget(e, ctx) ?? player;
-        separationInto(_sep, e.position, i, _toPlayer, this._alive, this._alive.length);
-        steerInto(e.desired, ctx.world, e.position, target, _sep);
+        // Separation AND the conga follow heading, one pass. `_follow` is zero for the body at
+        // the head of the line, which makes its steering bit-for-bit BUILD 006's.
+        crowdInto(_sep, _follow, e.position, i, e.distToPlayer, _toPlayer,
+          this._alive, this._alive.length);
+        steerInto(e.desired, ctx.world, e.position, target, _sep, _follow);
         // Wedged: walk ALONG the blocker instead of pressing into it (see `ai.ts::tickUnstick`).
         if (e.detourT > 0) detourInto(e.desired, e.detourSign);
         // `routeTarget` may have committed this body to a mantle. Nothing below applies to it.
@@ -604,11 +694,16 @@ export class EnemySystem implements System, EnemyService {
         ctx.events.emit('fx:sound', { id: 'zombie_windup', position: this.evPos, pitch: this.pitchFor(e) });
       } else if (action === 'strike') {
         this.resolveStrike(e, ctx);
+      } else if (action === 'recover') {
+        // Re-roll the swing cadence every time a swing ends, so a pack that arrived together
+        // drifts apart instead of hammering you as one 350-damage event (ENEMY.meleeCooldownJitter).
+        e.swingJitter = 1 + this.rng.spread(ENEMY.meleeCooldownJitter);
       }
 
       // ── speed ────────────────────────────────────────────────────────────
+      // `e.lungeMult` is the TIER's, not the def's: a sprinter that also lunges is a teleport.
       const speed = e.baseSpeed
-        * stateSpeedMult(e, e.def.lungeMult, e.def.windupSpeedMult)
+        * stateSpeedMult(e, e.lungeMult, e.def.windupSpeedMult)
         * e.reactions.legSpeedMult(e.def);
 
       if (speed < ENEMY.wedgeMinSpeed && e.state === 'chase'
@@ -1139,12 +1234,34 @@ export class EnemySystem implements System, EnemyService {
     e.body.setOutlinePx(px);
   }
 
-  /** Read the anchors off the freshly posed rig — what you see is what you hit. */
+  /**
+   * Read the anchors off the freshly posed rig — what you see is what you hit.
+   *
+   * Head and torso come from `EnemyBody`'s own primitives (both are single bone-local offsets).
+   * The LIMBS are built here, straight off `rig.boneSegment`, as two capsules each: root→elbow
+   * and elbow→hand-tip (root→knee, knee→foot-tip). Every radius is the rig's own per-instance
+   * `boneRadius`, so a fat zombie has fat hitboxes and a gaunt one has thin ones without a
+   * single number being duplicated between the drawing and the collision.
+   */
   private cacheLocalHitboxes(e: Enemy): void {
+    const rig = e.body.rig;
     e.body.headPoint(e.hLocal[H_HEAD]);
+    _v1.set(0, HITBOX.jawCenterY, HITBOX.jawCenterZ);
+    rig.boneLocal(BONE.JAW, _v1, e.hLocal[H_JAW]);
     e.body.torsoSegment(e.hLocal[H_TORSO_A], e.hLocal[H_TORSO_B]);
+    e.headRadius = HITBOX.headRadius * (rig.boneRadius(BONE.HEAD) / HITBOX.headBindRadius);
+    e.jawRadius = HITBOX.jawRadius * (rig.boneRadius(BONE.JAW) / HITBOX.jawBindRadius);
+    e.torsoRadius = HITBOX.torsoRadius * (rig.boneRadius(BONE.CHEST) / HITBOX.torsoBindRadius);
+
     for (let l = 0; l < LIMB_COUNT; l++) {
-      e.limbLive[l] = e.body.limbSegment(l, e.hLocal[H_LIMB + l * 2], e.hLocal[H_LIMB + l * 2 + 1]);
+      const chain = LIMB_BONES[l] as readonly number[];
+      e.limbLive[l] = !rig.isSevered(chain[0] as number);
+      for (let k = 0; k < LIMB_SEGMENTS; k++) {
+        const bone = chain[k] as number;
+        const s = l * LIMB_SEGMENTS + k;
+        rig.boneSegment(bone, e.hLocal[H_LIMB + s * 2], e.hLocal[H_LIMB + s * 2 + 1]);
+        e.limbRadius[s] = rig.boneRadius(bone) * HITBOX.limbGenerosity;
+      }
     }
   }
 
@@ -1180,10 +1297,29 @@ export class EnemySystem implements System, EnemyService {
     e.alive = true;
     e.maxHealth = def.health * Math.max(0.05, hpScale) * ENEMY.healthScale;
     e.health = e.maxHealth;
+
+    /**
+     * ═══ THE SPEED TIER ═══ (see `SPEED_TIERS` / `TIER_MIX` in defs.ts)
+     *
+     * Rolled HERE, per instance, from the round's distribution — not handed down as one number
+     * for the whole round. That is the CoD mechanic and it is the answer to "they aren't truly a
+     * threat": at round 9 this line produces a horde that is 2% shamblers, 21% walkers, 47%
+     * runners and 30% sprinters, so what comes around the corner is genuinely unknown until you
+     * see it move.
+     *
+     * `_round` is fed by `round:start`. It is 1 until a director says otherwise, which is the
+     * right default for a bare console `CZ.spawn()` and for the headless harness.
+     */
+    e.tier = rollTier(this.rng.next(), this._round);
+    const tier = SPEED_TIERS[e.tier] as (typeof SPEED_TIERS)[number];
+    e.lungeMult = tier.lungeMult;
     e.baseSpeed = def.speed
+      * tier.speedMult
       * Math.max(0.05, speedScale)
       * ENEMY.speedScale
+      * (1 + this.rng.spread(tier.jitter))
       * (1 + this.rng.spread(def.speedJitter));
+    e.swingJitter = 1 + this.rng.spread(ENEMY.meleeCooldownJitter);
 
     // A fresh body on every spawn, not once per pool slot: reusing a slot must never hand the
     // player the same zombie twice in a row.
@@ -1509,25 +1645,35 @@ export class EnemySystem implements System, EnemyService {
       // head → torso → limb instead: a limb only ever scores when the trace missed both of the
       // others, which is also the right game — a limb never shields a body shot, and taking one
       // off costs you a deliberate shot at a limb clear of the silhouette.
-      const scale = e.height / BODY.height;
       let best = Infinity;
       let bestPart: BodyPart = 'torso';
       let bestLimb = -1;
 
-      const th = raySphere(
+      // THE HEAD IS TWO SPHERES — cranium and jaw. Both score `'head'`: the chin and the neck
+      // are headshot surface, and 31% of clean jaw shots used to register nothing at all.
+      let th = raySphere(
         origin.x, origin.y, origin.z, _v1.x, _v1.y, _v1.z,
         e.hWorld[H_HEAD].x, e.hWorld[H_HEAD].y, e.hWorld[H_HEAD].z,
-        HITBOX.headRadius * scale, maxDistance,
+        e.headRadius, maxDistance,
       );
+      let hAnchor = H_HEAD;
+      if (th < 0) {
+        th = raySphere(
+          origin.x, origin.y, origin.z, _v1.x, _v1.y, _v1.z,
+          e.hWorld[H_JAW].x, e.hWorld[H_JAW].y, e.hWorld[H_JAW].z,
+          e.jawRadius, maxDistance,
+        );
+        hAnchor = H_JAW;
+      }
       if (th >= 0) {
         best = th;
         bestPart = 'head';
         this.candPoint[n].copy(origin).addScaledVector(_v1, th);
-        this.candNormal[n].copy(this.candPoint[n]).sub(e.hWorld[H_HEAD]).normalize();
+        this.candNormal[n].copy(this.candPoint[n]).sub(e.hWorld[hAnchor]).normalize();
       } else {
         const tt = rayCapsule(
           origin, _v1, e.hWorld[H_TORSO_A], e.hWorld[H_TORSO_B],
-          HITBOX.torsoRadius * scale, maxDistance, _v2, _v3,
+          e.torsoRadius, maxDistance, _v2, _v3,
         );
         if (tt >= 0) {
           best = tt;
@@ -1535,11 +1681,12 @@ export class EnemySystem implements System, EnemyService {
           this.candPoint[n].copy(_v2);
           this.candNormal[n].copy(_v3);
         } else {
-          for (let l = 0; l < LIMB_COUNT; l++) {
+          for (let s = 0; s < LIMB_CAPSULES; s++) {
+            const l = (s / LIMB_SEGMENTS) | 0;
             if (!e.limbLive[l]) continue;
-            const lr = (l < 2 ? HITBOX.armRadius : HITBOX.legRadius) * scale;
             const tl = rayCapsule(
-              origin, _v1, e.hWorld[H_LIMB + l * 2], e.hWorld[H_LIMB + l * 2 + 1], lr, maxDistance, _v2, _v3,
+              origin, _v1, e.hWorld[H_LIMB + s * 2], e.hWorld[H_LIMB + s * 2 + 1],
+              e.limbRadius[s] as number, maxDistance, _v2, _v3,
             );
             if (tl >= 0 && tl < best) {
               best = tl;

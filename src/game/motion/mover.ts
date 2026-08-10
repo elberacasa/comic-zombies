@@ -61,9 +61,37 @@ const _origin = new Vector3();
 const _probe = new Vector3();
 const _guardFrom = new Vector3();
 const _down = new Vector3(0, -1, 0);
+const _corr = new Vector3();
 
 /** Residual overlap left by the last `depenetrate()`. Module-level so nothing allocates. */
 let _residual = 0;
+/**
+ * Upward velocity INJECTED BY THE SOLVER this call while sliding along walkable ground.
+ * See `moveBody`'s epilogue for why it has to be given back. Reset every call.
+ */
+let _slideLift = 0;
+
+/**
+ * Diagnostic counters. The stairs harness asserts on these; nothing in the game reads them.
+ * Plain numbers, incremented in place — no allocation, and free when nobody looks.
+ */
+export const COUNTERS = {
+  /** Substeps whose depenetration was dominated by a NON-walkable push (the step-up trigger). */
+  blocked: 0,
+  /** Step-ups actually committed. */
+  stepUps: 0,
+  /** Depenetration corrections clamped by `maxCorrection` — i.e. teleports refused. */
+  clamped: 0,
+  /** Largest single correction, metres, seen since the last reset (pre-clamp). */
+  worstCorrection: 0,
+};
+
+export function resetCounters(): void {
+  COUNTERS.blocked = 0;
+  COUNTERS.stepUps = 0;
+  COUNTERS.clamped = 0;
+  COUNTERS.worstCorrection = 0;
+}
 /**
  * `grounded` as it stood when the current `moveBody` call began. Deliberately NOT a caller-
  * supplied param: the snap and the ledge guard must key off what the body ACTUALLY had under it
@@ -113,6 +141,17 @@ export interface MotionParams {
   maxSubsteps: number;
   /** Depenetration iterations per substep. 4 resolves a 3-plane corner with margin. */
   iterations: number;
+  /**
+   * HARD CAP on a single depenetration correction, metres. Defence in depth against a solver
+   * that reports an escape rather than a contact (see `world/collision.ts::enclosed`).
+   *
+   * MEASURED, and the two values are NOT interchangeable. The player ships at 0.5 because a
+   * correction bigger than that is always a bug and the human feels it instantly as a teleport.
+   * The horde ships at the 1.5 default because clamping bodies to 0.5 stops them ever escaping a
+   * wall they are genuinely inside: roof-camp inside-geometry samples went 426 → 4394 and the
+   * worst stall 2.7 s → 10.1 s. A stuck zombie is worse than a fast one.
+   */
+  maxCorrection: number;
   /** Extra world velocity applied to TRANSLATION only (knockback). Not slid along walls. */
   driftX: number;
   driftZ: number;
@@ -137,6 +176,7 @@ export function makeMotionParams(): MotionParams {
     maxSubstepDistance: 0.3,
     maxSubsteps: 8,
     iterations: 4,
+    maxCorrection: 1.5,
     driftX: 0,
     driftZ: 0,
     canStepUp: true,
@@ -171,13 +211,25 @@ export function capsuleOverlapDepth(
  * Push the body out of the world and DERIVE `grounded` from what it touched.
  * Returns true when something that is not ground blocked us — the step-up trigger.
  *
- * ═══ THE ONE-LINE BUG ═══
+ * ═══ THE ONE-LINE BUG (BUILD 006) ═══
  * The controller version read `if (!c || c.depth <= 1e-5) break;` and only looked at
  * `c.grounded` several lines further down. A body resting cleanly on a floor has depth ~0 — the
  * solver pushed it out last step and it has not moved into anything since — so the loop broke
  * out BEFORE the ground flag was ever read, on every single step of normal walking. Combined
  * with `grounded` never being cleared, the flag simply latched true forever. Ground is read
  * FIRST here, before any early exit.
+ *
+ * ═══ THE SECOND ONE-LINE BUG ("i can't go upstairs"), FIXED HERE ═══
+ * `blocked` used to be `else { blocked = true }` on `c.normal.y >= minGroundNormalY`. That test
+ * COULD NEVER BE FALSE FOR A GROUNDED BODY, because `collideCapsule` ends with
+ *     out.normal.copy(grounded ? _groundN : _bestN)
+ * — a body standing on a stair and pressed 2 cm into the plinth in front of it gets back
+ * `depth = 0.0215, grounded = true, normal = (0,1,0), correction = (0.021, 0, -0.006)`: a purely
+ * HORIZONTAL push wearing a floor normal. `blocked` stayed false, so `tryStepUp` was
+ * STRUCTURALLY UNREACHABLE — measured 0 calls across every flight in the arena.
+ *
+ * The CORRECTION is the honest signal: it is where the solver actually wants to move us. If it
+ * is not mostly vertical, something that is not floor is in the way, whatever the normal claims.
  */
 function depenetrate(world: WorldService, body: MotionBody, p: MotionParams): boolean {
   let blocked = false;
@@ -198,17 +250,41 @@ function depenetrate(world: WorldService, body: MotionBody, p: MotionParams): bo
     _residual = c.depth;
     if (c.depth <= 1e-5) break;
 
-    body.position.add(c.correction);
+    // ── TELEPORT CLAMP ──────────────────────────────────────────────────────────────────────
+    // A correction longer than `maxCorrection` is not a contact, it is an escape (see the
+    // `enclosed()` guard in `world/collision.ts`). Take the direction, refuse the magnitude.
+    _corr.copy(c.correction);
+    const clen = _corr.length();
+    if (clen > COUNTERS.worstCorrection) COUNTERS.worstCorrection = clen;
+    if (clen > p.maxCorrection) {
+      _corr.multiplyScalar(p.maxCorrection / clen);
+      COUNTERS.clamped++;
+    }
+    body.position.add(_corr);
+
+    // ── BLOCKED, FROM THE CORRECTION ────────────────────────────────────────────────────────
+    // `c.correction` has length `c.depth`, so `correction.y / depth` is the cosine of the push
+    // against vertical — exactly the quantity `minGroundNormalY` is expressed in. Multiplied out
+    // to avoid the divide (and the depth==0 case is already returned above).
+    if (c.correction.y < p.minGroundNormalY * c.depth) {
+      blocked = true;
+      COUNTERS.blocked++;
+    }
+
     const n = c.normal;
     if (n.y >= p.minGroundNormalY) {
       body.grounded = true;
       body.groundNormal.copy(n);
-    } else {
-      blocked = true;
     }
     // Kill only the component travelling INTO the surface: everything else slides along it.
+    // Sliding along a WALKABLE slope converts horizontal speed into upward speed, which is
+    // correct within the step and poison across steps — record it so the epilogue can undo it.
     const vn = body.velocity.dot(n);
-    if (vn < 0) body.velocity.addScaledVector(n, -vn);
+    if (vn < 0) {
+      const vyBefore = body.velocity.y;
+      body.velocity.addScaledVector(n, -vn);
+      if (n.y >= p.minGroundNormalY) _slideLift += body.velocity.y - vyBefore;
+    }
   }
   return blocked;
 }
@@ -234,36 +310,60 @@ function tryStepUp(
   const progress = (gotX * wantX + gotZ * wantZ) / wantLen2;
   if (progress > 0.7) return; // we basically made it; no step needed
 
+  // TWO PROBE LENGTHS, LONG FIRST. `step` is one SUBSTEP, so at walking pace it can be under
+  // 2 cm — probing that far forward lands the capsule back on the very obstacle that blocked it
+  // and the step is refused. Reach a full radius ahead first so the probe clears the riser;
+  // fall back to the honest substep length for the narrow ledges where a radius overshoots into
+  // a wall. `wantLen` is only computed once.
+  const wantLen = Math.sqrt(wantLen2);
+  const dx = wantX / wantLen;
+  const dz = wantZ / wantLen;
+  if (attemptStep(world, body, p, before, dx, dz, Math.max(wantLen, body.radius))) return;
+  if (wantLen < body.radius) attemptStep(world, body, p, before, dx, dz, wantLen);
+}
+
+/**
+ * One step-up attempt at a given forward reach. Returns true when it committed.
+ *
+ * THE RAY BAND MATCHES THE ACCEPTANCE TEST. The old code cast `stepHeight + 0.15` from
+ * `stepHeight + 0.05` above the start, so it could reach 0.10 m BELOW where we started — then
+ * threw the hit away against `gained < -0.02`. The ray now stops exactly where the acceptance
+ * band does, so the first surface it reports is a surface we can actually use.
+ */
+function attemptStep(
+  world: WorldService, body: MotionBody, p: MotionParams,
+  before: Vector3, dx: number, dz: number, reach: number,
+): boolean {
   _savePos.copy(body.position);
   _saveVel.copy(body.velocity);
 
-  _probe.copy(before);
-  _probe.y += p.stepHeight;
-  _probe.x += wantX;
-  _probe.z += wantZ;
-  if (capsuleOverlapDepth(world, _probe, body.height, body.radius) > 1e-3) return; // no room up there
+  _probe.set(before.x + dx * reach, before.y + p.stepHeight, before.z + dz * reach);
+  if (capsuleOverlapDepth(world, _probe, body.height, body.radius) > 1e-3) return false;
 
   _origin.set(_probe.x, _probe.y + 0.05, _probe.z);
-  const hit: RaycastHit = world.raycast(_origin, _down, p.stepHeight + 0.15);
-  if (!hit || !hit.hit || hit.normal.y < p.minGroundNormalY) return;
+  const hit: RaycastHit = world.raycast(_origin, _down, p.stepHeight + 0.07);
+  if (!hit || !hit.hit || hit.normal.y < p.minGroundNormalY) return false;
 
+  // Read everything off the hit BEFORE the capsule query below — the service reuses its records.
   const landY = hit.point.y;
   const nx = hit.normal.x;
   const ny = hit.normal.y;
   const nz = hit.normal.z;
   const gained = landY - before.y;
-  if (gained < -0.02 || gained > p.stepHeight + 0.02) return;
+  if (gained < -0.02 || gained > p.stepHeight + 0.02) return false;
 
   body.position.set(_probe.x, landY, _probe.z);
   if (capsuleOverlapDepth(world, body.position, body.height, body.radius) > 1e-3) {
     body.position.copy(_savePos);
     body.velocity.copy(_saveVel);
-    return;
+    return false;
   }
   if (body.velocity.y < 0) body.velocity.y = 0;
   body.grounded = true;
   body.groundNormal.set(nx, ny, nz);
   body.stepSmear += gained; // presentation-only debt
+  COUNTERS.stepUps++;
+  return true;
 }
 
 /**
@@ -371,6 +471,7 @@ export function moveBody(
 ): void {
   _guardFrom.copy(body.position);
   _wasGrounded = body.grounded;
+  _slideLift = 0;
   // GROUND IS DERIVED, NEVER REMEMBERED. This one line is the fix.
   body.grounded = false;
 
@@ -396,6 +497,39 @@ export function moveBody(
       // Step up while we have (or just had) ground under us. `canStepUp` carries the caller's
       // own coyote/state gate; `body.grounded` covers ground found mid-sweep.
       if (blocked && (p.canStepUp || body.grounded)) tryStepUp(world, body, p, _before, _substep);
+    }
+  }
+
+  // ── GIVE BACK THE SLOPE RATCHET ───────────────────────────────────────────────────────────
+  // `groundMove` clamps only NEGATIVE `velocity.y`, and `applyGravity` early-returns while
+  // grounded, so nothing ever removed the upward velocity that sliding along a walkable slope
+  // injects. MEASURED: sprinting the 40° fire escape reached vy = 6.7 m/s, which threw the
+  // player ~2 m off the top step and reprojected horizontal speed 8.75 → 2.3 m/s. That launch
+  // IS "after the gravity changes i can't go upstairs".
+  //
+  // The target is the velocity that FOLLOWS THE GROUND WE ARE ON RIGHT NOW. Halfway up a ramp
+  // that is the whole uphill velocity, so climbing keeps its momentum and stays full speed
+  // (stripping it outright costs 3.6× on every flight — measured). The instant the ramp gives
+  // way to a flat deck the target drops to 0 and the accumulated ratchet is thrown away.
+  //
+  // Runs BEFORE `snapToGround` on purpose: the ramp→deck transition is the step where the body
+  // has just left the floor, and the snap refuses to glue anything rising faster than 0.2 m/s.
+  // Cancel the ratchet first and the snap can do its job, so cresting a flight is flat instead
+  // of a 0.5 m hop.
+  //
+  // Two independent safety rails: we only ever take back what the SOLVER injected
+  // (`_slideLift`), and only if we were on the ground when the step began. A jump, a dive and a
+  // mantle write `velocity.y` themselves and are not solver-injected, so none can be eaten here.
+  if (_slideLift > 0 && body.velocity.y > 0 && (body.grounded || _wasGrounded)) {
+    let target = 0;
+    if (body.grounded) {
+      const gn = body.groundNormal;
+      const followY = body.velocity.y - body.velocity.dot(gn) * gn.y;
+      if (followY > 0) target = followY;
+    }
+    if (body.velocity.y > target) {
+      const excess = body.velocity.y - target;
+      body.velocity.y -= excess < _slideLift ? excess : _slideLift;
     }
   }
 

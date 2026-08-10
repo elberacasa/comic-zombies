@@ -55,6 +55,79 @@ import {
 import { PALETTE, READABILITY, color, hexMix, mix } from '@/art/palette';
 import { ENEMY_BOIL, INK_GLOBALS, makeInkMaterial, type InkMaterial } from '@/render/materials';
 import type { QualityTier } from '@/core/types';
+import type { EscalationState } from '@/game/tuning';
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE VISUAL ESCALATION BUS — how round 15 gets to look different from round 1.
+//
+// The escalation touches two things that have no way to reach each other: the LIGHT RIG (this
+// file, built inside `createWorld`) and the POST STACK (`render/pipeline.ts`, built inside
+// `createRenderer`, three boot steps earlier). Neither is reachable from a `GameCtx` service —
+// `RenderService` exposes the art-direction knobs but not the grade, and `WorldService` is the
+// collision contract and exposes no lighting at all.
+//
+// Rather than widen a FROZEN interface or invent a cross-system import, this is the same seam
+// `INK_GLOBALS` already uses one directory over: a module-level singleton that consumers
+// SELF-REGISTER with in their own constructors, and that exactly one producer drives.
+//
+//   producer  `game/rounds/director.ts`  → ESCALATION.apply(escalationAt(round, surge))
+//   consumers `ArenaLighting`            → the rig, the fog, the sky, the failing practicals
+//             `ComicPipeline`            → the grade, the vignette, the overlay soot
+//
+// It lives HERE rather than in `render/pipeline.ts` for one measured reason: the headless
+// harnesses (`tools/zombie.mjs`, `tools/rig.ts`) reach this file through
+// `game/enemies/body.ts → makeEnemyMaterial`, and putting the bus in `pipeline.ts` would drag
+// `EffectComposer` and the whole post stack into a node process that has no WebGL context.
+// `pipeline.ts` importing `world/lighting.ts` is the direction that costs nothing.
+//
+// ART §4.1: `apply()` is called ONCE PER ROUND, from `beginRound`. There is no per-frame path
+// into any of this, and nothing below interpolates toward anything over time. The look steps
+// between rounds and is bit-static within one.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Anything that changes its appearance with the round number. Implemented, never probed for. */
+export interface EscalationSink {
+  /** Read what you need NOW — `e` is a shared scratch object and must not be retained. */
+  applyEscalation(e: Readonly<EscalationState>): void;
+}
+
+class EscalationBus {
+  private readonly sinks = new Set<EscalationSink>();
+  private current: Readonly<EscalationState> | null = null;
+
+  /** The state in force, or null before the first round has begun. Do not retain. */
+  get state(): Readonly<EscalationState> | null { return this.current; }
+  get round(): number { return this.current?.round ?? 0; }
+
+  /**
+   * Register a consumer. A sink that arrives late (a pipeline rebuilt after a WebGL context
+   * loss, a world reloaded mid-run) is brought straight up to the round in force; a sink that
+   * registers during boot gets nothing, which is correct — `main.ts::calibrateLighting` runs
+   * after `createWorld` and would otherwise be overwriting an escalation it never saw.
+   */
+  attach(sink: EscalationSink): void {
+    this.sinks.add(sink);
+    if (this.current) sink.applyEscalation(this.current);
+  }
+
+  detach(sink: EscalationSink): void {
+    this.sinks.delete(sink);
+  }
+
+  /** Fan a freshly computed state out to every consumer. Producer-only. */
+  apply(e: Readonly<EscalationState>): void {
+    this.current = e;
+    for (const s of this.sinks) s.applyEscalation(e);
+  }
+
+  /** Re-push the state in force — for anything that clobbers a uniform (a quality change). */
+  reapply(): void {
+    if (this.current) this.apply(this.current);
+  }
+}
+
+/** The one instance. See the block above for who drives it and who listens. */
+export const ESCALATION = new EscalationBus();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Rig constants — the art direction, in numbers.
@@ -219,8 +292,8 @@ export interface LightingOptions {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const GLOW_VERT = /* glsl */ `
-  attribute vec3 aParam;
-  varying vec3 vParam;
+  attribute vec4 aParam;
+  varying vec4 vParam;
   varying vec3 vN;
   varying vec3 vV;
   void main() {
@@ -240,7 +313,19 @@ const GLOW_FRAG = /* glsl */ `
   uniform vec2  uResolution;
   uniform float uHalftoneScale;
   uniform float uHalftonePitch;
-  varying vec3 vParam;
+  /**
+   * THE CITY ACCUMULATES DAMAGE (BUILD 007). aParam.w is a per-practical uniform-random baked
+   * on the CPU at build time; every lamp whose hash is below uLampFail has guttered out. It is
+   * a threshold on a static attribute, so a "failed" lamp is failed identically on every frame
+   * of the round — nothing here flickers, and ART 4.1 is satisfied by construction.
+   *
+   * It DIMS rather than switching off (uLampDim ~ 0.26). A dead lamp takes its ground pool with
+   * it, and the pool is what makes light read as landing on a floor; killing 30% of the pools
+   * outright is exactly the value collapse the consistency pass just fixed.
+   */
+  uniform float uLampFail;
+  uniform float uLampDim;
+  varying vec4 vParam;
   varying vec3 vN;
   varying vec3 vV;
 
@@ -298,6 +383,8 @@ const GLOW_FRAG = /* glsl */ `
     // Quantise into flat comic steps — light is a shape, not a gradient.
     a = floor(a * 5.0 + 0.35) / 5.0;
     a *= tubeLevel(seed) * uStrength;
+    // …and this lamp may simply have gone out by now. Static threshold, static result.
+    a *= mix(1.0, uLampDim, step(vParam.w, uLampFail));
 
     // The outer step of the falloff breaks into halftone rather than fading smoothly.
     float edge = smoothstep(0.55, 0.95, t);
@@ -324,7 +411,7 @@ function tri(
   ax: number, ay: number, az: number, at: number,
   bx: number, by: number, bz: number, bt: number,
   cx: number, cy: number, cz: number, ct: number,
-  seed: number, kind: number,
+  seed: number, kind: number, fail: number,
 ): void {
   // Face normal, flat — matches the faceted house style.
   const ux = bx - ax, uy = by - ay, uz = bz - az;
@@ -336,14 +423,16 @@ function tri(
   nx /= len; ny /= len; nz /= len;
   p.positions.push(ax, ay, az, bx, by, bz, cx, cy, cz);
   p.normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
-  p.params.push(at, seed, kind, bt, seed, kind, ct, seed, kind);
+  p.params.push(at, seed, kind, fail, bt, seed, kind, fail, ct, seed, kind, fail);
 }
 
 function partToGeometry(p: GlowPart): BufferGeometry {
   const g = new BufferGeometry();
   g.setAttribute('position', new Float32BufferAttribute(p.positions, 3));
   g.setAttribute('normal', new Float32BufferAttribute(p.normals, 3));
-  g.setAttribute('aParam', new Float32BufferAttribute(p.params, 3));
+  // vec4: (t, seed, kind, failHash). The 4th lane is what lets one uniform put a deterministic
+  // third of the city's lamps out without a second draw call or a per-lamp mesh.
+  g.setAttribute('aParam', new Float32BufferAttribute(p.params, 4));
   g.computeBoundingSphere();
   return g;
 }
@@ -358,7 +447,7 @@ const POOL_SEGMENTS = 20;
 const POOL_LIFT = 0.14;
 
 /** Faceted light cone from the emitter down to the ground. Slight per-segment wobble. */
-function pushCone(p: GlowPart, s: PracticalSpec, seed: number): void {
+function pushCone(p: GlowPart, s: PracticalSpec, seed: number, fail: number): void {
   const topR = Math.max(0.12, s.coneRadius * 0.16);
   const y0 = s.position.y;
   const y1 = s.groundY + POOL_LIFT;
@@ -376,8 +465,8 @@ function pushCone(p: GlowPart, s: PracticalSpec, seed: number): void {
     const bz0 = s.position.z + Math.sin(a0) * s.coneRadius * w0;
     const bx1 = s.position.x + Math.cos(a1) * s.coneRadius * w1;
     const bz1 = s.position.z + Math.sin(a1) * s.coneRadius * w1;
-    tri(p, tx0, y0, tz0, 0, bx0, y1, bz0, 1, bx1, y1, bz1, 1, seed, 0);
-    tri(p, tx0, y0, tz0, 0, bx1, y1, bz1, 1, tx1, y0, tz1, 0, seed, 0);
+    tri(p, tx0, y0, tz0, 0, bx0, y1, bz0, 1, bx1, y1, bz1, 1, seed, 0, fail);
+    tri(p, tx0, y0, tz0, 0, bx1, y1, bz1, 1, tx1, y0, tz1, 0, seed, 0, fail);
   }
 }
 
@@ -401,7 +490,7 @@ function pushCone(p: GlowPart, s: PracticalSpec, seed: number): void {
  * convention `flatPoly` in `world/arena.ts` documents for every painted ground decal.
  * ─────────────────────────────────────────────────────────────────────────────────────────
  */
-function pushPool(p: GlowPart, s: PracticalSpec, seed: number): void {
+function pushPool(p: GlowPart, s: PracticalSpec, seed: number, fail: number): void {
   const y = s.groundY + POOL_LIFT;
   for (let i = 0; i < POOL_SEGMENTS; i++) {
     const a0 = (i / POOL_SEGMENTS) * Math.PI * 2;
@@ -413,7 +502,7 @@ function pushPool(p: GlowPart, s: PracticalSpec, seed: number): void {
       s.position.x, y, s.position.z, 0,
       s.position.x + Math.cos(a1) * r1, y, s.position.z + Math.sin(a1) * r1, 1,
       s.position.x + Math.cos(a0) * r0, y, s.position.z + Math.sin(a0) * r0, 1,
-      seed, 1,
+      seed, 1, fail,
     );
   }
 }
@@ -424,13 +513,53 @@ function pushPool(p: GlowPart, s: PracticalSpec, seed: number): void {
 
 interface LivePractical {
   light: PointLight | null;
+  /** Authored intensity, before the per-tube level and before any lamp failure. */
   base: number;
   seed: number;
   flicker: number;
+  /** The baked, time-invariant per-tube level (`tubeLevelCpu`). */
+  level: number;
+  /**
+   * This lamp's uniform-random in [0,1). The escalation puts out every lamp whose hash is below
+   * `lampFail`, and the SAME number is baked into `aParam.w` — so the real `PointLight` and the
+   * drawn pool can never disagree about which lamps are dead.
+   */
+  fail: number;
 }
 
 /** Module-level scratch — no allocation in anything that can be called per frame. */
 const _size = new Vector3();
+/** Scratch for the escalation's colour maths. Never returned, never retained. */
+const _ember = new Color();
+const _out = new Color();
+
+const LUMA_R = 0.2126;
+const LUMA_G = 0.7152;
+const LUMA_B = 0.0722;
+
+const lumaOf = (c: Color): number => LUMA_R * c.r + LUMA_G * c.g + LUMA_B * c.b;
+
+/**
+ * AN EMBER SHIFT IS A HUE MOVE, NOT A BRIGHTNESS MOVE.
+ *
+ * Every "toward RUST" in the escalation goes through here, and the magnitude-matching step is
+ * the whole point: `RUST` (0xf4761b) is nine times the luminance of `NIGHT_B`, so a naive
+ * `base.lerp(color(RUST), 0.3)` does not bruise the horizon — it triples it, blows the fog past
+ * `ENV_VALUE_CEIL` and eats the midtone band the consistency pass just recovered. Scaling the
+ * target to the base's own luminance first means `amount` rotates the hue and `gain` is the ONLY
+ * thing allowed to change the value, explicitly, where a comment can justify it.
+ */
+function ember(out: Color, base: Color, hex: number, amount: number, gain = 1): Color {
+  out.copy(base);
+  if (amount > 0) {
+    _ember.copy(color(hex));
+    const tl = Math.max(1e-4, lumaOf(_ember));
+    _ember.multiplyScalar(lumaOf(base) / tl);
+    out.lerp(_ember, Math.min(1, amount));
+  }
+  if (gain !== 1) out.multiplyScalar(gain);
+  return out;
+}
 
 // ── The rig's four colours, in one place, so nothing can disagree about them. ──
 /** Warm sodium key with a squeeze of gold. The lit half of the complementary split. */
@@ -456,7 +585,61 @@ function tubeLevelCpu(seed: number): number {
   return Math.max(0, Math.min(1.1, 0.84 + 0.16 * a * b - dim));
 }
 
-export class ArenaLighting {
+/**
+ * The base state the escalation interpolates AWAY FROM.
+ *
+ * Snapshotted lazily, on the first `applyEscalation` rather than in the constructor, and that is
+ * load-bearing: `main.ts::calibrateLighting` overwrites `INK_GLOBALS.uAmbient`, `uFillIntensity`
+ * and two real light intensities immediately after `createWorld` returns. A constructor snapshot
+ * would capture the pre-calibration rig and round 1 would silently un-calibrate the frame. The
+ * first round begins on the first pointer lock, long after boot, so by then the snapshot is of
+ * the frame the human actually sees at round 1.
+ */
+interface RigBaseline {
+  keyColor: Color;
+  keyIntensity: number;
+  fillColor: Color;
+  fillIntensity: number;
+  ambientColor: Color;
+  ambientIntensity: number;
+  inkKeyColor: Color;
+  inkKeyIntensity: number;
+  inkFillColor: Color;
+  inkFillIntensity: number;
+  inkAmbient: Color;
+  fogNear: Color;
+  fogFar: Color;
+  fogRange: [number, number];
+  /** Sky uniform bases, empty when this arena has no sky dome. */
+  skyZenith: Color | null;
+  skyHorizon: Color | null;
+  skyGlow: Color | null;
+  skyCloudCover: number;
+  skyStars: number;
+}
+
+/** The sky dome's escalation-relevant uniforms, found by name. See `captureSky`. */
+interface SkyUniforms {
+  zenith: { value: Color };
+  horizon: { value: Color };
+  glow: { value: Color };
+  cloudCover: { value: number };
+  stars: { value: number };
+}
+
+/**
+ * three types a `ShaderMaterial`'s uniform bag as `{ [k: string]: { value: any } }`, so these
+ * two guards are how the sky's uniforms are read WITHOUT an untyped probe: the runtime check is
+ * what narrows, the cast only names what the check has already proven.
+ */
+function colorUniform(u: { value: unknown } | undefined): { value: Color } | null {
+  return u && u.value instanceof Color ? (u as { value: Color }) : null;
+}
+function numberUniform(u: { value: unknown } | undefined): { value: number } | null {
+  return u && typeof u.value === 'number' ? (u as { value: number }) : null;
+}
+
+export class ArenaLighting implements EscalationSink {
   /** Everything this module draws. Added to the world root by `WorldSystem`. */
   readonly group = new Group();
   readonly key: DirectionalLight;
@@ -465,11 +648,21 @@ export class ArenaLighting {
   readonly ambient: AmbientLight;
 
   private readonly glowMaterials: ShaderMaterial[] = [];
+  /** The palette hex each merged glow bucket was built from, parallel to `glowMaterials`. */
+  private readonly glowHex: number[] = [];
+  private readonly glowBase: Color[] = [];
   private readonly glowMeshes: Mesh[] = [];
   private readonly live: LivePractical[] = [];
   private readonly bounds: Box3;
   private readonly shadowFocus = new Vector3();
   private tier: QualityTier;
+
+  // ── visual escalation ─────────────────────────────────────────────────────
+  private baseline: RigBaseline | null = null;
+  private sky: SkyUniforms | null = null;
+  private scene: Scene | null = null;
+  /** The round in force, purely for the debug readout. 0 = nothing applied yet. */
+  private escRound = 0;
 
   constructor(opts: LightingOptions) {
     this.bounds = opts.bounds.clone();
@@ -516,6 +709,9 @@ export class ArenaLighting {
     this.writeInkGlobals();
     this.buildPracticals(opts.practicals, opts.seed ?? 0xa11e);
     this.applyTier();
+    // Self-register. Nothing is pushed at boot (the bus has no state until round 1), so this
+    // cannot fight `calibrateLighting`; see `RigBaseline`.
+    ESCALATION.attach(this);
   }
 
   /** Materials and shaded flats must agree — the ink shader reads these, not the lights. */
@@ -565,11 +761,16 @@ export class ArenaLighting {
     let i = 0;
     for (const s of specs) {
       const phase = ((seed + i * 37) % 97) * 0.137;
+      // Which lamps die first, decided once, from the arena seed — so a `?seed=` replay dies in
+      // the same order, and so the same lamp is dead in the pool, in the cone and in the real
+      // point light. Deliberately independent of `phase`: the brightest lamps must not also be
+      // the ones that survive, or the escalation would only ever kill the dim ones.
+      const fail = Math.abs(Math.sin((seed + 1) * 0.0113 + (i + 1) * 12.9898) * 43758.5453) % 1;
       i++;
       let part = byColor.get(s.color);
       if (!part) { part = newPart(); byColor.set(s.color, part); }
-      if (s.coneRadius > 0) pushCone(part, s, phase);
-      if (s.poolRadius > 0) pushPool(part, s, phase);
+      if (s.coneRadius > 0) pushCone(part, s, phase, fail);
+      if (s.poolRadius > 0) pushPool(part, s, phase, fail);
 
       const light = new PointLight(color(s.color), s.intensity, s.radius, 2);
       light.position.copy(s.position);
@@ -577,7 +778,7 @@ export class ArenaLighting {
       // The per-tube level is baked in ONCE, here. Nothing writes an intensity per frame.
       const lvl = s.flicker <= 0 ? 1 : 1 - s.flicker + s.flicker * tubeLevelCpu(phase);
       light.intensity = s.intensity * lvl;
-      this.live.push({ light, base: s.intensity, seed: phase, flicker: s.flicker });
+      this.live.push({ light, base: s.intensity, seed: phase, flicker: s.flicker, level: lvl, fail });
       this.group.add(light);
     }
 
@@ -596,6 +797,8 @@ export class ArenaLighting {
           uResolution: INK_GLOBALS.uResolution,
           uHalftoneScale: INK_GLOBALS.uHalftoneScale,
           uHalftonePitch: INK_GLOBALS.uHalftonePitch,
+          uLampFail: { value: 0 },
+          uLampDim: { value: 1 },
         },
       });
       mat.name = 'GodRayMaterial';
@@ -607,6 +810,8 @@ export class ArenaLighting {
       mesh.receiveShadow = false;
       mesh.layers.enable(2); // emissive/bloom
       this.glowMaterials.push(mat);
+      this.glowHex.push(hex);
+      this.glowBase.push(color(hex).clone());
       this.glowMeshes.push(mesh);
       this.group.add(mesh);
     }
@@ -615,6 +820,43 @@ export class ArenaLighting {
   /** Fog is a *colour gradient in steps* — set it on the scene too, for non-ink materials. */
   applyToScene(scene: Scene): void {
     scene.fog = new Fog(PALETTE.NIGHT_A, FOG_NEAR, FOG_FAR);
+    this.scene = scene;
+    this.captureSky(scene);
+  }
+
+  /**
+   * FIND THE SKY.
+   *
+   * The dome is built by `render/materials::buildSkyDome` and placed by `world/arena.ts`, and
+   * neither hands a handle to anything — the arena's own comment is "the world just places it".
+   * The escalation needs it, because the sky is a fifth of the frame and therefore the single
+   * cheapest large-area change available: no geometry, no draw call, no extra pass.
+   *
+   * So it is found by NAME, at the one moment the world guarantees the arena is already in the
+   * scene (`WorldSystem.init` adds the root before calling `applyToScene`). This is a typed
+   * narrowing of three's own `Material` union, not an untyped probe — if the dome is absent or
+   * its uniforms are ever renamed, `this.sky` stays null and every sky term is skipped.
+   *
+   * **If `world/arena.ts` ever gains an owner again: publish the sky material on `Arena` and
+   * pass it in through `LightingOptions`, and delete this.**
+   */
+  private captureSky(scene: Scene): void {
+    if (this.sky) return;
+    let found: SkyUniforms | null = null;
+    scene.traverse((o) => {
+      if (found !== null || o.name !== 'sky' || !(o instanceof Mesh)) return;
+      const mat = o.material;
+      if (Array.isArray(mat) || !(mat instanceof ShaderMaterial)) return;
+      const u = mat.uniforms;
+      const zenith = colorUniform(u.uZenith);
+      const horizon = colorUniform(u.uHorizon);
+      const glow = colorUniform(u.uGlow);
+      const cloudCover = numberUniform(u.uCloudCover);
+      const stars = numberUniform(u.uStars);
+      if (!zenith || !horizon || !glow || !cloudCover || !stars) return;
+      found = { zenith, horizon, glow, cloudCover, stars };
+    });
+    this.sky = found;
   }
 
   /**
@@ -660,6 +902,136 @@ export class ArenaLighting {
     for (const m of this.glowMeshes) m.visible = glow;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VISUAL ESCALATION — the night deepens and turns hostile.
+  //
+  // Called ONCE PER ROUND from the bus at the top of this file. Every write below is an
+  // absolute value derived from the round, never a delta and never an interpolation toward
+  // something, so re-applying the same round is idempotent and applying a round twice in a row
+  // is a no-op. That property is what makes `CZ.rounds.setEscalation(n)` a legitimate way to
+  // audit the look: it produces exactly the frame round `n` produces.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** The round the LOOK is currently set to. Not the same thing as the director's round. */
+  get escalationRound(): number { return this.escRound; }
+
+  applyEscalation(e: Readonly<EscalationState>): void {
+    const b = this.baseline ?? this.snapshot();
+    this.escRound = e.round;
+
+    // ── the rig ───────────────────────────────────────────────────────────
+    // The warm key turns from sodium street light to firelight and loses a little punch; the
+    // cool fill retreats hardest, which is what makes the night stop being pretty; the ambient
+    // FLOOR barely moves, because it is the floor (see `AMBIENT_LEVEL`).
+    this.key.color.copy(ember(_out, b.keyColor, PALETTE.RUST, e.keyEmber));
+    this.key.intensity = b.keyIntensity * e.keyGain;
+    this.fill.intensity = b.fillIntensity * e.fillGain;
+    this.ambient.color.copy(ember(_out, b.ambientColor, PALETTE.RUST, e.ambientEmber));
+    this.ambient.intensity = b.ambientIntensity * e.ambientGain;
+
+    // The ink materials do not sample scene lights, so the same decisions have to be written
+    // twice or the flats and the real lights disagree. Same contract as `writeInkGlobals`.
+    INK_GLOBALS.uKeyColor.value.copy(ember(_out, b.inkKeyColor, PALETTE.RUST, e.keyEmber));
+    INK_GLOBALS.uKeyIntensity.value = b.inkKeyIntensity * e.keyGain;
+    INK_GLOBALS.uFillIntensity.value = b.inkFillIntensity * e.fillGain;
+    INK_GLOBALS.uAmbient.value.copy(
+      ember(_out, b.inkAmbient, PALETTE.RUST, e.ambientEmber, e.ambientGain));
+
+    // ── fog: the world closes in ──────────────────────────────────────────
+    // Aerial perspective is this file's main value tool, so it is also the escalation's. Enemies
+    // are authored `fog: 0` and never fade (ART §9), so tightening the fog RAISES the contrast
+    // between a threat and the city behind it rather than hiding anything.
+    INK_GLOBALS.uFogColorNear.value.copy(ember(_out, b.fogNear, PALETTE.RUST, e.fogNearEmber));
+    INK_GLOBALS.uFogColorFar.value.copy(ember(_out, b.fogFar, PALETTE.RUST, e.fogFarEmber));
+    const near = b.fogRange[0] * e.fogNearScale;
+    const far = b.fogRange[1] * e.fogFarScale;
+    INK_GLOBALS.uFogRange.value.set(near, far);
+    const fog = this.scene?.fog;
+    if (fog instanceof Fog) {
+      fog.color.copy(ember(_out, b.fogFar, PALETTE.RUST, e.fogFarEmber));
+      fog.near = near;
+      fog.far = far;
+    }
+
+    // ── the sky bruises ───────────────────────────────────────────────────
+    const sky = this.sky;
+    if (sky && b.skyZenith && b.skyHorizon && b.skyGlow) {
+      // Zenith sinks toward INK: the top of the sky closes down, which is also what puts the
+      // building ring back on top of it as the facades themselves get darker.
+      sky.zenith.value.copy(b.skyZenith).lerp(color(PALETTE.INK), e.skyDeepen);
+      sky.horizon.value.copy(ember(_out, b.skyHorizon, PALETTE.RUST, e.skyHorizonEmber));
+      /**
+       * THE ONLY RESERVED HUE IN THE ESCALATION, and it is here on purpose. `uGlow` is a narrow
+       * rim on the horizon line that the sky shader already multiplies by 0.22 — it is 60+ m
+       * behind anything the player can shoot, it never touches the mid-frame, and it goes
+       * SODIUM → RUST first and only then a short way toward HOT. ART §9's requirement is that
+       * nothing competes with an enemy silhouette; a distant gradient at the very bottom of the
+       * sky does not, and the squint probe (per-cell `g - max(r,b)`) is unmoved by it either
+       * way, because HOT carries no green. Measured, not assumed — see the handoff table.
+       */
+      ember(_out, b.skyGlow, PALETTE.RUST, e.skyEmberRust, e.skyGlowGain);
+      sky.glow.value.copy(_out).lerp(
+        _ember.copy(color(PALETTE.HOT)).multiplyScalar(lumaOf(_out) / Math.max(1e-4, lumaOf(color(PALETTE.HOT)))),
+        e.skyEmberHot,
+      );
+      // Relative to whatever the arena authored, so this cannot drift away from `world/arena.ts`.
+      sky.cloudCover.value = Math.min(1, b.skyCloudCover + e.cloudAdd);
+      sky.stars.value = b.skyStars * e.starMul;
+    }
+
+    // ── the city accumulates damage ───────────────────────────────────────
+    for (const m of this.glowMaterials) {
+      const f = m.uniforms.uLampFail;
+      const d = m.uniforms.uLampDim;
+      if (f) f.value = e.lampFail;
+      if (d) d.value = e.lampFailDim;
+    }
+    for (let i = 0; i < this.glowMaterials.length; i++) {
+      // Only the SODIUM buckets turn. `GOLD` marks interactables (ART §6) and `ELECTRIC` marks
+      // tech — moving either would break a gameplay signal to buy an atmosphere beat.
+      if (this.glowHex[i] !== PALETTE.SODIUM) continue;
+      const u = this.glowMaterials[i]?.uniforms.uColor;
+      const base = this.glowBase[i];
+      if (!u || !base || !(u.value instanceof Color)) continue;
+      u.value.copy(ember(_out, base, PALETTE.RUST, e.lampEmber));
+    }
+    for (const p of this.live) {
+      if (!p.light) continue;
+      const dim = p.fail < e.lampFail ? e.lampFailDim : 1;
+      p.light.intensity = p.base * p.level * dim;
+    }
+  }
+
+  /** Freeze the frame the escalation departs from. See `RigBaseline` for why it is lazy. */
+  private snapshot(): RigBaseline {
+    const sky = this.sky;
+    const b: RigBaseline = {
+      keyColor: this.key.color.clone(),
+      keyIntensity: this.key.intensity,
+      fillColor: this.fill.color.clone(),
+      fillIntensity: this.fill.intensity,
+      ambientColor: this.ambient.color.clone(),
+      ambientIntensity: this.ambient.intensity,
+      inkKeyColor: INK_GLOBALS.uKeyColor.value.clone(),
+      inkKeyIntensity: INK_GLOBALS.uKeyIntensity.value,
+      inkFillColor: INK_GLOBALS.uFillColor.value.clone(),
+      inkFillIntensity: INK_GLOBALS.uFillIntensity.value,
+      inkAmbient: INK_GLOBALS.uAmbient.value.clone(),
+      fogNear: INK_GLOBALS.uFogColorNear.value.clone(),
+      fogFar: INK_GLOBALS.uFogColorFar.value.clone(),
+      // The arena's own derived range, not this file's constants — `world/index.ts` widens it to
+      // fit the shipped 140 m block and writes it after `applyToScene`.
+      fogRange: [INK_GLOBALS.uFogRange.value.x, INK_GLOBALS.uFogRange.value.y],
+      skyZenith: sky ? sky.zenith.value.clone() : null,
+      skyHorizon: sky ? sky.horizon.value.clone() : null,
+      skyGlow: sky ? sky.glow.value.clone() : null,
+      skyCloudCover: sky ? sky.cloudCover.value : 0,
+      skyStars: sky ? sky.stars.value : 0,
+    };
+    this.baseline = b;
+    return b;
+  }
+
   /**
    * Per-frame hook. Deliberately EMPTY of image content.
    *
@@ -677,6 +1049,7 @@ export class ArenaLighting {
   }
 
   dispose(): void {
+    ESCALATION.detach(this);
     for (const m of this.glowMeshes) {
       m.geometry.dispose();
       this.group.remove(m);
@@ -684,6 +1057,10 @@ export class ArenaLighting {
     for (const m of this.glowMaterials) m.dispose();
     this.glowMeshes.length = 0;
     this.glowMaterials.length = 0;
+    this.glowHex.length = 0;
+    this.glowBase.length = 0;
+    this.sky = null;
+    this.scene = null;
     for (const p of this.live) if (p.light) { p.light.dispose(); this.group.remove(p.light); }
     this.live.length = 0;
     this.key.dispose();
@@ -793,9 +1170,18 @@ export function makeEnemyMaterial(opts: EnemyMaterialOptions = {}): EnemyMateria
     halftone: 0.4,
     /** No tone floor on a character: the body is a shape, not a background wash. */
     toneFloor: 0,
-    // 30° off every environment family's plate, so an enemy's screen-tone is visibly a
-    // different plate — the reader's eye separates it before they know why.
-    halftoneAngle: 105,
+    /**
+     * 82.5°, and the old value of 105° was arithmetically wrong rather than merely a taste
+     * call. `halftoneDots()` screens with `fract()` on a SQUARE lattice, so the dot pattern
+     * repeats every 90°: **105° IS 15°** — the plate `mass` (every building facade) and
+     * `grime` (the painted cast shadow on every road) already print on. The comment claimed
+     * "30° off every environment family"; the enemy was in fact sharing a plate with the two
+     * largest surfaces it is ever seen against, which is the one place the separation had to
+     * hold. The arena's families sit on the 15° grid (0/15/30/45/60/75), so 82.5° is 7.5°
+     * from the nearest of them in both directions — the maximum separation available once
+     * every 15° slot is taken. See the SCREEN ANGLES note in `world/arena.ts`.
+     */
+    halftoneAngle: 82.5,
     specular: 0.5,
     gleam: 0.35 * presence,
     gleamSize: 0.34,

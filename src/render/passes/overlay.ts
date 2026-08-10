@@ -36,7 +36,7 @@
  */
 
 import { Vector2 } from 'three';
-import { PALETTE } from '@/art/palette';
+import { PALETTE, hexMix } from '@/art/palette';
 import { makeSplatSet } from '@/art/textures';
 import { buildPass, srgbVec, type CommonUniforms, type PassChunk, type Uniforms } from './common';
 import type { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
@@ -51,6 +51,8 @@ export interface OverlayOptions {
   speedInner?: number;
   /** How many radial lines fill the frame. 120 is dense; 60 reads as a slow drift. */
   speedCount?: number;
+  /** Colour of the accumulated plate soot. INK family — it is dirt, not a light. */
+  sootColor?: number;
 }
 
 export function makeOverlayUniforms(opts: OverlayOptions = {}): Uniforms {
@@ -74,6 +76,16 @@ export function makeOverlayUniforms(opts: OverlayOptions = {}): Uniforms {
     uOvSplatDir: { value: new Vector2(0, 0) },
     uOvSplatColor: { value: srgbVec(opts.splatColor ?? PALETTE.INK) },
     uOvSplatRim: { value: srgbVec(opts.splatRim ?? PALETTE.HOT) },
+    /**
+     * THE PAGE ACCUMULATES DAMAGE. Driven ONCE PER ROUND by the visual escalation
+     * (`game/tuning.ts::VISUAL_ESCALATION.sootPeak`) and held perfectly still in between —
+     * it is a pure function of `gl_FragCoord`, with no clock and no per-frame reseed, so a
+     * parked camera produces a bit-identical frame (ART §4.1). 0 through the early rounds.
+     */
+    uOvSoot: { value: 0 },
+    // INK pushed a fifth of the way to RUST: soot off a burning city, not a grey filter. Still
+    // in the linework family, so it takes value out of the frame edge without inventing a hue.
+    uOvSootColor: { value: srgbVec(opts.sootColor ?? hexMix(PALETTE.INK, PALETTE.RUST, 0.2)) },
   };
 }
 
@@ -91,6 +103,8 @@ const DECLS = /* glsl */ `
   uniform vec2 uOvSplatDir;
   uniform vec3 uOvSplatColor;
   uniform vec3 uOvSplatRim;
+  uniform float uOvSoot;
+  uniform vec3 uOvSootColor;
 `;
 
 const BODY = /* glsl */ `
@@ -163,6 +177,25 @@ const BODY = /* glsl */ `
       float fringe = smoothstep(0.06, 0.30, a) - body;
       c = mix(c, uOvSplatRim, clamp(fringe, 0.0, 1.0) * uOvSplat * 0.85);
       c = mix(c, uOvSplatColor, body * uOvSplat);
+    }
+
+    // ── accumulated plate soot (visual escalation) ──────────────────────────
+    // A page that has been through fifteen rounds. Sparse hashed cells on a coarse harmonic of
+    // the frame's OWN screen pitch, printed through the same czDots the whole stack uses — so
+    // it rosettes with the tone instead of beating against it — and biased hard toward the
+    // frame edge, where the vignette already lives, so the midtone band the consistency pass
+    // recovered is left alone. Nothing in this block is a function of time.
+    //
+    // PLATE ANGLE 52.5°. The lattice repeats every 90°, not 180 (czDots screens with fract()
+    // on a square grid), so the arena's families occupy 0/15/30/45/60/75 and the strays sit at
+    // 7.5 (deck), 67.5 (glass) and 82.5 (enemy). 52.5 is the widest slot left.
+    if (uOvSoot > 0.002) {
+      float sootEdge = 0.24 + 0.76 * smoothstep(0.26, 1.02, rr);
+      float pitch = max(2.0, uScreenPitch * 2.0);
+      float cell = czHash12(floor(gl_FragCoord.xy / pitch));
+      float speck = smoothstep(0.66, 0.90, cell);
+      float grime = czDots(gl_FragCoord.xy, 0.58, 52.5, pitch);
+      c = mix(c, uOvSootColor, clamp(speck * grime * sootEdge * uOvSoot, 0.0, 1.0));
     }
 
     // ── the flash frame — always last, always over everything ───────────────

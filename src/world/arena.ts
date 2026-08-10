@@ -194,6 +194,14 @@ const DECK_Y = STOREY * 2;        // 6.8
 const DECK2_Y = STOREY * 4;       // 13.6
 
 /**
+ * The block parapet: a RING of four bars, never a lid. See the block-dressing comment where
+ * it is stamped — a solid cap here was the measured cause of the NE roof reading as a violet
+ * plane, because it buried the warm roof surface under 1.1 m of `wall`.
+ */
+const PARAPET_H = 1.1;
+const PARAPET_T = 0.62;
+
+/**
  * Below this smallest-dimension a bevel is sub-pixel at any viewing distance, so `boxAt`
  * silently swaps the 44-triangle `bevelBox` for a 12-triangle plain box. See the header.
  */
@@ -440,6 +448,25 @@ interface BucketDef {
  *
  * `outline` is in CSS pixels. `READABILITY.PROP_OUTLINE_MAX_PX` (6) caps everything here, so
  * an enemy's 8 px silhouette is always the heaviest line in the frame (ART §9).
+ *
+ * ── THE SCREEN ANGLES ARE MOD 90, NOT MOD 180 ────────────────────────────────────────────
+ * ART §2 says the halftone plate is "rotated 15° per material family", and this table was
+ * authored as if the angles ran 0…180. They do not. `halftoneDots()` in `render/materials`
+ * screens with `fract()` on a SQUARE lattice, so the pattern is identical every 90°:
+ *
+ *     angle ≡ angle + 90    ⇒  105° IS 15°,  120° IS 30°,  180° IS 0°
+ *
+ * which is exactly why a real four-colour press only ever uses 0 / 15 / 45 / 75. With six
+ * usable 15° slots and fifteen buckets some sharing is unavoidable, so the rule that is
+ * actually enforceable is narrower and is the one that matters to a reader:
+ *
+ *     TWO FAMILIES THAT TOUCH IN THE FRAME MAY NOT SHARE A PLATE.
+ *
+ * Two did, and both were pairs that are never seen apart: `glass` sat at 15 inside `mass`
+ * at 15 (every window in the city), and `deck` sat at 75 under `metal` at 75 (every catwalk
+ * rib and railing). They are moved onto the 7.5° half-grid below — off their neighbour by
+ * half a step, which is the largest separation left once the 15° slots are full. The enemy
+ * plate had the same fault at a higher cost and is fixed in `world/lighting.ts`.
  * ═══════════════════════════════════════════════════════════════════════════════════════════
  */
 const BUCKETS: Record<BucketId, BucketDef> = {
@@ -468,11 +495,43 @@ const BUCKETS: Record<BucketId, BucketDef> = {
   // ── VERTICAL: cool slate mass, one step per element, never one flat slab. ──
   // `surface: 'facade'` at mapScale 1/STOREY puts one texture tile on one FLOOR — string
   // course, pilasters, soot streaks and patched render all land where a building's do.
-  mass: { color: PALETTE.SLATE, shadow: hexMix(PALETTE.SLATE, PALETTE.NIGHT_B, 0.4), rim: PALETTE.TEAL, rimStrength: 0.22, rimPower: 2.6, halftone: 0.85, halftoneAngle: 15, specular: 0.12, outline: 6, surface: 'facade', mapStrength: 0.95, mapHalftone: 0.22, mapScale: 11 },
+  /**
+   * ─────────────────────────────────────────────────────────────────────────────────────
+   * `halftone` 0.85 → 0.58, `shadow` lifted 0.4 → 0.28 toward NIGHT_B.
+   *
+   * MEASURED, not adjusted by eye. The mask-isolation probe (hide `Ink_mass`, diff the two
+   * frames, histogram only the pixels that moved) says what this bucket actually PRINTS at,
+   * as opposed to what it is authored at — and `mass` is the biggest vertical area in the
+   * game, authored at `SLATE` 0.318, with `lighting.ts` promising a ladder rung of 0.28–0.42:
+   *
+   *              median   p25    p05    below ENV_VALUE_FLOOR (0.12)
+   *   catwalk     0.166  0.142  0.111        10.3%
+   *   NE roof     0.146  0.122  0.035        23.7%
+   *   plaza       0.142  0.104  0.009        34.4%
+   *
+   * It prints at HALF its own token, and a tenth to a third of it is under the floor that
+   * `READABILITY` reserves for linework. On the ground that is survivable, because the warm
+   * road carries the frame. From a high route the facades ARE the frame: hiding this one
+   * bucket at the catwalk moved 34.4 points of the 0.1–0.2 band and 24.3 points of midtone.
+   * That is the whole of "everything above 6.8 m is a two-value violet poster" — the second
+   * half of it, after the parapet lid.
+   *
+   * The loss is a DOUBLE SCREEN. `pipeline.ts` calls the material's halftone "a quiet
+   * underlay" under the post pass's dominant one, and at 0.85 it was not quiet — it was
+   * nearly solid, on top of a post screen at 0.9. Forcing `uHtStrength` to 0 alone moves this
+   * bucket's median 0.171 → 0.222, so the two screens between them were eating a third of the
+   * surface. Turning the *underlay* down is the fix that leaves the frame's dominant screen —
+   * the signature of the whole art direction — completely untouched.
+   * ─────────────────────────────────────────────────────────────────────────────────────
+   */
+  mass: { color: PALETTE.SLATE, shadow: hexMix(PALETTE.SLATE, PALETTE.NIGHT_B, 0.28), rim: PALETTE.TEAL, rimStrength: 0.22, rimPower: 2.6, halftone: 0.58, halftoneAngle: 15, specular: 0.12, outline: 6, surface: 'facade', mapStrength: 0.95, mapHalftone: 0.22, mapScale: 11 },
   // The perimeter + the backdrop masses: the second-largest vertical area after `mass`.
   // Pure NIGHT_B over 140 m × 11 m read as a saturated violet billboard, so it is pulled
   // most of the way to SLATE and keeps only enough violet to stay the connective hue.
-  wall: { color: hexMix(PALETTE.SLATE, PALETTE.NIGHT_B, 0.42), shadow: PALETTE.INK_SOFT, rim: PALETTE.TEAL, rimStrength: 0.22, halftone: 0.9, halftoneAngle: 30, specular: 0.1, outline: 5.5, surface: 'concrete', mapStrength: 0.9, mapHalftone: 0.4, mapScale: 8 },
+  // `halftone` 0.9 → 0.62 and the shadow off raw INK_SOFT for the same reason as `mass`
+  // above: this is the perimeter, the backdrop masses and now the block parapet rings, i.e.
+  // the second-largest vertical area and the entire horizon line from any high route.
+  wall: { color: hexMix(PALETTE.SLATE, PALETTE.NIGHT_B, 0.42), shadow: hexMix(PALETTE.INK_SOFT, PALETTE.SLATE, 0.3), rim: PALETTE.TEAL, rimStrength: 0.22, halftone: 0.62, halftoneAngle: 30, specular: 0.1, outline: 5.5, surface: 'concrete', mapStrength: 0.9, mapHalftone: 0.4, mapScale: 8 },
   // Trim is the game's linework made of geometry: it is the BRIGHT edge on every dark mass.
   trim: { color: PALETTE.BONE, shadow: PALETTE.TEAL, rim: PALETTE.PAPER, rimStrength: 0.22, halftone: 0.75, halftoneAngle: 60, specular: 0.25, outline: 4.5, surface: 'concrete', mapStrength: 0.7, mapHalftone: 0.45, mapScale: 2.2, split: true },
   metal: { color: PALETTE.SLATE, shadow: PALETTE.INK_SOFT, rim: PALETTE.TEAL, rimStrength: 0.22, halftone: 0.8, halftoneAngle: 75, specular: 0.7, outline: 4.5, surface: 'metal', mapStrength: 0.85, mapHalftone: 0.4, mapScale: 1.8, split: true },
@@ -491,7 +550,9 @@ const BUCKETS: Record<BucketId, BucketDef> = {
    * This is that ground-level contract, lifted. Warm body, cool TEAL shadow, one value step
    * above `walk` because it is a lit metal surface rather than a pavement.
    */
-  deck: { color: hexMix(PALETTE.CONCRETE, PALETTE.BONE, 0.3), shadow: PALETTE.TEAL, rim: PALETTE.SODIUM, rimStrength: 0.2, halftone: 0.7, halftoneAngle: 75, specular: 0.4, outline: 4.5, surface: 'metal', mapStrength: 0.8, mapHalftone: 0.45, mapScale: 2.2, split: true },
+  // `halftoneAngle` 75 → 7.5: `deck` is never seen without `metal` (75) — the grating ribs
+  // are laid ON the slab and the railings stand in it. See THE SCREEN ANGLES note above.
+  deck: { color: hexMix(PALETTE.CONCRETE, PALETTE.BONE, 0.3), shadow: PALETTE.TEAL, rim: PALETTE.SODIUM, rimStrength: 0.2, halftone: 0.7, halftoneAngle: 7.5, specular: 0.4, outline: 4.5, surface: 'metal', mapStrength: 0.8, mapHalftone: 0.45, mapScale: 2.2, split: true },
   rust: { color: PALETTE.RUST, shadow: PALETTE.INK_SOFT, rim: PALETTE.SODIUM, rimStrength: 0.25, halftone: 0.85, halftoneAngle: 45, specular: 0.3, outline: 4.5, surface: 'wood', mapStrength: 0.8, mapHalftone: 0.45, mapScale: 2.0, split: true },
   /**
    * THE RESERVED-CHANNEL FIX. This bucket was `HOT` and it carried three 12 m shipping
@@ -503,7 +564,9 @@ const BUCKETS: Record<BucketId, BucketDef> = {
    */
   hot: { color: PALETTE.SODIUM, shadow: PALETTE.RUST, rim: PALETTE.GOLD, rimStrength: 0.25, halftone: 0.8, halftoneAngle: 30, specular: 0.45, outline: 5, surface: 'metal', mapStrength: 0.5, mapHalftone: 0.35, mapScale: 1.5 },
   // Dark cool glass, so a LIT window is an event rather than the default state of a wall.
-  glass: { color: PALETTE.TEAL, shadow: PALETTE.NIGHT_A, rim: PALETTE.ELECTRIC, rimStrength: 0.25, halftone: 0.35, halftoneAngle: 15, specular: 0.9, outline: 3.5 },
+  // `halftoneAngle` 15 → 67.5: every pane is set INTO `mass` (15), so they shared a plate and
+  // a window's screen-tone continued straight through the wall around it.
+  glass: { color: PALETTE.TEAL, shadow: PALETTE.NIGHT_A, rim: PALETTE.ELECTRIC, rimStrength: 0.25, halftone: 0.35, halftoneAngle: 67.5, specular: 0.9, outline: 3.5 },
   emissive: { color: PALETTE.SODIUM, shadow: PALETTE.SODIUM, rim: PALETTE.PAPER, rimStrength: 0.3, halftone: 0, specular: 0, emissive: PALETTE.SODIUM, emissiveIntensity: 0.95, outline: 0, fog: 0.3, bloom: true },
   /**
    * THE HUE COUNTERWEIGHT. BUILD 001's frame was 30% warm-gold and 39% violet and nothing
@@ -1191,14 +1254,44 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
     const z = Math.sin(a) * r;
     boxAt('wall', w, h, d, x, h * 0.5, z, rng.spread(0.5));
     if (rng.bool(0.5)) boxAt('wall', w * 0.4, rng.range(4, 12), d * 0.4, x + rng.spread(w * 0.2), h + 2, z + rng.spread(d * 0.2), rng.spread(0.6));
-    // A few lit windows so the backdrop isn't a dead silhouette.
-    if (rng.bool(0.75)) {
-      const face = rng.range(0, Math.PI * 2);
-      for (let k = 0; k < 7; k++) {
-        const wy = rng.range(5, h - 3);
-        const wx = x + Math.cos(a + Math.PI) * (w * 0.5 + 0.15) + rng.spread(6);
-        const wz = z + Math.sin(a + Math.PI) * (d * 0.5 + 0.15) + rng.spread(6);
-        boxAt('emissive', 1.4, 2.0, 1.4, wx, wy, wz, face, true);
+    /**
+     * LIT WINDOWS ON THE BACKDROP — on a FLOOR GRID, on the face that points at the arena.
+     *
+     * This used to be seven 1.4 m cubes at `rng.range(5, h-3)` with `rng.spread(6)` on both
+     * horizontal axes: an unstructured sprinkle that could and did land off the box it was
+     * meant to be in, and that carried no floor pitch, so a 66 m tower had no scale on it at
+     * all. From the ground that is invisible — the block ring covers the backdrop. From the
+     * high routes it is a third of the frame, and it is the second half of why a roof frame
+     * measured 50% of its middle band into 0.1–0.2 with 5% warm pixels: a wall of unlit
+     * `wall`-value slabs at 0.28, screened to about 0.20, and nothing else out there.
+     *
+     * Same 4.6 × 6.2 m grid the skyline rings use, ~1 in 8 lit, 1 in 5 cold — one ruler
+     * across the whole backdrop, and the near ring, the far ring and the real city now agree
+     * about how big a storey is. Cost is stamps into two buckets that already exist, so the
+     * backdrop is still zero extra draw calls.
+     */
+    {
+      const inward = a + Math.PI;
+      const nx = Math.cos(inward);
+      const nz = Math.sin(inward);
+      // The inward-facing plane, and the tangent along it.
+      const fx = x + nx * (w * 0.5 + 0.16);
+      const fz = z + nz * (d * 0.5 + 0.16);
+      const fyaw = Math.atan2(nx, nz);
+      const tx = Math.cos(fyaw);
+      const tz = -Math.sin(fyaw);
+      const faceW = Math.abs(nx) > Math.abs(nz) ? d : w;
+      const cols = Math.max(2, Math.floor(faceW / 4.6));
+      const rows = Math.max(2, Math.floor((h - 9) / 6.2));
+      for (let c = 0; c < cols; c++) {
+        for (let k = 0; k < rows; k++) {
+          if (!rng.bool(0.13)) continue;
+          const u = (-(cols - 1) / 2 + c) * (faceW / cols);
+          boxAt(
+            rng.bool(0.2) ? 'neon' : 'emissive', 1.9, 2.6, 0.4,
+            fx + tx * u, 6.5 + k * 6.2, fz + tz * u, fyaw, true,
+          );
+        }
       }
     }
   }
@@ -1232,7 +1325,15 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
         const y = 4.3 + rw * STOREY;
         const px = cx + tx * u;
         const pz = cz + tz * u;
-        const lit = r.bool(0.3);
+        /**
+         * 0.30 → 0.38 lit. The only warm marks a high route has in frame are lit windows —
+         * from the west catwalk and the east gantry you are looking at a wall of facade and
+         * nothing else, and the measured warm share of a high frame was 3.7% against the
+         * plaza's 46%. A lit window is also the only thing in a facade that is ABOVE the
+         * midtone band, so this is a value fix as much as a hue one. Four in ten is still a
+         * building with more dark windows than lit ones.
+         */
+        const lit = r.bool(0.38);
         // ONE LIT WINDOW IN FOUR IS COLD. BUILD 001 had a single lit-window colour for a
         // whole city, which is most of why the frame measured as two hues and nothing else.
         // A wall of warm windows with a few cold ones in it reads as a hundred separate
@@ -1376,7 +1477,45 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
       B.collideBox(b.w + 0.7, 1.6, b.d + 0.7, b.cx, 0.8, b.cz, b.yaw, 'concrete');
     }
     boxAt('trim', b.w + 1.0, 0.6, b.d + 1.0, b.cx, bh - 0.4, b.cz, b.yaw, true);
-    boxAt('wall', b.w + 0.3, 1.1, b.d + 0.3, b.cx, bh + 0.55, b.cz, b.yaw);
+    /**
+     * ─────────────────────────────────────────────────────────────────────────────────────
+     * THE PARAPET IS A RING. It used to be a LID, and that single box was the whole "the
+     * high routes are a two-value violet poster" defect.
+     *
+     * It was authored as `boxAt('wall', b.w + 0.3, 1.1, b.d + 0.3, …, bh + 0.55, …)` — a
+     * SOLID 26.3 × 1.1 × 26.3 m slab sitting on top of every block. On the seven towers
+     * nobody can see the top, so it cost four hidden triangles and nothing else. On `ne` —
+     * the two-storey market hall, the only walkable roof in the map and the destination of
+     * LOOP D — it was a 26 m violet ceiling laid 2 cm above the warm `walk` quad the M1.5
+     * readability pass added to fix exactly this, and 1.1 m above the collision surface the
+     * player actually walks on. The fix was shipped; the lid buried it.
+     *
+     * MEASURED, real renderer, camera on the NE roof looking down (pitch −1.3):
+     *   before   mean luminance 0.222 · 42.5% of pixels in the 0.1–0.2 band ·  3.8% warm
+     *   plaza    mean luminance 0.616 ·  0.4% in the 0.1–0.2 band          · 97.0% warm
+     * and hiding `arena_wall` alone turned the pixel under the reticle from (41,41,124) —
+     * saturated violet — to (186,134,104), the warm deck that was underneath it all along.
+     *
+     * A parapet is a low wall around the edge of a roof. It is a ring. So it is four bars
+     * now, `PARAPET_T` thick, and everything above 6.8 m gets its warm plane back for
+     * ~21 extra boxes across the whole city.
+     * ─────────────────────────────────────────────────────────────────────────────────────
+     */
+    {
+      const pw = b.w + 0.3;
+      const pd = b.d + 0.3;
+      const py = bh + PARAPET_H * 0.5;
+      const cyw = Math.cos(b.yaw);
+      const syw = Math.sin(b.yaw);
+      for (const s of [-1, 1]) {
+        // The two bars that run along local X, offset along local Z.
+        const oz = s * (pd - PARAPET_T) * 0.5;
+        boxAt('wall', pw, PARAPET_H, PARAPET_T, b.cx - oz * syw, py, b.cz + oz * cyw, b.yaw);
+        // The two that close the ends, shortened so the corners do not double up.
+        const ox = s * (pw - PARAPET_T) * 0.5;
+        boxAt('wall', PARAPET_T, PARAPET_H, pd - PARAPET_T * 2, b.cx + ox * cyw, py, b.cz + ox * syw, b.yaw);
+      }
+    }
     /**
      * BELT COURSES — one bright horizontal line every three storeys. Without them a 34 m
      * dark box has no scale at all; with them a reader counts the bands and the building
@@ -1785,13 +1924,31 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
    * `walk`, not `deck`: `deck` inks a silhouette hull and this is a flat ground decal, which
    * would get an ink halo inflated around a zero-thickness plane. Same rule as `ground`.
    */
-  B.add('walk', flatRect(BLOCK_C, -BLOCK_C, 25.6, 25.6, DECK_Y + 0.02, ne.yaw), undefined, [BLOCK_C, -BLOCK_C]);
+  B.add('walk', flatRect(BLOCK_C, -BLOCK_C, 25.6, 25.6, DECK_Y + 0.06, ne.yaw), undefined, [BLOCK_C, -BLOCK_C]);
   for (const [gx, gz] of [[BLOCK_C - 7, -BLOCK_C - 7], [BLOCK_C + 7, -BLOCK_C + 7]] as [number, number][]) {
     cylAt('metal', 0.09, 3.0, gx, DECK_Y + 1.5, gz);
     cylAt('emissive', 0.22, 0.3, gx, DECK_Y + 3.1, gz);
     practicals.push({
       position: new Vector3(gx, DECK_Y + 3.1, gz), color: PALETTE.GOLD,
-      intensity: 4, radius: 16, coneRadius: 2.0, poolRadius: 6.5, flicker: 0.4,
+      intensity: 4, radius: 16, coneRadius: 2.0, poolRadius: 8.0, flicker: 0.4,
+      groundY: DECK_Y, raised: true,
+    });
+  }
+  /**
+   * ROOFTOP FLOODS — the practicals ART §6 asks for on the high route. GOLD above is the
+   * route marker (§6 reserves it for "you can stand on this"); a roof is also just a lit
+   * place, and generic lighting is SODIUM. Two of them on the other diagonal, so all four
+   * quadrants of a 25.6 m roof carry a pool instead of two of them, and the deck reads as a
+   * space that is lit rather than a plane that is implied. Same fixture kit as the street:
+   * `metal` mast, `emissive` head, cone + pool.
+   */
+  for (const [fx, fz] of [[BLOCK_C + 8, -BLOCK_C - 8], [BLOCK_C - 8, -BLOCK_C + 8]] as [number, number][]) {
+    cylAt('metal', 0.1, 4.2, fx, DECK_Y + 2.1, fz);
+    boxAt('emissive', 1.15, 0.34, 0.5, fx, DECK_Y + 4.15, fz, ne.yaw, true);
+    boxAt('trim', 1.35, 0.16, 0.66, fx, DECK_Y + 4.4, fz, ne.yaw, true);
+    practicals.push({
+      position: new Vector3(fx, DECK_Y + 4.1, fz), color: PALETTE.SODIUM,
+      intensity: 5, radius: 20, coneRadius: 3.4, poolRadius: 10.5, flicker: 0.25,
       groundY: DECK_Y, raised: true,
     });
   }
@@ -1866,6 +2023,31 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
     });
     cylAt('emissive', 0.18, 0.32, fx, DECK2_Y + 2.2, 5);
     cylAt('metal', 0.07, 2.0, fx, DECK2_Y + 1.2, 5);
+    /**
+     * ─────────────────────────────────────────────────────────────────────────────────────
+     * BULKHEAD LIGHTS ON THE WALL THE CATWALK HUGS.
+     *
+     * The catwalk measured as the worst frame in the map: 13.9% warm chromatic pixels against
+     * the plaza's 46%, and 53% of its pixels in the 0.1–0.2 band. The reason is geometric —
+     * at 13.6 m, 2.6 m off a 34 m facade, roughly half of every frame IS that wall, and the
+     * two GOLD route lamps light the deck, not the wall. A pool cannot fix a vertical
+     * surface: it is a disc laid on the floor.
+     *
+     * So the wall gets the fixture a real fire-escape wall carries — a bulkhead every 4 m,
+     * `trim` housing + `emissive` lens, warm SODIUM, with a small pool that lands back on the
+     * walkway. Six of them, and the run of them is also a distance ruler down a 16 m route.
+     * ─────────────────────────────────────────────────────────────────────────────────────
+     */
+    const wallX = west.cx + west.w * 0.5 + 0.42;   // just proud of the block face at -29
+    for (let z = 3.5; z <= 19; z += 3.1) {
+      boxAt('trim', 0.30, 0.62, 0.52, wallX, DECK2_Y + 2.05, z, Math.PI * 0.5, true);
+      boxAt('emissive', 0.22, 0.44, 0.40, wallX + 0.18, DECK2_Y + 2.05, z, Math.PI * 0.5, true);
+      practicals.push({
+        position: new Vector3(wallX + 0.2, DECK2_Y + 2.05, z), color: PALETTE.SODIUM,
+        intensity: 2.6, radius: 11, coneRadius: 0, poolRadius: 2.9, flicker: 0.3,
+        groundY: DECK2_Y, raised: true,
+      });
+    }
   }
 
   // ── ROUTE V3 / LOOP G — the south loading dock canopy the containers reach. ──
@@ -2639,6 +2821,44 @@ export function buildArena(opts: ArenaOptions = {}): Arena {
           const q3 = wobbleQuad(w * 0.04, h * r2.range(0.12, 0.3), 2900 + i, 0.05);
           place(q3, { ry: yaw, x: x + r2.spread(w * 0.3), y: h * 1.12, z });
           geos.push(q3);
+        }
+        /**
+         * THE SKYLINE HAS ITS LIGHTS ON — the two near rings only.
+         *
+         * The cutouts are single-value flats by design (that IS the parallax trick), and the
+         * two nearest rings land on the sky's own value: NIGHT_B→NIGHT_A at 0.20 and 0.17
+         * against a sky running 0.15→0.24. On the ground that is invisible, because buildings
+         * cover it. On the high routes it is most of the frame, and it is measurably why a
+         * roof frame histogrammed 59% of its pixels into the 0.1–0.2 band against the plaza's
+         * 17%: two flats and a gradient, all within 0.07 of each other, and no third value
+         * anywhere. A night skyline is not a silhouette — it is a silhouette WITH LIGHTS IN
+         * IT, and the lights are the only thing giving it depth or scale.
+         *
+         * So a sparse scatter of lit panes on a fixed 5.4 × 6.2 m grid (a real floor pitch, so
+         * the specks are a ruler at 172 m the same way `facade()`'s are at 20 m), one in ~11
+         * lit, capped at nine per cutout, ~1 in 5 cold. They go into the existing `emissive`
+         * and `neon` buckets, so the whole backdrop still costs ZERO extra draw calls; and
+         * both buckets fog, so the far ring's specks sit further back on their own.
+         */
+        if (ri < 2) {
+          const cols = Math.max(1, Math.floor(w / 5.4));
+          const rows = Math.max(1, Math.floor((h - 8) / 6.2));
+          const nx = Math.sin(yaw);
+          const nz = Math.cos(yaw);
+          let lit = 0;
+          for (let c = 0; c < cols && lit < 9; c++) {
+            for (let rw = 0; rw < rows && lit < 9; rw++) {
+              if (!r2.bool(0.09)) continue;
+              lit++;
+              const u = (-(cols - 1) / 2 + c) * (w / Math.max(1, cols));
+              const wy = 6 + rw * 6.2;
+              boxAt(
+                r2.bool(0.2) ? 'neon' : 'emissive', 2.4, 3.2, 0.3,
+                x + Math.cos(yaw) * u - nx * 0.7, wy, z - Math.sin(yaw) * u - nz * 0.7,
+                yaw, true,
+              );
+            }
+          }
         }
       }
       const merged = mergeForStatic(geos);

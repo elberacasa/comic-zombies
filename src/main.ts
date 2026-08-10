@@ -93,6 +93,12 @@ interface CzGlobals {
   killAll(): void;
   /** Jump the director straight into round `n` — that round's count, HP, speed and live cap. */
   skipToRound(n: number): void;
+  /**
+   * THE LOOK OF ROUND `n`, WITHOUT PLAYING IT. Pushes the visual escalation — sky, fog, guttered
+   * street lamps, grade, vignette, soot — to what round `n` looks like and changes NOTHING about
+   * gameplay. Call with no argument to snap back to the live round.
+   */
+  setEscalation(n?: number): number;
   /** Grant a boon by id, skipping the draw. `CZ.boons.allDefs` lists every id. */
   giveBoon(id: string): void;
   /** Deal a boon draw right now, outside the round beat. */
@@ -920,6 +926,7 @@ async function boot(): Promise<void> {
       spawnStreet: (n = 1, kind: EnemyKind = 'shambler') => spawner.street(n, kind),
       killAll: () => ctx.enemies.killAll('console'),
       skipToRound: (n: number) => rounds.skipToRound(n),
+      setEscalation: (n?: number) => rounds.setEscalation(n),
       giveBoon: (id: string) => boons.grant(id),
       // Through the CONTRACT, not the class: `BoonSystem.offer`'s default parameter narrows its
       // own type to the literal 3, which a caller passing a plain `number` cannot satisfy.
@@ -980,7 +987,7 @@ function printControls(quality: QualityTier, draws: number, tris: number, seed: 
   const key = `color:${electric};font:700 13px monospace`;
   const txt = `color:${paper};font:13px monospace`;
 
-  console.log('%c COMIC ZOMBIES  ·  BUILD 005  ·  M3.5 THEY CLIMB ', title);
+  console.log('%c COMIC ZOMBIES  ·  BUILD 007  ·  THE HORDE HAS A BODY ', title);
   console.log(
     `%cMOVE%c  WASD   %cSPRINT%c  SHIFT   %cJUMP%c  SPACE   %cSLIDE%c  TAP CTRL   %cDIVE%c  HOLD CTRL`,
     key, txt, key, txt, key, txt, key, txt, key, txt,
@@ -1023,6 +1030,11 @@ function printControls(quality: QualityTier, draws: number, tris: number, seed: 
     `%cM3.5%c  %cCZ.camp('roof_ne')%c then %cCZ.spawnStreet(15)%c — they come up. ` +
     `%cCZ.nav.stats%c · %cCZ.sound('kill_crit')%c · %cCZ.navDraw.mode='field'`,
     head, txt, key, txt, key, txt, key, txt, key, txt, key,
+  );
+  console.log(
+    `%cBUILD 007%c  %cCZ.setEscalation(20)%c paints round 20's NIGHT without playing it ` +
+    `(no argument = back to live). %cCZ.skipToRound(10)%c is the gameplay half.`,
+    head, txt, key, txt, key, txt,
   );
 }
 

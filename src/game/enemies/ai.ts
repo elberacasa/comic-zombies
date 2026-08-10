@@ -8,7 +8,7 @@
  *  seeks, it clumps, it grinds along walls, and it takes a readable, predictable, slightly
  *  stupid line that a player can learn to exploit. Clumping is a FEATURE (GAME_BIBLE §4).
  *
- *  Three forces, summed every decision tick:
+ *  Four forces, summed every decision tick:
  *
  *    SEEK + WALL AVOID    `ctx.world.steer(from, to, out)` — seven short whisker rays that pick
  *                         the clearest lane toward the player. The world owns this because the
@@ -20,6 +20,16 @@
  *                         the whole kiting skill is built on. Without it a horde spreads into
  *                         a crescent and surrounds you; with it, it strings out behind you and
  *                         can be trained around the arena's kite loops A–G.
+ *    CONGA FOLLOW         …and relief alone only stops a queue being torn apart; it never BUILDS
+ *                         one. The gap it left was corners: every body aims at the player's
+ *                         CURRENT position, so the moment the player turns, the whole horde cuts
+ *                         the corner at once and the line becomes a fan. A body that has a
+ *                         LEADER — a neighbour ahead of it, closer to the player, roughly on its
+ *                         own line — now steers partly at the LEADER instead, so the horde walks
+ *                         the path you walked. Measured A/B (`tools/combat.mjs conga`): the
+ *                         unbroken queue goes 4.8 → 6.0 bodies at R1, 4.2 → 5.6 at R10 and
+ *                         4.3 → 6.3 at R15, and the pack narrows across its line of travel.
+ *                         See `SCHED.congaFollowWeight` for why this is NOT pathfinding.
  *
  *  THE ARENA'S LOOPS (see the header of `world/arena.ts`) are what this has to work on:
  *    A ring boulevard (~440 m lap) · B plaza circuit (~150 m) · C figure-eight through any of
@@ -60,7 +70,6 @@ import type { WorldService } from '@/core/types';
 
 // ── module scratch ──────────────────────────────────────────────────────────
 const _toN = new Vector3();
-const _toP = new Vector3();
 const _seek = new Vector3();
 
 /** The minimum any AI needs to know about a neighbour. `Enemy` satisfies this structurally. */
@@ -68,6 +77,12 @@ export interface Neighbour {
   readonly position: Vector3;
   readonly alive: boolean;
   readonly radius: number;
+  /**
+   * Horizontal distance from this neighbour to the player, as of this step. It is what orders
+   * the conga line: "closer to the player than me" is how a body decides who it is queueing
+   * BEHIND, and because that order is strict the follow graph can never contain a cycle.
+   */
+  readonly distToPlayer: number;
 }
 
 /**
@@ -90,6 +105,12 @@ export interface AiAgent {
   staggerT: number;
   /** False once both arms are shot off. */
   canMelee: boolean;
+  /**
+   * Multiplier on the next swing cooldown, ~1 ± `ENEMY.meleeCooldownJitter`. Re-rolled by the
+   * service every time a swing ends, which is what stops a pack that arrived together from
+   * swinging as one body forever. See `ENEMY.meleeCooldownJitter`.
+   */
+  swingJitter: number;
   readonly position: Vector3;
   readonly velocity: Vector3;
   /** Unit XZ heading the agent wants to travel. */
@@ -121,22 +142,45 @@ export type AiAction = 'none' | 'windup' | 'strike' | 'recover';
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Sum the separation push from every live neighbour, writing an unnormalised XZ vector to `out`.
+ * SEPARATION **and** THE FOLLOW HEADING, in one pass over the neighbours.
+ *
+ * `sep` is the classic push-apart force, with the conga relief applied to whoever is directly
+ * between me and the player. `follow` is the new half (see `SCHED.congaFollowWeight`): a unit
+ * XZ heading toward the nearest LEADER — a neighbour ahead of me, measurably closer to the
+ * player, and roughly on my own line to them. It is zero when I am at the head of the line.
+ *
+ * ONE LOOP, because this runs `steerHz × aliveCount` times a second and a second pass over 25
+ * bodies to find a leader would cost more than the seven octree rays it is helping.
  *
  * `toPlayer` must be the unit XZ direction from `self` to the player; it is what lets a
  * neighbour be recognised as "the one I am queueing behind" rather than "the one crushing me".
+ * `selfDist` is the caller's own `distToPlayer`; pass 0 to disable the follow term entirely
+ * (nothing can be closer to the player than 0, so no leader is ever found).
  */
-export function separationInto(
-  out: Vector3,
+export function crowdInto(
+  sep: Vector3,
+  follow: Vector3,
   self: Vector3,
   selfIndex: number,
+  selfDist: number,
   toPlayer: Vector3,
   neighbours: readonly Neighbour[],
   count: number,
-): Vector3 {
-  out.set(0, 0, 0);
+): void {
+  sep.set(0, 0, 0);
+  follow.set(0, 0, 0);
+
   const r = ENEMY.separationRadius;
   const cull = SCHED.neighbourRadius * SCHED.neighbourRadius;
+  const followCull = SCHED.congaFollowRadius * SCHED.congaFollowRadius;
+  // A leader must be strictly nearer the player than I am. Zero `selfDist` makes this negative,
+  // which nothing can satisfy — the documented "no follow" path.
+  const leadMax = selfDist - SCHED.congaFollowLead;
+
+  let bestD2 = Infinity;
+  let bestX = 0;
+  let bestZ = 0;
+
   for (let i = 0; i < count; i++) {
     if (i === selfIndex) continue;
     const n = neighbours[i];
@@ -144,28 +188,54 @@ export function separationInto(
     const dx = self.x - n.position.x;
     const dz = self.z - n.position.z;
     const d2 = dx * dx + dz * dz;
-    if (d2 > cull || d2 < 1e-6) continue;
+    if (d2 < 1e-6) continue;
+    if (d2 > cull && d2 > followCull) continue;
     const d = Math.sqrt(d2);
-    const overlap = r + n.radius - d;
-    if (overlap <= 0) continue;
+    // Unit heading from ME toward this neighbour, and how well it agrees with my line to the
+    // player. Both halves below need it, so it is computed once.
+    const tx = -dx / d;
+    const tz = -dz / d;
+    const alignment = tx * toPlayer.x + tz * toPlayer.z;
 
-    // THE CONGA EXCEPTION. If this neighbour is between me and the player, I am not being
-    // crushed — I am in a queue. Cutting separation here is what makes the horde trainable.
-    const alignment = (-dx * toPlayer.x - dz * toPlayer.z) / d;
-    const relief = alignment > SCHED.congaCos ? SCHED.congaRelief : 1;
+    if (d2 <= cull) {
+      const overlap = r + n.radius - d;
+      if (overlap > 0) {
+        // THE CONGA EXCEPTION. If this neighbour is between me and the player, I am not being
+        // crushed — I am in a queue. Cutting separation here is what makes the horde trainable.
+        const relief = alignment > SCHED.congaCos ? SCHED.congaRelief : 1;
+        const push = (overlap / Math.max(r, 1e-3)) * relief;
+        sep.x += (dx / d) * push;
+        sep.z += (dz / d) * push;
+      }
+    }
 
-    const push = (overlap / Math.max(r, 1e-3)) * relief;
-    out.x += (dx / d) * push;
-    out.z += (dz / d) * push;
+    // THE LEADER. Nearest neighbour that is ahead of me on my own line, closer in, and ON MY
+    // OWN LEVEL — see `SCHED.congaFollowRise`. Queueing behind someone up a staircase steers me
+    // into the side of it.
+    if (d2 <= followCull && d2 < bestD2
+      && n.distToPlayer < leadMax
+      && alignment > SCHED.congaFollowCos
+      && Math.abs(n.position.y - self.y) <= SCHED.congaFollowRise) {
+      bestD2 = d2;
+      bestX = tx;
+      bestZ = tz;
+    }
   }
-  return out;
+
+  if (bestD2 < Infinity) {
+    follow.x = bestX;
+    follow.z = bestZ;
+  }
 }
 
 /**
- * The full steering decision: a wall-avoiding seek toward `target`, plus separation, normalised
- * into a unit XZ heading. Costs seven octree rays (inside `world.steer`), which is why the
- * service only calls this at `SCHED.steerHz` on a round-robin slice and integrates the result
- * every step in between.
+ * The full steering decision: a wall-avoiding seek toward `target`, plus separation and the
+ * conga follow heading, normalised into a unit XZ heading. Costs seven octree rays (inside
+ * `world.steer`), which is why the service only calls this at `SCHED.steerHz` on a round-robin
+ * slice and integrates the result every step in between.
+ *
+ * `follow` may be zero-length (the body at the head of the line), in which case this is exactly
+ * BUILD 006's steering.
  */
 export function steerInto(
   out: Vector3,
@@ -173,12 +243,14 @@ export function steerInto(
   self: Vector3,
   target: Vector3,
   separation: Vector3,
+  follow: Vector3,
 ): Vector3 {
   world.steer(self, target, _seek);
+  const fw = SCHED.congaFollowWeight;
   out.set(
-    _seek.x * ENEMY.seekWeight + separation.x * ENEMY.separationWeight,
+    _seek.x * ENEMY.seekWeight + separation.x * ENEMY.separationWeight + follow.x * fw,
     0,
-    _seek.z * ENEMY.seekWeight + separation.z * ENEMY.separationWeight,
+    _seek.z * ENEMY.seekWeight + separation.z * ENEMY.separationWeight + follow.z * fw,
   );
   const len = Math.hypot(out.x, out.z);
   if (len < 1e-5) {
@@ -362,12 +434,16 @@ export function stepState(a: AiAgent, dt: number, spawnTime: number): AiAction {
 
     case 'attack': {
       // A heavy enough hit cancels the swing outright (see `reactions.ts::INTERRUPT_IMPULSE`).
-      if (a.staggerT > 0) { enter(a, 'stagger'); a.cooldownT = ENEMY.meleeCooldown * 0.5; return 'recover'; }
+      if (a.staggerT > 0) {
+        enter(a, 'stagger');
+        a.cooldownT = ENEMY.meleeCooldown * 0.5 * a.swingJitter;
+        return 'recover';
+      }
       const was = a.attackT;
       a.attackT += dt;
       if (was < STRIKE_AT && a.attackT >= STRIKE_AT) return 'strike';
       if (a.attackT >= SWING_TIME) {
-        a.cooldownT = ENEMY.meleeCooldown;
+        a.cooldownT = ENEMY.meleeCooldown * a.swingJitter;
         enter(a, 'chase');
         return 'recover';
       }

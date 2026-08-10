@@ -720,6 +720,9 @@ export class PlayerController {
     m.maxSubstepDistance = MOVE.maxSubstepDistance;
     m.maxSubsteps = 8;
     m.iterations = MOVE.collisionIterations;
+    // The player is clamped far tighter than the horde default: a >0.5 m correction is always a
+    // solver escape, never a contact, and the human reads it instantly as a teleport.
+    m.maxCorrection = MOVE.maxCorrection;
     m.driftX = 0;
     m.driftZ = 0;
     // Coyote time is why this is not simply `grounded`: a player one frame off a lip must still

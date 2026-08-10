@@ -16,5 +16,7 @@ export {
   lastResidual,
   makeMotionParams,
   moveBody,
+  COUNTERS as MOTION_COUNTERS,
+  resetCounters as resetMotionCounters,
 } from './mover';
 export type { MotionBody, MotionParams } from './mover';
