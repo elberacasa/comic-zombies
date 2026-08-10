@@ -1,0 +1,21 @@
+{
+  "name": "comic-zombies",
+  "version": "0.1.0",
+  "description": "AAA comic-styled browser zombies shooter",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "tsc --noEmit"
+  },
+  "type": "module",
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.1"
+  },
+  "private": true
+}

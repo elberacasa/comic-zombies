@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>COMIC ZOMBIES</title>
+<style>
+  :root {
+    --ink: #0b0a14;
+    --paper: #f2e8d5;
+    --hot: #ff2e63;
+    --gold: #ffc531;
+    --electric: #00e5ff;
+    --comic-face: Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--ink); }
+  body { font-family: var(--comic-face); color: var(--paper); cursor: none; }
+  /*
+   * width/height 100% are LOAD-BEARING, do not remove.
+   * <canvas> is a replaced element: with `width: auto` an absolutely-positioned replaced element
+   * lays out at its INTRINSIC size (the drawing-buffer attribute size), and `inset: 0` cannot
+   * stretch it. The renderer calls setSize(w, h, false) — the `false` deliberately skips writing
+   * canvas style so we control CSS size here — so nothing else corrects it.
+   * Without these the canvas laid out at 2400x1315 CSS px inside a 1600x877 window: the player
+   * saw only the top-left of every frame, and the render's centre (the focus of expansion when
+   * moving forward) sat off-screen, which reads as constantly drifting toward one corner.
+   */
+  #game { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+  #ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  #boot {
+    position: fixed; inset: 0; z-index: 100; display: grid; place-content: center;
+    justify-items: center; gap: 1.2rem; text-align: center;
+    background:
+      radial-gradient(ellipse at 50% 45%, #3a2159 0%, #1a1636 55%, #0b0a14 100%);
+    cursor: pointer;
+  }
+  #boot h1 {
+    font-size: clamp(3rem, 12vw, 9rem); line-height: .84; letter-spacing: .01em;
+    color: var(--paper); transform: rotate(-3deg) skewX(-6deg);
+    text-shadow:
+      4px 4px 0 var(--hot), 8px 8px 0 var(--ink),
+      -2px -2px 0 var(--ink), 2px -2px 0 var(--ink), -2px 2px 0 var(--ink);
+  }
+  #boot h1 span { display: block; color: var(--gold); font-size: .62em; }
+  #boot p {
+    font-family: var(--comic-face); font-size: clamp(1rem, 2.4vw, 1.6rem);
+    letter-spacing: .08em; color: var(--paper);
+    background: var(--ink); border: 4px solid var(--paper);
+    padding: .55rem 1.4rem; transform: rotate(1.4deg);
+    box-shadow: 6px 6px 0 rgba(0,0,0,.6);
+    animation: pulse 1.1s steps(2, end) infinite;
+  }
+  #boot small { opacity: .65; letter-spacing: .18em; font-size: .8rem; }
+  @keyframes pulse { 50% { transform: rotate(1.4deg) scale(1.045); } }
+  #boot.hidden { display: none; }
+  .nosupport { max-width: 42ch; font-size: 1.1rem; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="ui"></div>
+  <div id="boot">
+    <h1>COMIC<span>ZOMBIES</span></h1>
+    <p id="boot-cta">CLICK TO DROP IN</p>
+    <!-- `ui/boot.ts` overwrites this per state and appends the full control card underneath;
+         this is only what shows in the moment before the module has parsed. -->
+    <small id="boot-hint">WASD MOVE &nbsp;·&nbsp; LMB SHOOT &nbsp;·&nbsp; R RELOAD &nbsp;·&nbsp; N / M SPAWN ZOMBIES</small>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

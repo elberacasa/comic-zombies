@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>COMIC ZOMBIES — how a game draws itself</title>
+<meta name="description" content="An AAA-styled browser zombies shooter with zero downloaded assets. Every texture, mesh, letterform and sound is generated in code. Built in about a day with Claude Code." />
+<style>
+  :root {
+    --ink: #0b0a14; --ink-soft: #262e4c; --paper: #f2e8d5;
+    --hot: #ff2e63; --gold: #ffc531; --electric: #00e5ff; --acid: #8cff3e;
+    --sodium: #ff9a3c; --rust: #f4761b;
+    --night-a: #1d2747; --night-b: #4d2e82; --slate: #445270;
+    --concrete: #8f8474; --teal: #2f7f8f; --bone: #cbb89a;
+    --comic: Impact, "Haettenschweiler", "Arial Narrow Bold", "Arial Black", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--night-a); color: var(--paper);
+    font: 16px/1.65 var(--mono);
+    padding: 0 0 6rem;
+    background-image: radial-gradient(circle at 1px 1px, rgba(242,232,213,.055) 1px, transparent 0);
+    background-size: 6px 6px;
+    overflow-x: hidden;
+  }
+  .wrap { max-width: 78rem; margin: 0 auto; padding: 0 1.5rem; }
+
+  /* ── hero ─────────────────────────────────────────────────────────── */
+  .hero {
+    padding: 5rem 0 3rem; position: relative; overflow: hidden;
+    background:
+      repeating-conic-gradient(from 0deg at 50% 38%,
+        rgba(255,197,49,.06) 0deg 6deg, transparent 6deg 12deg);
+  }
+  h1 {
+    font-family: var(--comic); font-size: clamp(3rem, 11vw, 8rem); line-height: .84;
+    letter-spacing: .01em; transform: rotate(-2.5deg) skewX(-5deg);
+    text-shadow: 5px 5px 0 var(--hot), 10px 10px 0 var(--ink);
+    margin-bottom: 1.6rem;
+  }
+  h1 span { display: block; color: var(--gold); font-size: .5em; }
+  .tag {
+    display: inline-block; font-family: var(--comic); font-size: clamp(1rem,2.2vw,1.5rem);
+    letter-spacing: .06em; background: var(--ink); color: var(--paper);
+    border: 3px solid var(--paper); padding: .45rem 1.1rem;
+    transform: rotate(1.2deg); box-shadow: 6px 6px 0 rgba(0,0,0,.6); margin-bottom: 2rem;
+  }
+  .lede { max-width: 56rem; font-size: 1.06rem; color: #ded5c4; margin-bottom: 1rem; }
+  .lede strong { color: var(--gold); }
+
+  /* ── stat band ────────────────────────────────────────────────────── */
+  .stats {
+    display: grid; gap: 1rem; margin: 2.5rem 0 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .stat {
+    background: var(--ink); border: 3px solid var(--paper); padding: .9rem 1rem;
+    box-shadow: 5px 5px 0 rgba(0,0,0,.5);
+  }
+  .stat b { display: block; font-family: var(--comic); font-size: 2.1rem; color: var(--gold); line-height: 1; }
+  .stat.zero b { color: var(--acid); }
+  .stat span { font-size: .72rem; letter-spacing: .1em; color: #a8b4cc; text-transform: uppercase; }
+
+  /* ── sections ─────────────────────────────────────────────────────── */
+  section { margin: 4.5rem auto; }
+  h2 {
+    font-family: var(--comic); font-size: clamp(1.7rem,4vw,2.5rem); letter-spacing: .02em;
+    color: var(--ink); background: var(--gold);
+    display: inline-block; padding: .08em .5em;
+    border: 3px solid var(--ink); box-shadow: 5px 5px 0 var(--ink);
+    transform: rotate(-1deg); margin-bottom: 1.3rem;
+  }
+  h3 { font-family: var(--comic); font-size: 1.3rem; letter-spacing: .05em; color: var(--gold); margin: 2rem 0 .6rem; }
+  .blurb { max-width: 58rem; color: #ded5c4; margin: .8rem 0 1.8rem; }
+  .blurb code, p code { background: var(--ink); color: var(--acid); padding: .1em .35em; font-size: .88em; }
+
+  /* ── diagrams ─────────────────────────────────────────────────────── */
+  .diagram {
+    background: var(--ink); border: 3px solid var(--paper);
+    box-shadow: 7px 7px 0 rgba(0,0,0,.55);
+    padding: 1.5rem; margin: 1.5rem 0 2rem; overflow-x: auto;
+  }
+  .diagram svg { display: block; margin: 0 auto; min-width: 640px; max-width: 100%; height: auto; }
+  .caption { font-size: .8rem; color: #93a2bd; margin-top: .9rem; text-align: center; }
+
+  /* ── asset grid ───────────────────────────────────────────────────── */
+  .grid { display: grid; gap: 1.2rem; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+  .card { background: var(--slate); border: 3px solid var(--ink); box-shadow: 5px 5px 0 rgba(0,0,0,.55); overflow: hidden; }
+  .art {
+    aspect-ratio: 1; display: grid; place-items: center; overflow: hidden;
+    background: repeating-conic-gradient(var(--ink-soft) 0% 25%, #1b2138 0% 50%) 0 0 / 16px 16px;
+  }
+  .art canvas, .art img { max-width: 100%; max-height: 100%; display: block; }
+  .swatch { width: 100%; height: 100%; display: flex; align-items: flex-end; }
+  .swatchmeta {
+    width: 100%; display: flex; justify-content: space-between;
+    font: 11px var(--mono); padding: .35rem .5rem; background: rgba(11,10,20,.78);
+  }
+  figcaption { padding: .55rem .6rem .7rem; border-top: 3px solid var(--ink); background: var(--ink-soft); }
+  figcaption strong { display: block; font-family: var(--comic); letter-spacing: .06em; font-size: 1.05rem; }
+  figcaption code { display: block; font: 11px var(--mono); color: #9fb0d0; word-break: break-all; margin-top: .15rem; }
+  button.sound {
+    font-family: var(--comic); font-size: 2.4rem; color: var(--ink); background: var(--gold);
+    border: 3px solid var(--ink); cursor: pointer; width: 80px; height: 80px;
+    border-radius: 50%; box-shadow: 4px 4px 0 var(--ink);
+  }
+  button.sound:hover { background: var(--sodium); }
+  button.sound:active { transform: translate(3px,3px); box-shadow: 1px 1px 0 var(--ink); }
+  .err { color: var(--hot); font: 11px var(--mono); padding: .5rem; text-align: center; }
+
+  .rule { height: 5px; background: var(--ink); border-top: 2px solid var(--paper); margin: 3rem 0; }
+  a { color: var(--electric); }
+  .cta { display: flex; flex-wrap: wrap; gap: 1rem; margin: 2rem 0; }
+  .cta a {
+    font-family: var(--comic); font-size: 1.25rem; letter-spacing: .05em; text-decoration: none;
+    background: var(--hot); color: var(--paper); border: 3px solid var(--ink);
+    padding: .5rem 1.3rem; box-shadow: 5px 5px 0 var(--ink);
+  }
+  .cta a.alt { background: var(--electric); color: var(--ink); }
+  .cta a:active { transform: translate(3px,3px); box-shadow: 2px 2px 0 var(--ink); }
+</style>
+</head>
+<body>
+
+<div class="hero"><div class="wrap">
+  <h1>COMIC<span>ZOMBIES</span></h1>
+  <div class="tag">A GAME THAT DRAWS ITSELF</div>
+  <p class="lede">
+    A Call-of-Duty-style round-based zombies shooter that runs in a browser tab, styled like a
+    graphic novel. Heavy ink, halftone screen-tone, saturated flats — <strong>and not one
+    downloaded asset.</strong> No models. No textures. No audio files. No webfonts.
+  </p>
+  <p class="lede">
+    Every mesh is built from code, every texture is painted to a canvas at boot, every sound is
+    synthesised from oscillators and noise. The entire game is <strong>43,645 lines of
+    TypeScript and a single dependency</strong>, written with Claude Code in about a day.
+  </p>
+
+  <div class="stats">
+    <div class="stat zero"><b>0</b><span>downloaded assets</span></div>
+    <div class="stat"><b>1</b><span>runtime dependency</span></div>
+    <div class="stat"><b>43.6k</b><span>lines of typescript</span></div>
+    <div class="stat"><b>77</b><span>source files</span></div>
+    <div class="stat"><b>~326kB</b><span>gzipped, total</span></div>
+  </div>
+
+  <div class="cta">
+    <a href="/index.html">▶ PLAY IT</a>
+    <a class="alt" href="#assets">SEE EVERY ASSET</a>
+  </div>
+</div></div>
+
+<div class="wrap">
+
+<!-- ── HOW IT WAS BUILT ─────────────────────────────────────────────── -->
+<section>
+  <h2>How it was built</h2>
+  <p class="blurb">
+    Not "one prompt, one game". The project runs like a small studio: a milestone is planned,
+    agents build it in sequence, <em>adversarial reviewers</em> try to break it, a fix pass
+    applies what they found, and then a human plays the result and says what's wrong. Their
+    feedback outranks the plan. That loop ran six times in a day.
+  </p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 900 300" role="img" aria-label="The development loop: plan, build, review, fix, play, feedback">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 z" fill="#f2e8d5"/>
+        </marker>
+        <style>
+          .bx { fill:#445270; stroke:#f2e8d5; stroke-width:3 }
+          .bxg { fill:#ffc531; stroke:#0b0a14; stroke-width:3 }
+          .bxh { fill:#ff2e63; stroke:#0b0a14; stroke-width:3 }
+          .t { font:700 15px ui-monospace,Menlo,monospace; fill:#f2e8d5 }
+          .td { font:700 15px ui-monospace,Menlo,monospace; fill:#0b0a14 }
+          .s { font:11px ui-monospace,Menlo,monospace; fill:#a8b4cc }
+          .ln { stroke:#f2e8d5; stroke-width:2.5; fill:none; marker-end:url(#ar) }
+        </style>
+      </defs>
+
+      <rect class="bxg" x="20" y="30" width="150" height="58"/>
+      <text class="td" x="95" y="55" text-anchor="middle">MILESTONE</text>
+      <text class="td" x="95" y="74" text-anchor="middle" font-size="11">scoped + specced</text>
+
+      <rect class="bx" x="210" y="30" width="150" height="58"/>
+      <text class="t" x="285" y="55" text-anchor="middle">AGENTS BUILD</text>
+      <text class="s" x="285" y="74" text-anchor="middle">in sequence</text>
+
+      <rect class="bx" x="400" y="30" width="150" height="58"/>
+      <text class="t" x="475" y="55" text-anchor="middle">REVIEWERS</text>
+      <text class="s" x="475" y="74" text-anchor="middle">try to break it</text>
+
+      <rect class="bx" x="590" y="30" width="150" height="58"/>
+      <text class="t" x="665" y="55" text-anchor="middle">FIX PASS</text>
+      <text class="s" x="665" y="74" text-anchor="middle">blockers first</text>
+
+      <rect class="bxh" x="590" y="180" width="290" height="72"/>
+      <text class="t" x="735" y="208" text-anchor="middle">HUMAN PLAYS IT</text>
+      <text class="t" x="735" y="230" text-anchor="middle" font-size="12">answers HUMAN_JUDGE.md</text>
+
+      <rect class="bxg" x="20" y="180" width="290" height="72"/>
+      <text class="td" x="165" y="208" text-anchor="middle">FEEDBACK OUTRANKS THE PLAN</text>
+      <text class="td" x="165" y="230" text-anchor="middle" font-size="12">next milestone is whatever they said</text>
+
+      <path class="ln" d="M170,59 L205,59"/>
+      <path class="ln" d="M360,59 L395,59"/>
+      <path class="ln" d="M550,59 L585,59"/>
+      <path class="ln" d="M740,59 L800,59 L800,175"/>
+      <path class="ln" d="M585,216 L315,216"/>
+      <path class="ln" d="M95,175 L95,95"/>
+      <text class="s" x="812" y="130">ship</text>
+      <text class="s" x="440" y="205" text-anchor="middle">"it makes me dizzy"</text>
+    </svg>
+    <p class="caption">
+      Agents verify facts — types, draw calls, allocation, hit registration. The human judges
+      everything subjective. That split is deliberate: machines are good at "is this leaking",
+      bad at "is this satisfying".
+    </p>
+  </div>
+
+  <h3>What the reviewers actually caught</h3>
+  <p class="blurb">
+    The adversarial pass is where most of the quality comes from. A sample of real bugs it found,
+    each of which had already passed its author's own tests:
+  </p>
+  <div class="diagram" style="padding:1.2rem 1.5rem">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;min-width:600px">
+      <tr style="border-bottom:2px solid #445270">
+        <th style="text-align:left;padding:.5rem;color:#ffc531">Bug</th>
+        <th style="text-align:left;padding:.5rem;color:#ffc531">Why nobody saw it</th>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem">Every zombie rendered <em>translucent</em></td>
+        <td style="padding:.5rem;color:#ded5c4">The depth prepass used a stock material that couldn't run the vertex shader posing the body. Two individually-correct decisions, broken only together.</td>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem">Slide silently dropped on every kill</td>
+        <td style="padding:.5rem;color:#ded5c4">Input edges died on frames that ran zero fixed steps — and hitstop, added later, opened exactly that hole on every kill.</td>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem">Knockback was <em>squared</em></td>
+        <td style="padding:.5rem;color:#ded5c4">A units mismatch across a module boundary: 386&nbsp;m/s of knockback threw a zombie 65&nbsp;m, so every follow-up shot missed.</td>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem">The player floated instead of falling</td>
+        <td style="padding:.5rem;color:#ded5c4"><code>grounded</code> was only ever set true and never derived from the world. Measured: 0 of 17 ledges fell.</td>
+      </tr>
+      <tr>
+        <td style="padding:.5rem">Every ground light pool was invisible</td>
+        <td style="padding:.5rem;color:#ded5c4">Fan geometry wound the wrong way, so all 55 were backface-culled. Proven by A/B: "lights on" and "no lights at all" rendered bit-identically.</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ── THE ASSET PIPELINE ───────────────────────────────────────────── -->
+<section>
+  <h2>Nothing is downloaded</h2>
+  <p class="blurb">
+    The constraint drives the art direction, not the other way round. Bold, flat, ink-outlined
+    comic art is <em>achievable in code</em> at a quality that reads as premium — photorealism
+    is not. So the style was chosen to fit the constraint, and then the constraint was never
+    broken.
+  </p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 900 260" role="img" aria-label="Asset pipeline: TypeScript to canvas, GLSL and WebAudio, into the game">
+      <defs>
+        <style>
+          .p { fill:#445270; stroke:#f2e8d5; stroke-width:3 }
+          .pg { fill:#2f7f8f; stroke:#f2e8d5; stroke-width:3 }
+          .pa { fill:#8cff3e; stroke:#0b0a14; stroke-width:3 }
+          .t2 { font:700 14px ui-monospace,Menlo,monospace; fill:#f2e8d5 }
+          .t2d { font:700 14px ui-monospace,Menlo,monospace; fill:#0b0a14 }
+          .s2 { font:11px ui-monospace,Menlo,monospace; fill:#a8b4cc }
+          .ln2 { stroke:#f2e8d5; stroke-width:2.5; fill:none; marker-end:url(#ar) }
+        </style>
+      </defs>
+
+      <rect class="p" x="20" y="95" width="130" height="66"/>
+      <text class="t2" x="85" y="122" text-anchor="middle">TypeScript</text>
+      <text class="s2" x="85" y="142" text-anchor="middle">43,645 lines</text>
+
+      <rect class="pg" x="250" y="20" width="180" height="58"/>
+      <text class="t2" x="340" y="44" text-anchor="middle">Canvas 2D</text>
+      <text class="s2" x="340" y="63" text-anchor="middle">textures, lettering</text>
+
+      <rect class="pg" x="250" y="100" width="180" height="58"/>
+      <text class="t2" x="340" y="124" text-anchor="middle">GLSL + BufferGeometry</text>
+      <text class="s2" x="340" y="143" text-anchor="middle">shading, meshes</text>
+
+      <rect class="pg" x="250" y="180" width="180" height="58"/>
+      <text class="t2" x="340" y="204" text-anchor="middle">WebAudio</text>
+      <text class="s2" x="340" y="223" text-anchor="middle">every sound</text>
+
+      <rect class="pa" x="530" y="95" width="150" height="66"/>
+      <text class="t2d" x="605" y="122" text-anchor="middle">THE GAME</text>
+      <text class="t2d" x="605" y="142" text-anchor="middle" font-size="11">boots in seconds</text>
+
+      <path class="ln2" d="M150,118 L200,118 L200,49 L245,49"/>
+      <path class="ln2" d="M150,128 L245,128"/>
+      <path class="ln2" d="M150,138 L200,138 L200,209 L245,209"/>
+      <path class="ln2" d="M430,49 L480,49 L480,118 L525,118"/>
+      <path class="ln2" d="M430,128 L525,128"/>
+      <path class="ln2" d="M430,209 L480,209 L480,138 L525,138"/>
+
+      <g transform="translate(730,60) rotate(-8)">
+        <rect x="0" y="0" width="150" height="130" fill="#ff2e63" stroke="#0b0a14" stroke-width="4"/>
+        <text x="75" y="42" text-anchor="middle" font="700 46px Impact,sans-serif" fill="#f2e8d5">0</text>
+        <text x="75" y="72" text-anchor="middle" font="700 15px Impact,sans-serif" fill="#f2e8d5">FILES</text>
+        <text x="75" y="96" text-anchor="middle" font="700 13px ui-monospace,monospace" fill="#f2e8d5">FETCHED</text>
+        <text x="75" y="115" text-anchor="middle" font="700 13px ui-monospace,monospace" fill="#f2e8d5">EVER</text>
+      </g>
+    </svg>
+    <p class="caption">One dependency: <code>three</code>. Everything else is standard browser APIs.</p>
+  </div>
+
+  <h3>The render pipeline</h3>
+  <p class="blurb">
+    The comic look is not a filter bolted on at the end — it <em>is</em> the rendering
+    architecture. Nine passes, in a fixed order, and the first three are never dropped by a
+    quality tier because losing them loses the art direction.
+  </p>
+  <div class="diagram">
+    <svg viewBox="0 0 900 170" role="img" aria-label="Nine-pass render pipeline">
+      <defs><style>
+        .q { fill:#4d2e82; stroke:#f2e8d5; stroke-width:2.5 }
+        .qlock { fill:#ffc531; stroke:#0b0a14; stroke-width:2.5 }
+        .qt { font:700 11px ui-monospace,Menlo,monospace; fill:#f2e8d5 }
+        .qtd { font:700 11px ui-monospace,Menlo,monospace; fill:#0b0a14 }
+      </style></defs>
+      <g>
+        <rect class="qlock" x="10"  y="50" width="88" height="52"/><text class="qtd" x="54"  y="72" text-anchor="middle">SCENE</text><text class="qtd" x="54" y="88" text-anchor="middle" font-size="9">+ prepass</text>
+        <rect class="qlock" x="108" y="50" width="88" height="52"/><text class="qtd" x="152" y="72" text-anchor="middle">INK</text><text class="qtd" x="152" y="88" text-anchor="middle" font-size="9">sobel edges</text>
+        <rect class="qlock" x="206" y="50" width="88" height="52"/><text class="qtd" x="250" y="72" text-anchor="middle">HALFTONE</text><text class="qtd" x="250" y="88" text-anchor="middle" font-size="9">screen-tone</text>
+        <rect class="q" x="304" y="50" width="88" height="52"/><text class="qt" x="348" y="79" text-anchor="middle">BLOOM</text>
+        <rect class="q" x="402" y="50" width="88" height="52"/><text class="qt" x="446" y="72" text-anchor="middle">CHROMA</text><text class="qt" x="446" y="88" text-anchor="middle" font-size="9">misregister</text>
+        <rect class="q" x="500" y="50" width="88" height="52"/><text class="qt" x="544" y="79" text-anchor="middle">GRADE</text>
+        <rect class="q" x="598" y="50" width="88" height="52"/><text class="qt" x="642" y="79" text-anchor="middle">GRAIN</text>
+        <rect class="q" x="696" y="50" width="88" height="52"/><text class="qt" x="740" y="79" text-anchor="middle">VIGNETTE</text>
+        <rect class="q" x="794" y="50" width="96" height="52"/><text class="qt" x="842" y="72" text-anchor="middle">OVERLAY</text><text class="qt" x="842" y="88" text-anchor="middle" font-size="9">speed lines</text>
+      </g>
+      <text x="10" y="30" font="700 12px ui-monospace,monospace" fill="#ffc531">◆ NEVER DROPPED — these three ARE the art direction</text>
+      <text x="10" y="130" font="11px ui-monospace,monospace" fill="#a8b4cc">Quality tiers drop passes from the right. Better to lose resolution than lose the style.</text>
+    </svg>
+  </div>
+
+  <h3>One rule that fixed everything</h3>
+  <p class="blurb">
+    Early builds made the playtester ill. Their words: <em>"every pixel seems to be jumping like
+    glitching."</em> The diagnosis was a principle, not a bug — <strong>a comic page does not
+    animate its own texture.</strong> Paper doesn't shimmer, halftone dots don't crawl, CMYK
+    plates don't re-register every frame. Those things are <em>printed</em>.
+  </p>
+  <div class="diagram" style="padding:1.2rem 1.5rem">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;min-width:600px">
+      <tr style="border-bottom:2px solid #445270">
+        <th style="text-align:left;padding:.5rem;color:#ffc531">Layer</th>
+        <th style="text-align:left;padding:.5rem;color:#ffc531">Rule</th>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem">Halftone lattice</td><td style="padding:.5rem;color:#ded5c4">Perfectly static in screen space. Nailed to the page.</td></tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem">Paper grain</td><td style="padding:.5rem;color:#ded5c4">Static. One sheet, not a new one every frame.</td></tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem">Chromatic misregistration</td><td style="padding:.5rem;color:#ded5c4">One constant offset per session — like one bad print run.</td></tr>
+      <tr><td style="padding:.5rem">Boiling ink line</td><td style="padding:.5rem;color:#ded5c4">12&nbsp;fps, hero contours only, with a hard coverage budget.</td></tr>
+    </table>
+    <p class="caption" style="text-align:left;margin-top:1rem">
+      The measurable version: with the camera parked, consecutive frames must differ by under
+      0.5% of pixels. It went from <strong>24.77% → 0.065%</strong>. Stand still in the finished
+      game and the image is frozen — only the world moves.
+    </p>
+  </div>
+</section>
+
+<div class="rule"></div>
+
+<!-- ── LIVE ASSETS ──────────────────────────────────────────────────── -->
+<section id="assets">
+  <h2>Every asset, generated live</h2>
+  <p class="blurb">
+    Everything below is produced <em>right now, in your browser</em>, by the same functions the
+    game calls. This page imports the game's own modules — it is not a mock-up, and if a
+    generator ever changed, this page would change with it. Each tile prints the exact call
+    that made it.
+  </p>
+  <div id="gallery"></div>
+</section>
+
+<div class="rule"></div>
+<p class="blurb" style="text-align:center">
+  Built with <a href="https://claude.com/claude-code">Claude Code</a>.
+  <a href="/index.html">Play it →</a>
+</p>
+
+</div>
+
+<script type="module" src="/src/gallery/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+**/.DS_Store
+.vite/
+*.log
+
+# agent test-harness build output (any .buildN variant)
+tools/.build*/
