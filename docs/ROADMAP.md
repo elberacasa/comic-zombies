@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Milestone** | **M3.5 — They Climb** (M1, M1.5, M2, M3 shipped) |
-| **State** | M3.5 + the BUILD 006 hardening pass, verified in Chrome; logged as BUILD 006 |
-| **Next user playtest** | BUILD 006 — judge the camping fight, the sprint/ADS pose, and the mix |
+| **Milestone** | **M5 — Free Web Release** (M0–M4 shipped) |
+| **State** | BUILD 007 live at comic-zombies.vercel.app; M5 starting |
+| **Next user playtest** | BUILD 007 — answer `docs/HUMAN_JUDGE.md` (14 items, ~15 min) |
 | **Blocked on** | nothing. User feedback on BUILD 005 outranks M4 when it arrives. |
 | **Last updated** | 2026-08-10 |
 
@@ -94,32 +94,80 @@ consistency → performance.**
 **Done when:** sprint → slide → headshot is good enough that the human immediately does it again.
 **User tests:** *gun feel, hit feedback, enemy readability, kiting, comfort over 10 minutes.*
 
-## M3 — The Loop 🔨
+## M3 — The Loop ✅
 Rounds, spawn director, points economy, combo meter, boon draw (1 of 3), health/down/death,
 round title cards, run summary, HUD in full comic language, localStorage meta.
 **Done when:** the user says "one more round" out loud.
 
-## M4 — Content & Systems 🔒
-Full weapon set, Pack-a-Punch + elemental affixes, wall-buys, mystery box, power-up drops,
-special enemies (Sprinter, Brute, Spitter, Screamer), full boon pool (~35 boons).
+## M3.5 — They Climb ✅ *(BUILD 005/006)*
+The human's four BUILD 004 notes and nothing else: a navigation graph so zombies use stairs and
+climb to rooftops, a sprint pose out of the way, iron sights actually on the camera axis, and a
+mix that reacts to the crowd.
 
-## M5 — The Arena 🔒
-Real level design: multi-zone arena, buyable doors that grow the map, verticality and parkour
-lattice, hazards, practical lighting, environmental storytelling. Kite-path tested.
+## M4 — The Horde Has a Body ✅ *(BUILD 007)*
+Skinned procedural zombies (the head hitbox was 59% wider than the drawn skull; it now matches),
+CoD's real health curve, speed tiers, conga steering for trains, plus round-by-round visual
+escalation. Also fixed the stairs regression the shared mover introduced.
 
-## M6 — Audio & Feel Polish 🔒
-Full synthesized audio: adaptive round music, spatialized horde ambience, weapon layering,
-mix pass. Second full feel-tuning pass on every mechanic based on accumulated feedback.
+## M5 — FREE WEB RELEASE 🔨
+Ship it publicly, for free, and find out whether strangers play past round 5. That signal decides
+whether a Steam month is worth spending — and a browser game that spreads builds the wishlists a
+paid launch would need anyway.
 
-## M7 — Performance & Options 🔒
-Quality tiers, instancing/LOD/frustum culling audit, GPU profiling, 60fps lock on mid laptop,
-settings menu, sensitivity/FOV/keybinds, accessibility (colourblind-safe accent swaps).
+**Three strands, in this order:**
 
-## M8 — Ship 🔒
-Main menu, how-to-play, balance pass across 30 rounds, leaderboard, build + deploy.
+**1. Performance without losing the look.** The frame is fill-rate bound, not geometry bound:
+measured on an M4, bloom off → 44fps, +ink off → 52, +halftone off → 60. Every lever below is
+free of quality cost — none of them drop a pass or reduce the art direction.
+- Merge ink + halftone + chromatic + grade + vignette into one uber-pass. 5 full-screen passes
+  become 1. Identical output, a fifth of the bandwidth.
+- Kill the normal/depth prepass with MRT (WebGL2). That prepass is a whole second scene
+  traversal — ~36 draw calls and ~91k triangles per frame — for data the main pass can emit.
+- Bloom at quarter resolution. It is low-frequency by nature; nobody can see the difference.
+- Frustum-culling audit: looking at the sky still draws 343k triangles today.
+- Revisit instancing. It was rejected earlier because `renderer.info` counts instances as
+  geometry×count — true, but that measures triangles, and the win was never triangles. It is
+  draw calls and CPU submission cost.
+
+**2. The arsenal** (`GAME_BIBLE §3`). `ratatat`, `boomstick`, `longshot`, `thumper`, the 2-slot
+inventory with fast swap and reload-cancel-by-swap, and Pack-a-Punch with its elemental affixes.
+The `WeaponDef` shape was built to carry all five archetypes without touching the service —
+this milestone finds out whether that was true.
+
+**3. Release surface.** Sensitivity and FOV must be adjustable (a shooter without a sensitivity
+slider is unplayable for half the audience). Open Graph tags and a preview image so a shared link
+looks like something. A first-run "desktop recommended" notice. An itch.io page next to the
+Vercel build.
+
+**Done when:** a stranger can find it, play it, and tell you what they think.
+
+## M6 — Content & Systems 🔒
+Special enemies with genuinely different BEHAVIOUR, not stat reskins — `sprinter`, `brute`,
+`spitter` and `screamer` currently share one body and one AI. Wall-buys, the mystery box,
+power-up drops, and the rest of the boon pool.
+**Note:** points is still a dead stat until wall-buys and Pack-a-Punch land. That is the single
+biggest hole in the loop.
+
+## M7 — More Maps 🔒 *(`GAME_BIBLE §9.1`)*
+A second and third arena. Content, not engineering — **if** the couplings stay honest. Anything
+reading arena geometry must go through `WorldService` and the nav graph.
+**Test of readiness:** a new map requires zero changes to `game/`.
+
+## M8 — More Styles 🔒 *(`GAME_BIBLE §9.2`)*
+A style is a palette + material recipes + a light rig. Swappable without touching geometry.
+**Test of readiness:** the same arena renders in a second style with no geometry edits.
+
+## M9 — Audio & Feel Polish 🔒
+Adaptive round music, mix pass, a second full feel-tuning pass on accumulated feedback.
+
+## M10 — Multiplayer 🔒 *(`GAME_BIBLE §9.3` — long way off)*
+The maps and movement are the product; zombies are one mode played in them. Requires the sim to
+have stayed deterministic — which is now a product requirement, not a testing convenience.
+**Test of readiness:** two clients stepping the same seed and input stream land on bit-identical
+state. Worth writing that harness long before any networking exists.
 
 ---
 
 ## Backlog / stretch
-Co-op (WebRTC), daily seeded runs, boss waves, weapon camos as procedural ink patterns,
-photo mode with panel framing, gore-slider, mobile touch controls.
+Co-op, daily seeded runs, boss waves, procedural weapon camos, photo mode, mobile + touch
+controls (see the mobile assessment: viable, but the post stack must be merged first).

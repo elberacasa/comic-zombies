@@ -140,3 +140,58 @@ Every action must have: **anticipation → impact → aftermath.**
 - [ ] A distinct synthesized sound with pitch variation (never the exact same sample twice)
 - [ ] A comic VFX beat (ink spray, popup word, speed lines, panel flash)
 - [ ] Controller/mouse response < 1 frame of input lag; no input buffering delay on fire
+
+---
+
+## 9. THE LONG ARC — where this is going
+
+Recorded so that decisions made now don't foreclose it. Order is deliberate; each step should be
+cheap *because* of the one before it.
+
+```
+Comic Zombies          →  more MAPS        →  more STYLES     →  MULTIPLAYER
+one arena, one style      same style,          same maps,         same maps,
+                          new geometry         new palette        players not zombies
+```
+
+### 9.1 More maps
+The arena is ~2,500 lines of procedural construction in `world/arena.ts`, with its kite loops,
+spawn ring and nav graph derived from it automatically. A second map is therefore *content*, not
+engineering — but only if the couplings stay honest. Anything that reads arena geometry must keep
+doing so through `WorldService` and the nav graph, never through hardcoded coordinates.
+
+**Test of readiness:** a new map should require zero changes to `game/`.
+
+### 9.2 More styles
+The palette is already a locked token set with a documented value ladder, and materials ask for
+tokens rather than colours. A "style" is therefore a palette + a material recipe set + a light
+rig — swappable without touching geometry. This is the same insight the asset-generator work is
+built on: *a generator asks for a role, not a colour.*
+
+**Test of readiness:** the same arena renders in a second style with no geometry edits.
+
+### 9.3 Multiplayer — and what it demands of us NOW
+
+Long way off. But it imposes one constraint that is far cheaper to keep than to retrofit:
+
+> **THE SIMULATION MUST STAY DETERMINISTIC.**
+
+We already have the hard part — a fixed-timestep sim (`FIXED_DT`), a seeded RNG, and gameplay
+strictly separated from presentation. That is precisely the foundation rollback or lockstep
+netcode needs, and it exists today by accident of good hygiene rather than by plan. From here it
+is a **product requirement**, not a testing convenience:
+
+- Gameplay lives in `fixedUpdate`, presentation in `update`. Never blur that line.
+- No `Math.random()` or `Date.now()` in simulation. Seeded RNG only, forked per system so one
+  system's draws can never perturb another's sequence.
+- No gameplay decision may depend on frame rate, wall-clock time, or render state.
+- Iteration order over collections must be stable.
+
+Breaking determinism is the one mistake here that costs a rewrite instead of a refactor.
+
+**Modes, when it comes:** the arena and the movement kit are the product; zombies are one mode
+played in them. Deathmatch and an extraction/objective mode both reuse the same maps, weapons and
+movement. The enemy system becomes *a* participant type rather than *the* participant type.
+
+**Test of readiness:** two clients stepping the same seed and the same input stream land on
+bit-identical state. Worth writing that harness long before there is any networking.
