@@ -125,3 +125,22 @@ Seeded by the lead (safe to extend, don't rewrite the API):
 | Post passes | ≤ 8 at ULTRA, ≤ 4 at LOW |
 | Sim (fixedUpdate ×2) | ≤ 3 ms |
 | JS heap growth | ~0 during steady play (pooling) |
+
+## 7. HEADLESS REGRESSION HARNESSES
+
+Three suites run the **real** game — arena, collision octree, controller, enemy system — in node
+with no browser and no pointer lock, by bundling through vite so `@/…` and `three/addons/…`
+resolve exactly as they do in the page. `tools/domstub.ts` shims the canvas so the procedural
+texture pass runs headless. Each exits non-zero on failure.
+
+```bash
+node tools/stairs.mjs    # movement: every staircase walked AND sprinted at 3 lateral offsets,
+                         # every ledge walked off, horde stair climb, 25x120s stuck soak
+node tools/zombie.mjs    # the skinned rig: bones, skin weights, hitbox-vs-drawn-mesh alignment
+node tools/combat.mjs    # hit registration, health curve, speed tiers, conga tightness
+```
+
+**Run these before declaring any movement or combat change done.** They exist because the same
+bugs shipped twice from browser-only testing: the stairs regression was invisible until a suite
+walked every flight at an angle, and the input-edge bug only appears on frames that run zero
+fixed steps. A browser check cannot reliably produce either condition.

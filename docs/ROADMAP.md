@@ -85,7 +85,7 @@ consistency → performance.**
 
 **Done when:** all six acceptance numbers pass and a screenshot leads the eye somewhere.
 
-## M2 — Vertical Slice: the feel ✅ *(spec: `docs/M2_VERTICAL_SLICE.md` · shipped as BUILD 003)*
+## M2 — Vertical Slice: the feel ✅ *(shipped as BUILD 003)*
 - Movement kit already shipped in M1; M1.5 makes it comfortable and drift-free
 - One weapon (`inkslinger`) with deterministic recoil pattern, ADS, active reload, full juice
 - One enemy (Shambler) with steering AI, hit reactions, dismemberment, panel-shard death
@@ -116,18 +116,33 @@ paid launch would need anyway.
 
 **Three strands, in this order:**
 
-**1. Performance without losing the look.** The frame is fill-rate bound, not geometry bound:
-measured on an M4, bloom off → 44fps, +ink off → 52, +halftone off → 60. Every lever below is
-free of quality cost — none of them drop a pass or reduce the art direction.
-- Merge ink + halftone + chromatic + grade + vignette into one uber-pass. 5 full-screen passes
-  become 1. Identical output, a fifth of the bandwidth.
-- Kill the normal/depth prepass with MRT (WebGL2). That prepass is a whole second scene
-  traversal — ~36 draw calls and ~91k triangles per frame — for data the main pass can emit.
-- Bloom at quarter resolution. It is low-frequency by nature; nobody can see the difference.
-- Frustum-culling audit: looking at the sky still draws 343k triangles today.
-- Revisit instancing. It was rejected earlier because `renderer.info` counts instances as
-  geometry×count — true, but that measures triangles, and the win was never triangles. It is
-  draw calls and CPU submission cost.
+**1. Performance without losing the look.** MEASURED, not assumed — at 2560x1231 with 25 zombies
+alive, GPU-inclusive and readPixels-synced:
+
+| stage | ms | share |
+|---|---|---|
+| scene | 2.00 | 32% |
+| **post total** | **4.19** | **68%** |
+
+The frame is fill-rate bound. An earlier version of this plan assumed a 9-pass stack from
+`ART_DIRECTION §4`; the implementation had already fused the finishing chain (chromatic, grade,
+grain, vignette, overlay) into one pass, and bloom was already half-res with a downsample chain,
+and the prepass already ran at 0.5 scale on every tier but ULTRA. **Most of the obvious wins were
+already taken.** What is actually left:
+
+- [x] **Fuse ink + halftone.** They were adjacent `PassChunk`s and the second consumed exactly
+      what the first wrote, so the composer paid a full read-modify-write of the frame to pass
+      data through VRAM instead of a local variable. Semantically exact — halftone never
+      references `tDiffuse`. **1.963 → 1.714 ms/Mpix, −12.7%.** 5 passes → 4.
+- [ ] **Fold bloom's final composite into the finish pass.** Bloom's blur chain runs on its own
+      small targets, but its composite is a separate full-screen pass. Moving it into `finish`
+      takes the stack to 3 passes with no visual change.
+- [ ] **Kill the normal/depth prepass with MRT.** It is a second scene traversal — its ~36 draw
+      calls are a CPU submission cost that does NOT shrink with `prepassScale`.
+- [ ] **Frustum-culling audit.** Looking at the sky still draws 343k triangles.
+- [ ] **Revisit instancing.** Rejected earlier because `renderer.info` counts instances as
+      geometry×count — true, but that measures triangles, and the win was never triangles. It is
+      draw calls and CPU submission.
 
 **2. The arsenal** (`GAME_BIBLE §3`). `ratatat`, `boomstick`, `longshot`, `thumper`, the 2-slot
 inventory with fast swap and reload-cancel-by-swap, and Pack-a-Punch with its elemental affixes.

@@ -153,17 +153,38 @@ export class ComicPipeline implements EscalationSink {
     this.renderPass = new RenderPass(scene, camera);
     this.composer.addPass(this.renderPass);
 
-    // ── 2 · ink ──────────────────────────────────────────────────────────────
+    // ── 2+3 · ink AND halftone, in ONE pass ──────────────────────────────────
+    //
+    // These were two full-screen passes. They are adjacent, both are `PassChunk`s, and the
+    // second consumes exactly what the first writes — so the composer was paying for a whole
+    // extra read-modify-write of the frame buffer to hand ink's output to halftone through
+    // VRAM instead of through a local variable.
+    //
+    // MEASURED at 2560x1231 with 25 zombies (GPU-inclusive, readPixels-synced):
+    //   post was 4.19 ms of a 6.19 ms frame — 67.6%. ink 1.47, halftone 1.71, bloom 1.27,
+    //   finish 1.73. Fusing removes one full-screen bandwidth round-trip at zero visual cost:
+    //   the chunks run in the same order, on the same data, in one shader.
+    //
+    // `inkPass` and `halftonePass` both point at the fused pass so existing callers (quality
+    // tiers, the F5 art-direction A/B) keep working. Toggling either toggles both, which is
+    // what the A/B wants anyway — it exists to show the style on and off.
     const inkChunk = makeInkChunk(opts.ink);
-    this.inkPass = buildPass('ComicInkPass', [inkChunk], this.common);
-    this.composer.addPass(this.inkPass);
-    this.chunks.push(inkChunk);
-
-    // ── 3 · halftone ─────────────────────────────────────────────────────────
     const htChunk = makeHalftoneChunk(opts.halftone);
-    this.halftonePass = buildPass('ComicHalftonePass', [htChunk], this.common);
-    this.composer.addPass(this.halftonePass);
-    this.chunks.push(htChunk);
+    const inkHalftone = opts.fuse === false
+      ? null
+      : buildPass('ComicInkHalftonePass', [inkChunk, htChunk], this.common);
+
+    if (inkHalftone) {
+      this.inkPass = inkHalftone;
+      this.halftonePass = inkHalftone;
+      this.composer.addPass(inkHalftone);
+    } else {
+      this.inkPass = buildPass('ComicInkPass', [inkChunk], this.common);
+      this.halftonePass = buildPass('ComicHalftonePass', [htChunk], this.common);
+      this.composer.addPass(this.inkPass);
+      this.composer.addPass(this.halftonePass);
+    }
+    this.chunks.push(inkChunk, htChunk);
 
     // ── 4 · bloom ────────────────────────────────────────────────────────────
     this.bloomPass = new ComicBloomPass(
@@ -197,7 +218,8 @@ export class ComicPipeline implements EscalationSink {
       this.finishParts = [];
     }
 
-    this.ownedPasses.push(this.inkPass, this.halftonePass, this.bloomPass);
+    this.ownedPasses.push(this.inkPass, this.bloomPass);
+    if (this.halftonePass !== this.inkPass) this.ownedPasses.push(this.halftonePass);
     collectUniforms(this.chunks, this.uniforms);
     for (const key of Object.keys(this.uniforms)) {
       const v = this.uniforms[key]!.value;
