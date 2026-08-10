@@ -132,17 +132,41 @@ already taken.** What is actually left:
 
 - [x] **Fuse ink + halftone.** They were adjacent `PassChunk`s and the second consumed exactly
       what the first wrote, so the composer paid a full read-modify-write of the frame to pass
-      data through VRAM instead of a local variable. Semantically exact — halftone never
-      references `tDiffuse`. **1.963 → 1.714 ms/Mpix, −12.7%.** 5 passes → 4.
-- [ ] **Fold bloom's final composite into the finish pass.** Bloom's blur chain runs on its own
-      small targets, but its composite is a separate full-screen pass. Moving it into `finish`
-      takes the stack to 3 passes with no visual change.
-- [ ] **Kill the normal/depth prepass with MRT.** It is a second scene traversal — its ~36 draw
-      calls are a CPU submission cost that does NOT shrink with `prepassScale`.
-- [ ] **Frustum-culling audit.** Looking at the sky still draws 343k triangles.
-- [ ] **Revisit instancing.** Rejected earlier because `renderer.info` counts instances as
-      geometry×count — true, but that measures triangles, and the win was never triangles. It is
-      draw calls and CPU submission.
+      data through VRAM instead of a local variable. Semantically exact — the halftone chunk
+      never references `tDiffuse`. **1.963 → 1.714 ms/Mpix, −12.7%.** 5 passes → 4.
+
+- [x] ~~Fold bloom's composite into `finish`~~ — **investigated, rejected, and it is not free.**
+      `chromatic` is `source: true`: it does `c = czChromatic(tDiffuse, uv)`, sampling the
+      texture at RGB-split offsets and *overwriting* `c`. So a bloom chunk placed before it is
+      discarded, and one placed after it loses the chromatic split the glow has today. ~0.6 ms
+      is not worth silently changing the image.
+
+- [x] ~~Frustum-culling audit~~ — **measured, not worth it.** At 2560×1315: plaza 5.19 ms,
+      straight up at empty sky 4.70 ms, arena hidden entirely 3.37 ms. All arena geometry costs
+      1.82 ms, and perfect culling could recover at most ~1.3 ms — only in a view players do not
+      hold. In the plaza, where most geometry is genuinely visible, it saves nothing. Splitting
+      the merged buckets to enable culling would cost draw calls for that.
+
+### The measured budget, and what is actually left
+
+| | ms | share |
+|---|---|---|
+| post-processing | ~3.2 | 62% |
+| arena geometry | ~1.8 | 35% |
+| everything else | ~0.2 | 3% |
+
+**The cheap structural wins are taken.** What remains, in order:
+
+- [ ] **Dynamic internal resolution.** Render at 0.6–0.8× and upscale. This is by far the largest
+      remaining lever, and this art style is unusually forgiving of it: flat colours, hard ink
+      edges, and a halftone screen at *fixed screen-space pitch* mean the dots stay the same size
+      on screen at any internal resolution. A photoreal game looks mushy at 0.6×; this will look
+      very close to identical. It is also exactly what a mobile port needs, so it is one piece of
+      work serving two goals. Pair it with the existing auto-quality governor so it reacts to
+      thermal throttling instead of being a fixed setting.
+- [ ] **Kill the normal/depth prepass with MRT.** A second scene traversal whose ~36 draw calls
+      are a CPU submission cost that does not shrink with `prepassScale`. Invasive — every
+      material must emit normals — so measure its true cost before committing to it.
 
 **2. The arsenal** (`GAME_BIBLE §3`). `ratatat`, `boomstick`, `longshot`, `thumper`, the 2-slot
 inventory with fast swap and reload-cancel-by-swap, and Pack-a-Punch with its elemental affixes.
