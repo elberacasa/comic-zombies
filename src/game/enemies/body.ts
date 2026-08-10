@@ -655,9 +655,13 @@ export class EnemyBody {
    * Roll a fresh body. Called on every spawn, not once per pool slot: reusing a slot must never
    * hand the player the same zombie twice in a row.
    */
-  reseed(rng: Rng, variant: BodyVariant): void {
+  reseed(rng: Rng, variant: BodyVariant, kindScale = 1): void {
     this.variant = variant;
-    const g = variant.scale * rng.range(0.94, 1.07);
+    // `kindScale` is the KIND's silhouette, on top of the per-instance variant roll. A special
+    // has to be identifiable by shape across the arena — you cannot ask a player to prioritise a
+    // target they cannot pick out of a crowd (ART §9). The instance roll still applies, so two
+    // screamers are still two different screamers.
+    const g = variant.scale * kindScale * rng.range(0.94, 1.07);
     const torso = variant.torso * rng.range(0.95, 1.06);
     const limb = variant.limb * rng.range(0.94, 1.07);
     const head = variant.head * rng.range(0.93, 1.08);

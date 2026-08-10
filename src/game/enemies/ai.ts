@@ -105,6 +105,12 @@ export interface AiAgent {
   staggerT: number;
   /** False once both arms are shot off. */
   canMelee: boolean;
+  /** Behaviour archetype — the state machine branches on it. */
+  role: 'melee' | 'screamer';
+  /** Screamer: metres it holds at, and the wind-up / cooldown of its call. */
+  standoff: number;
+  screamWindup: number;
+  screamCooldown: number;
   /**
    * Multiplier on the next swing cooldown, ~1 ± `ENEMY.meleeCooldownJitter`. Re-rolled by the
    * service every time a swing ends, which is what stops a pack that arrived together from
@@ -135,7 +141,7 @@ export interface AiAgent {
 }
 
 /** What the service must react to after `stepState`. Everything with a side effect lives there. */
-export type AiAction = 'none' | 'windup' | 'strike' | 'recover';
+export type AiAction = 'none' | 'windup' | 'strike' | 'recover' | 'screamStart' | 'scream';
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Steering
@@ -424,10 +430,38 @@ export function stepState(a: AiAgent, dt: number, spawnTime: number): AiAction {
 
     case 'chase': {
       if (a.staggerT > 0) { enter(a, 'stagger'); return 'none'; }
+
+      // ── THE SCREAMER never swings. It holds at `standoff` and calls for help. ──
+      //
+      // The player's job stops being "shoot the nearest thing" and becomes "break the kite, pick
+      // the one that matters, kill it, get back on the line". That is the priority-target
+      // pressure GAME_BIBLE §4 asks for, and the wind-up is deliberately long enough to be
+      // punished from across the arena — an unpunishable summon is just a tax.
+      if (a.role === 'screamer') {
+        if (a.cooldownT <= 0 && a.distToPlayer <= a.standoff
+          && Math.abs(a.heightToPlayer) <= SCHED.screamMaxRise) {
+          enter(a, 'scream');
+          return 'screamStart';
+        }
+        return 'none';
+      }
+
       if (canSwing(a)) {
         enter(a, 'attack');
         a.attackT = 0;
         return 'windup';
+      }
+      return 'none';
+    }
+
+    case 'scream': {
+      // Interruptible on purpose: a hit hard enough to stagger it cancels the call entirely, so
+      // shooting the screamer is a real answer and not merely a race against its timer.
+      if (a.staggerT > 0) { enter(a, 'stagger'); a.cooldownT = a.screamCooldown * 0.5; return 'none'; }
+      if (a.stateT >= a.screamWindup) {
+        enter(a, 'chase');
+        a.cooldownT = a.screamCooldown;
+        return 'scream';
       }
       return 'none';
     }

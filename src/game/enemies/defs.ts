@@ -827,7 +827,19 @@ export const ANIM = {
  * ground and not able to swing. Everything about it is exceptional, so it gets its own case
  * rather than five `if (climbing)` guards scattered through the step.
  */
-export type EnemyStateName = 'spawn' | 'chase' | 'attack' | 'stagger' | 'death' | 'climb';
+export type EnemyStateName =
+  'spawn' | 'chase' | 'attack' | 'stagger' | 'death' | 'climb' | 'scream';
+
+/**
+ * BEHAVIOUR ARCHETYPE — the thing that actually makes an enemy different.
+ *
+ * `sprinter`, `brute` and `spitter` shipped as `{...SHAMBLER, health, speed}`: one body, one AI,
+ * different numbers. A player cannot tell those apart except by how long they take to die, which
+ * is not variety — it is the same fight at a different length. GAME_BIBLE §4 asks for enemies
+ * that change what the player DOES, so a kind now declares a role and the state machine branches
+ * on it.
+ */
+export type EnemyRole = 'melee' | 'screamer';
 
 export interface EnemyDef {
   kind: EnemyKind;
@@ -866,6 +878,23 @@ export interface EnemyDef {
   presence: number;
   /** Seconds between idle groans, min/max. Spatialised by the audio system off `fx:sound`. */
   groanInterval: readonly [number, number];
+
+  // ── behaviour ─────────────────────────────────────────────────────────────
+  /** What this kind DOES. See `EnemyRole`. */
+  role: EnemyRole;
+  /**
+   * Silhouette scale. A special has to be identifiable by SHAPE at a glance, not by reading its
+   * health bar — ART §9 is about recognising a threat before you can count its pixels.
+   */
+  bodyScale: number;
+  /** Screamer: metres it holds at instead of closing to melee. */
+  standoff: number;
+  /** Screamer: seconds of telegraphed wind-up before the scream lands. Long enough to punish. */
+  screamWindup: number;
+  /** Screamer: bodies a completed scream calls in. */
+  screamSummon: number;
+  /** Screamer: seconds before it may scream again. */
+  screamCooldown: number;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -999,6 +1028,12 @@ export const SHAMBLER: EnemyDef = {
   meleeDamage: 70,
   limbHealth: 52,
   oneLegSpeedMult: 0.62,
+  role: 'melee',
+  bodyScale: 1,
+  standoff: 0,
+  screamWindup: 0,
+  screamSummon: 0,
+  screamCooldown: 0,
   mass: 1,
   hue: PALETTE.ACID,
   presence: 1,
@@ -1013,10 +1048,38 @@ export const SHAMBLER: EnemyDef = {
  */
 export const ENEMY_DEFS: Readonly<Record<EnemyKind, EnemyDef>> = {
   shambler: SHAMBLER,
-  sprinter: { ...SHAMBLER, kind: 'sprinter', name: 'SPRINTER', health: 85, speed: 3.6, lungeMult: 1.9, mass: 0.7 },
-  brute: { ...SHAMBLER, kind: 'brute', name: 'BRUTE', health: 620, speed: 1.18, limbHealth: 160, mass: 3, presence: 1.25 },
+  sprinter: {
+    ...SHAMBLER, kind: 'sprinter', name: 'SPRINTER',
+    health: 85, speed: 3.6, lungeMult: 1.9, mass: 0.7,
+    // Lean and short — it reads as the thing that is FAST before it proves it.
+    bodyScale: 0.92,
+  },
+  brute: {
+    ...SHAMBLER, kind: 'brute', name: 'BRUTE',
+    health: 620, speed: 1.18, limbHealth: 160, mass: 3, presence: 1.25,
+    bodyScale: 1.28,
+  },
   spitter: { ...SHAMBLER, kind: 'spitter', name: 'SPITTER', health: 120, speed: 1.4, hue: PALETTE.HOT },
-  screamer: { ...SHAMBLER, kind: 'screamer', name: 'SCREAMER', health: 95, speed: 2.1, hue: PALETTE.HOT },
+
+  /**
+   * THE SCREAMER — the first enemy that is a DECISION rather than a health pool.
+   *
+   * It never swings at you. It closes to `standoff`, winds up for `screamWindup` seconds, and if
+   * it finishes, `screamSummon` more bodies arrive. So it converts "shoot whatever is nearest"
+   * into "break the kite, find the one that matters, and get back on the line" — which is
+   * exactly the priority-target pressure GAME_BIBLE §4 asks for and the only thing in the game
+   * so far that punishes tunnel vision.
+   *
+   * Tall, thin and HOT-hued so it is identifiable across the arena at a glance: you cannot be
+   * asked to prioritise a target you cannot pick out. Low health, because the cost of ignoring
+   * it should be the wave it calls, not the ammo it eats.
+   */
+  screamer: {
+    ...SHAMBLER, kind: 'screamer', name: 'SCREAMER',
+    health: 95, speed: 2.1, hue: PALETTE.HOT, presence: 1.3,
+    role: 'screamer', bodyScale: 1.14,
+    standoff: 9, screamWindup: 2.6, screamSummon: 4, screamCooldown: 9,
+  },
 };
 
 export function defFor(kind: EnemyKind): EnemyDef {
@@ -1095,6 +1158,8 @@ export const SCHED = {
    * conga`, which runs the whole thing twice — once with `congaFollowWeight` forced to 0 — so
    * every number here is a real A/B against BUILD 006's steering.
    */
+  /** A screamer will not call for help at someone on a roof it cannot see properly. */
+  screamMaxRise: 2.5,
   congaFollowRadius: 6.0,
   /** …and how much closer to the player they must be before they count as a leader, metres. */
   congaFollowLead: 0.55,

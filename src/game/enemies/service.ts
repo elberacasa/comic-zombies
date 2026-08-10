@@ -246,6 +246,12 @@ class Enemy implements Damageable, AiAgent, Neighbour {
   swingJitter = 1;
   yaw = 0;
 
+  /** Behaviour archetype and its parameters, copied from the def at spawn (see `AiAgent`). */
+  role: 'melee' | 'screamer' = 'melee';
+  standoff = 0;
+  screamWindup = 0;
+  screamCooldown = 0;
+
   /**
    * SPEED TIER index into `SPEED_TIERS` — walk / walker / runner / sprinter, rolled at spawn
    * from `TIER_MIX[round]`. This is the CoD mechanic that turns the horde from slow-and-
@@ -424,6 +430,8 @@ export class EnemySystem implements System, EnemyService {
 
   private readonly pool: Enemy[] = [];
   private readonly free: Enemy[] = [];
+  private lastHpScale = 1;
+  private lastSpeedScale = 1;
   private readonly _alive: Enemy[] = [];
   /** Bodies holding their death pose before the slot recycles. Not `alive`, still drawn. */
   private readonly dying: Enemy[] = [];
@@ -694,6 +702,14 @@ export class EnemySystem implements System, EnemyService {
         ctx.events.emit('fx:sound', { id: 'zombie_windup', position: this.evPos, pitch: this.pitchFor(e) });
       } else if (action === 'strike') {
         this.resolveStrike(e, ctx);
+      } else if (action === 'screamStart') {
+        e.chestPoint(this.evPos);
+        ctx.events.emit('fx:sound', { id: 'zombie_windup', position: this.evPos, pitch: 0.62 });
+        ctx.events.emit('fx:word', {
+          text: 'AAAAH?!', position: this.evPos, color: PALETTE.HOT, scale: 0.8,
+        });
+      } else if (action === 'scream') {
+        this.resolveScream(e, ctx);
       } else if (action === 'recover') {
         // Re-roll the swing cadence every time a swing ends, so a pack that arrived together
         // drifts apart instead of hammering you as one 350-damage event (ENEMY.meleeCooldownJitter).
@@ -1284,6 +1300,11 @@ export class EnemySystem implements System, EnemyService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   spawn(kind: EnemyKind, position: Vector3, hpScale: number, speedScale: number): Damageable | null {
+    // Remembered so a screamer's summon arrives at the CURRENT round's strength. The director
+    // owns these numbers and passes them per spawn; `core/types.ts` is frozen, so there is no
+    // room in the signature for "spawn like the last one" and this is the honest alternative.
+    this.lastHpScale = hpScale;
+    this.lastSpeedScale = speedScale;
     const ctx = this.ctx;
     if (!ctx) return null;
     if (this._alive.length >= ENEMY.maxAlive) return null;
@@ -1313,6 +1334,10 @@ export class EnemySystem implements System, EnemyService {
     e.tier = rollTier(this.rng.next(), this._round);
     const tier = SPEED_TIERS[e.tier] as (typeof SPEED_TIERS)[number];
     e.lungeMult = tier.lungeMult;
+    e.role = def.role;
+    e.standoff = def.standoff;
+    e.screamWindup = def.screamWindup;
+    e.screamCooldown = def.screamCooldown;
     e.baseSpeed = def.speed
       * tier.speedMult
       * Math.max(0.05, speedScale)
@@ -1325,7 +1350,7 @@ export class EnemySystem implements System, EnemyService {
     // player the same zombie twice in a row.
     const variant = VARIANTS[this.variantCursor % VARIANTS.length];
     this.variantCursor++;
-    e.body.reseed(this.rng, variant);
+    e.body.reseed(this.rng, variant, def.bodyScale);
     if (def.hue !== PALETTE.ACID) e.body.setHue(def.hue);
     e.height = e.body.height;
     e.radius = BODY.radius * (e.height / BODY.height);
@@ -1585,6 +1610,37 @@ export class EnemySystem implements System, EnemyService {
   }
 
   /** The melee connects — or whiffs, if the player used the tell. */
+  /**
+   * A completed scream. Bodies arrive from the arena's own spawn ring rather than beside the
+   * screamer, so the punishment is "the horde got bigger" and not "four zombies teleported into
+   * your face" — the second reads as a cheat and kills the trust the training loop runs on.
+   *
+   * The summon respects `ENEMY.maxAlive`, so a screamer can never push the round past the live
+   * cap the perf budget is built around. It calls what there is room for and no more.
+   */
+  private resolveScream(e: Enemy, ctx: GameCtx): void {
+    e.chestPoint(this.evPos);
+    ctx.events.emit('fx:sound', { id: 'zombie_death', position: this.evPos, pitch: 0.55, volume: 1.4 });
+    ctx.events.emit('fx:word', {
+      text: 'SKREEEE!!', position: this.evPos, color: PALETTE.HOT, scale: 1.35,
+    });
+    ctx.events.emit('fx:shake', { amount: 0.35, duration: 0.5 });
+
+    const room = Math.max(0, ENEMY.maxAlive - this._alive.length);
+    const want = Math.min(e.def.screamSummon, room);
+    if (want <= 0) return;
+
+    const spawns = ctx.world.enemySpawns;
+    if (!spawns.length) return;
+    let called = 0;
+    for (let i = 0; i < want; i++) {
+      const p = spawns[this.rng.int(0, spawns.length)];
+      if (!p) continue;
+      if (this.spawn('shambler', p, this.lastHpScale, this.lastSpeedScale)) called++;
+    }
+    if (called > 0) ctx.hud.toast(`SCREAMER CALLED ${called}`);
+  }
+
   private resolveStrike(e: Enemy, ctx: GameCtx): void {
     e.chestPoint(this.evPos);
     ctx.events.emit('fx:sound', { id: 'zombie_swing', position: this.evPos, pitch: this.pitchFor(e) });

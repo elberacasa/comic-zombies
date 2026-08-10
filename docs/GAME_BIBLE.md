@@ -83,7 +83,14 @@ flows and clumps readably.
 | **Sprinter** | Pressure | Fast bursts, low HP, breaks your kite rhythm. |
 | **Brute** | Wall | Huge HP, armor plates that must be shot off, slow heavy swing that breaks your slide. |
 | **Spitter** | Zoner | Ranged ink glob, creates a slowing puddle — denies your kite lane. |
-| **Screamer** | Threat | Doesn't attack; if it screams it summons a mini-wave. Kill on sight. Priority-target training. |
+| **Screamer** | Threat | **SHIPPED.** Never swings. Holds at 9 m, telegraphs a 2.6 s wind-up, and a completed scream calls 4 more bodies from the arena's own spawn ring. Staggering it cancels the call outright, so shooting it is a real answer rather than a race against a timer. Tall (2.23 m vs 1.84 m) and `HOT`-hued so it can be picked out of a crowd — you cannot ask a player to prioritise a target they cannot see. |
+
+**A KIND IS A BEHAVIOUR, NOT A STAT BLOCK.** `sprinter`, `brute` and `spitter` shipped as
+`{...SHAMBLER, health, speed}` — one body, one AI, different numbers — which is not variety, it is
+the same fight at a different length. `EnemyDef.role` now branches the state machine, and
+`bodyScale` gives a kind its own silhouette on top of the per-instance roll. A special the player
+cannot identify at a glance cannot be prioritised, and an enemy that only changes how long it
+takes to die does not change how the game is played.
 
 **Hit reactions matter more than HP:** every bullet must produce flinch, ink spray, a floating
 damage number, and a directional stagger. Death = comic explosion of ink and panel shards.
