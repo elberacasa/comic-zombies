@@ -124,7 +124,13 @@ const TIER_ORDER: readonly QualityTier[] = ['low', 'med', 'high', 'ultra'];
 /** The guard fires below this many fps... */
 const AUTO_QUALITY_FPS = 55;
 /** ...sustained for this many seconds... */
-const AUTO_QUALITY_HOLD = 2.0;
+const AUTO_QUALITY_HOLD = 3.0;
+/**
+ * Seconds of headroom before the render scale climbs back. DELIBERATELY SHORTER than the hold
+ * above: dropping resolution is a safety net and recovering it is the normal state, so a drop
+ * that turns out to be wrong should be visible for as little time as possible.
+ */
+const AUTO_QUALITY_RECOVER = 1.2;
 /** ...and then ignores the next few seconds while the new tier settles. */
 const AUTO_QUALITY_GRACE = 3.0;
 
@@ -616,6 +622,20 @@ export class ComicRenderer implements RenderService {
     // around a single boundary; a frame that sits between them is left alone.
     const ms = this.frameAvg * 1000;
 
+    // ── A SPIKE IS NOT A TREND ────────────────────────────────────────────────
+    //
+    // The first version drove this off the 60-frame average alone, and a round start is a burst:
+    // bodies spawn, VFX pools touch their shaders for the first time, the title card and panel
+    // frame come up. That burst dragged the average over budget, the dial dropped resolution, and
+    // then crept back over several seconds — so every round opened blurry and slowly sharpened.
+    // The playtester's words: "graphics go to the shit when starting rounds and start to get
+    // better". That is this governor hunting, not the renderer failing.
+    //
+    // So a drop now requires the frame to be over budget CONTINUOUSLY. `slowFor` resets the
+    // instant one frame comes in under it, which a burst always does the moment it ends. Only
+    // genuine sustained load — a horde that is actually too big for this GPU — survives that.
+    if (ms <= RenderScale.TARGET_MS) this.slowFor = 0;
+
     if (ms > RenderScale.TARGET_MS) {
       this.slowFor += dt;
       if (this.slowFor >= AUTO_QUALITY_HOLD) {
@@ -645,9 +665,9 @@ export class ComicRenderer implements RenderService {
       // it is a necessity, and a dial that rises eagerly will hunt.
       this.slowFor = 0;
       this.fastFor += dt;
-      if (this.fastFor >= AUTO_QUALITY_HOLD * 2) {
+      if (this.fastFor >= AUTO_QUALITY_RECOVER) {
         this.fastFor = 0;
-        this.renderScale = Math.min(1, this._renderScale + 0.05);
+        this.renderScale = Math.min(1, this._renderScale + 0.1);
       }
     } else {
       this.slowFor = 0;

@@ -143,16 +143,49 @@ Every action must have: **anticipation → impact → aftermath.**
 
 ---
 
+## 8.5 THE PITCH, IN THE AUTHOR'S WORDS
+
+> "this games goal is to be a competitive game very addictive with infinite rounds and crazy
+> leaderboard achievments, including co op later and multiplayer pvp maps with capture the flag
+> etc, **comic COD** in other words, **modern warfare 2 inspired with bo2 zombies combined**"
+
+That reference pair is the most useful design statement in this document, because the two halves
+pull in different directions and knowing which wins settles most arguments:
+
+- **BO2 Zombies** gives the *structure*: infinite rounds, a points economy, training a horde,
+  a run that ends and is scored. This is what exists today and the playtester has confirmed it is
+  addictive.
+- **MW2** gives the *feel*: fast, precise, weighty gunplay, and a movement kit with a real skill
+  ceiling. Competitive-grade responsiveness, not survival-horror sluggishness.
+
+**Where they conflict, MW2 wins on feel and BO2 wins on structure.** A zombie should be a BO2
+zombie in what it does and an MW2 target in how it responds to being shot.
+
+**"Competitive" is the load-bearing word.** It means the game is judged on *consistency*: a stable
+frame rate, a stable image, deterministic recoil, no random damage, and no visual instability that
+could cost a player a run they were about to record. Anything that varies without the player
+causing it is a bug — this is the same principle as ART §4.1, applied to performance rather than
+to the print.
+
+**Leaderboards make determinism a feature, not a nicety.** A run worth putting on a board is a run
+that can be verified, and a seeded deterministic simulation (`§9.3`) is what makes that possible —
+the same property co-op and PvP need later. Nothing may break it.
+
+---
+
 ## 9. THE LONG ARC — where this is going
 
 Recorded so that decisions made now don't foreclose it. Order is deliberate; each step should be
 cheap *because* of the one before it.
 
 ```
-Comic Zombies          →  more MAPS        →  more STYLES     →  MULTIPLAYER
-one arena, one style      same style,          same maps,         same maps,
-                          new geometry         new palette        players not zombies
+Comic Zombies       →  more MAPS   →  more STYLES  →  CO-OP        →  PvP
+one arena, one style   same style,    same maps,      same rounds,    same maps,
+                       new geometry   new palette     more players    CTF and modes
 ```
+
+Co-op comes before PvP deliberately: it reuses the round loop wholesale and only adds networking,
+whereas PvP needs new modes, new balance and new maps on top of the same networking.
 
 ### 9.1 More maps
 The arena is ~2,500 lines of procedural construction in `world/arena.ts`, with its kite loops,
