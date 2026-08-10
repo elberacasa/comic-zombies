@@ -32,6 +32,9 @@ import {
 } from 'three';
 
 import type { QualityTier, RenderService } from '@/core/types';
+
+/** Render-scale bounds. Below ~0.55 the ink line starts to break up on thin geometry. */
+const RenderScale = { MIN: 0.55, TARGET_MS: 13.5, RELAX_MS: 10.5 } as const;
 import { PALETTE, color, rgb8Hex } from '@/art/palette';
 import { setArtAnisotropy } from '@/art/textures';
 import {
@@ -215,6 +218,7 @@ export class ComicRenderer implements RenderService {
   autoQuality = true;
   private frameAvg = 1 / 60;
   private slowFor = 0;
+  private fastFor = 0;
   private autoGrace = AUTO_QUALITY_GRACE;
 
   constructor(opts: RendererOptions = {}) {
@@ -319,9 +323,45 @@ export class ComicRenderer implements RenderService {
     if (emit) this.onQualityChanged?.(this._quality);
   }
 
+  /**
+   * RENDER SCALE — the largest performance lever we have, and the one this art direction is
+   * unusually tolerant of.
+   *
+   * A photoreal game at 0.6x looks mushy, because its detail lives in the texels. Ours does not:
+   * the surfaces are flat colour, the edges are hard ink, and the halftone screen is measured in
+   * CSS pixels and converted to device pixels by `applyHalftonePitch` — so the dots keep the same
+   * ON-SCREEN size at any render scale rather than shrinking with it. Lower the scale and the
+   * page does not become a finer print; it stays the same print, drawn with fewer samples.
+   *
+   * Everything derives from `pixelRatio`: composer targets, prepass, halftone pitch, boil
+   * amplitude, ink width. So scaling here scales the entire frame — scene, ink and post together
+   * — which is what makes it worth ~1/scale² rather than a fraction of the frame.
+   *
+   * 1 = the tier's native resolution. The governor drives it between `MIN_SCALE` and 1.
+   */
+  private _renderScale = 1;
+
+  get renderScale(): number { return this._renderScale; }
+  set renderScale(v: number) {
+    const next = Math.max(RenderScale.MIN, Math.min(1, v));
+    if (Math.abs(next - this._renderScale) < 0.005) return;
+    this._renderScale = next;
+    this.applyResolution();
+  }
+
+  /** Re-derive every resolution-dependent target from the current tier and render scale. */
+  private applyResolution(): void {
+    this.pixelRatio = this.resolvePixelRatio();
+    this.three.setPixelRatio(this.pixelRatio);
+    this.three.setSize(this.width, this.height, false);
+    this.pipeline.setSize(this.width, this.height, this.pixelRatio);
+    this.resizePrepass();
+  }
+
   private resolvePixelRatio(): number {
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-    return Math.max(0.5, Math.min(dpr, this.tier.pixelRatioCap));
+    const capped = Math.min(dpr, this.tier.pixelRatioCap);
+    return Math.max(0.4, capped * this._renderScale);
   }
 
   private prepassSize(): [number, number] {
@@ -559,22 +599,59 @@ export class ComicRenderer implements RenderService {
     this.frameAvg += (dt - this.frameAvg) * (1 / 60);
     if (this.autoGrace > 0) { this.autoGrace = Math.max(0, this.autoGrace - dt); return; }
     if (!this.autoQuality) return;
-    if (this.frameAvg > 1 / AUTO_QUALITY_FPS) {
+
+    // ── RESOLUTION FIRST, FEATURES LAST ──────────────────────────────────────
+    //
+    // A tier drop is a cliff: it turns off bloom, or the grain, or halves the prepass — all
+    // things a player SEES. Render scale is a continuous dial that this art direction barely
+    // registers, because the halftone pitch is authored in CSS pixels and converted per
+    // `pixelRatio`, so the dots keep their on-screen size instead of shrinking with the buffer.
+    //
+    // MEASURED, 25 zombies at 2554x1230: scale 1.0 = 5.25 ms, 0.85 = 3.77, 0.70 = 2.73,
+    // 0.60 = 2.17. Roughly 1/scale², because it scales the whole frame — scene, ink and post
+    // together — not one stage of it.
+    //
+    // So: give away resolution down to MIN before giving away a single feature. The two
+    // thresholds are deliberately apart (13.5 ms down, 10.5 ms up) so the dial cannot oscillate
+    // around a single boundary; a frame that sits between them is left alone.
+    const ms = this.frameAvg * 1000;
+
+    if (ms > RenderScale.TARGET_MS) {
       this.slowFor += dt;
       if (this.slowFor >= AUTO_QUALITY_HOLD) {
-        const i = TIER_ORDER.indexOf(this._quality);
         this.slowFor = 0;
         this.autoGrace = AUTO_QUALITY_GRACE;
-        if (i > 0) {
-          const next = TIER_ORDER[i - 1] as QualityTier;
+        if (this._renderScale > RenderScale.MIN + 0.005) {
+          const next = Math.max(RenderScale.MIN, this._renderScale - 0.1);
           console.info(
-            `[render] ${Math.round(1 / this.frameAvg)} fps sustained — dropping quality ` +
-            `${this._quality} → ${next}`);
-          this.quality = next;
+            `[render] ${Math.round(1 / this.frameAvg)} fps sustained — render scale ` +
+            `${this._renderScale.toFixed(2)} → ${next.toFixed(2)}`);
+          this.renderScale = next;
+        } else {
+          // Out of resolution to give. Only now is a feature allowed to go.
+          const i = TIER_ORDER.indexOf(this._quality);
+          if (i > 0) {
+            const next = TIER_ORDER[i - 1] as QualityTier;
+            console.info(
+              `[render] ${Math.round(1 / this.frameAvg)} fps sustained at minimum render scale ` +
+              `— dropping quality ${this._quality} → ${next}`);
+            this.quality = next;
+            this.renderScale = 1;   // a cheaper tier earns its resolution back
+          }
         }
+      }
+    } else if (ms < RenderScale.RELAX_MS && this._renderScale < 1) {
+      // Headroom. Climb back, slower than we fell — recovering resolution is a nicety, dropping
+      // it is a necessity, and a dial that rises eagerly will hunt.
+      this.slowFor = 0;
+      this.fastFor += dt;
+      if (this.fastFor >= AUTO_QUALITY_HOLD * 2) {
+        this.fastFor = 0;
+        this.renderScale = Math.min(1, this._renderScale + 0.05);
       }
     } else {
       this.slowFor = 0;
+      this.fastFor = 0;
     }
   }
 

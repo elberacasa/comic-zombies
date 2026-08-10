@@ -157,13 +157,22 @@ already taken.** What is actually left:
 
 **The cheap structural wins are taken.** What remains, in order:
 
-- [ ] **Dynamic internal resolution.** Render at 0.6–0.8× and upscale. This is by far the largest
+- [x] **Dynamic internal resolution.** Render at 0.6–0.8× and upscale. This is by far the largest
       remaining lever, and this art style is unusually forgiving of it: flat colours, hard ink
       edges, and a halftone screen at *fixed screen-space pitch* mean the dots stay the same size
       on screen at any internal resolution. A photoreal game looks mushy at 0.6×; this will look
       very close to identical. It is also exactly what a mobile port needs, so it is one piece of
       work serving two goals. Pair it with the existing auto-quality governor so it reacts to
       thermal throttling instead of being a fixed setting.
+      **DONE and measured** (25 zombies, 2554x1230): scale 1.0 = 5.25 ms · 0.85 = 3.77 ·
+      **0.70 = 2.73 (−48%)** · 0.60 = 2.17. Roughly 1/scale², because it scales the whole frame.
+      `uScreenPitch` scales with it (9.90 → 6.93 at 0.70), so the halftone dots land at the SAME
+      on-screen size after upscaling — the CSS-pixel pitch fix from M1.5 is what makes this free.
+      The governor now gives away **resolution first and features last**: it steps the scale down
+      in 0.1s to a 0.55 floor and only drops a quality tier once it runs out of resolution.
+      Recovery climbs in 0.05s, deliberately slower than it falls, with a 10.5–13.5 ms dead band
+      so it cannot hunt. Verified live: 1.0 → 0.9 under sustained 22 ms frames with the tier
+      untouched, then 0.9 → 0.95 on recovery.
 - [ ] **Kill the normal/depth prepass with MRT.** A second scene traversal whose ~36 draw calls
       are a CPU submission cost that does not shrink with `prepassScale`. Invasive — every
       material must emit normals — so measure its true cost before committing to it.

@@ -5,6 +5,19 @@ answered, and what they said. **Feedback in this file outranks the roadmap.** Ne
 
 ---
 
+# KNOWN FAILING CHECK — the conga/train mechanic is weaker than specced
+
+`node tools/combat.mjs` has **2 failing checks**, and they pre-date the render-scale work (verified
+by stashing). The follow term that is supposed to make a horde queue up behind a leader — the
+thing that makes CoD-style *training* work — lengthens the unbroken chain by only **12%**, where
+the harness asserts at least 20%. Mean chain 5.4 → 6.0.
+
+This is a real gameplay finding, not a broken test: trains are the core skill expression in a
+zombies mode, and right now the steering barely rewards them. Worth fixing before the free web
+release, since "can you train a horde" is one of the questions the whole loop rests on.
+
+---
+
 # BUILD 007 — THE HORDE HAS A BODY
 
 **Date:** 2026-08-10 · **Milestone:** M4 · Five parallel passes (stairs, rig, combat, visual
