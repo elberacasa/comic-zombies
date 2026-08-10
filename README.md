@@ -30,6 +30,8 @@ Then open the URL it prints.
 | **`/`** | the game |
 | **`/gallery.html`** | **the asset gallery** — every texture, mesh, letterform and sound, generated live in front of you |
 
+On the deployed site it is the other way round: **`/` is the gallery** and **`/play` is the game**.
+
 That second page is the interesting one. It imports the game's *own* modules and calls the *same* generators, so it can't drift into being a pretty lie. Each tile prints the exact function call that produced it.
 
 ---
