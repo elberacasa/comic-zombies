@@ -606,8 +606,31 @@ const QUEUE_GAP = 4.2;
  * the only one in this file.
  */
 function reseedHorde(): void {
-  const priv = enemies as unknown as { rng: { seed: number }; variantCursor: number };
+  const priv = enemies as unknown as {
+    rng: { seed: number };
+    variantCursor: number;
+    pool: unknown[];
+    free: unknown[];
+  };
   priv.rng.seed = 0x5a11b1e;
+
+  // THE POOL'S FREE-LIST ORDER IS CARRIED STATE TOO, and it was the third piece.
+  //
+  // `despawnAll()` recycles every body, but the order they land back on `free` depends on the
+  // order they died — so a suite that ran BEFORE this one leaves the list permuted, `spawn()`
+  // pops different bodies for the same spawn index, and each one arrives carrying whatever
+  // per-instance state its previous life left on it. The A/B stayed honest (both columns saw the
+  // same permutation) but the ABSOLUTE numbers moved with run order, which made the suite
+  // disagree with itself:
+  //
+  //   conga alone        R1 6.3→7.6  R10 5.3→6.7  R15 7.1→7.8   +18%, every round improves
+  //   conga after others R1 4.3→6.2  R10 6.2→5.5  R15 5.7→6.4   +12%, R10 REGRESSES
+  //
+  // Same code, same seed, opposite conclusions — and the second one sent a real investigation
+  // after a bug in the steering that was not there. Restoring `free` to the pool's own order
+  // makes every run start from the identical horde regardless of what ran first.
+  priv.free.length = 0;
+  for (let i = priv.pool.length - 1; i >= 0; i--) priv.free.push(priv.pool[i]);
   // The variant cursor is the OTHER piece of carried state — it walks `VARIANTS` round-robin,
   // so without this the control run gets gaunt/bloated/twisted and the shipped run gets
   // bloated/twisted/gaunt, and a third of the difference between the columns is body shape.

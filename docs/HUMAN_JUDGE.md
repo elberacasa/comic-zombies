@@ -201,3 +201,18 @@ Don't spend a second checking these; they are here only so you know what is alre
 the list: a few zombies out of 25 can still wedge briefly against thin roof railings during long
 sessions, and the horde is slower up the *east stair specifically* than it should be (11 of 15
 make it). Both are being tracked.
+
+---
+
+## 15 · CAN YOU TRAIN A HORDE?  *(added after the conga investigation — see PLAYTEST)*
+
+`CZ.skipToRound(10)` then `CZ.spawnStreet(20)`. Now run a wide circle around the plaza and keep
+running it. Do they string out into a **line behind you that you can sweep in one pass**, or do
+they fan into a crescent that wraps around you?
+
+This is the core skill of a zombies mode and the one thing the automated harness cannot judge.
+Its own measurement says the follow steering improves the queue by 12–18% against a 20% target it
+set for itself — close enough that only playing it decides whether the mechanic is doing its job.
+
+**Answer:**
+

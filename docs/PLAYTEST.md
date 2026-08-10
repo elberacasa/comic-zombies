@@ -5,16 +5,42 @@ answered, and what they said. **Feedback in this file outranks the roadmap.** Ne
 
 ---
 
-# KNOWN FAILING CHECK — the conga/train mechanic is weaker than specced
+# THE CONGA INVESTIGATION — the test was wrong before the game was
 
-`node tools/combat.mjs` has **2 failing checks**, and they pre-date the render-scale work (verified
-by stashing). The follow term that is supposed to make a horde queue up behind a leader — the
-thing that makes CoD-style *training* work — lengthens the unbroken chain by only **12%**, where
-the harness asserts at least 20%. Mean chain 5.4 → 6.0.
+I reported that the train mechanic was weak, based on `combat.mjs` showing the follow term adding
+only 12% to the unbroken queue against a 20% bar, with round 10 actively regressing. **That
+finding was partly an artifact of the harness, and chasing it cost two failed fixes.**
 
-This is a real gameplay finding, not a broken test: trains are the core skill expression in a
-zombies mode, and right now the steering barely rewards them. Worth fixing before the free web
-release, since "can you train a horde" is one of the questions the whole loop rests on.
+**What was actually wrong.** The conga suite is order-dependent. Run alone it reported every round
+improving by 18%; run after the other suites it reported round 10 *regressing* and 12% overall —
+same code, same seed, opposite conclusions. `reseedHorde()` restored the RNG stream and the
+variant cursor, but not the object pool's **free-list order**, which `despawnAll()` leaves
+permuted according to the order bodies died. `spawn()` then popped different bodies for the same
+spawn index, each carrying whatever its previous life left on it. The A/B stayed honest — both
+columns saw the same permutation — but the absolute numbers moved with run order, and the
+"round 10 regresses" signal that sent me hunting was noise dressed as data.
+
+Restoring the free list to the pool's own order fixes the every-round check in both run orders.
+Some order-dependence remains (absolute numbers still shift), so **the conga suite is trustworthy
+for direction, not for absolute values.** Treat a single failing percentage there as a prompt to
+look, not as a verdict.
+
+**Two fixes attempted on the steering itself, both reverted, both measured:**
+- *Offset pursuit* — aim at the slot behind a leader rather than at the leader, since pure
+  pursuit cuts corners on a curve. Geometrically sound, and it made every shape metric worse
+  (L/W 4.0 → 3.6, width 3.04 → 3.69). Reverted.
+- *Pace matching* — cap a station-keeping follower to its leader's speed, since mixed speed tiers
+  from round 10 tear a queue apart. Made it worse still, and contaminated the control run (the
+  control only zeroes the follow *weight*, so the cap still applied). Reverted.
+
+**Where it actually stands:** the follow term consistently improves the queue by 12–18% depending
+on harness state, and the shipped steering beat both of my attempts to improve it. The 20% bar was
+written by the agent that built the feature, asserting its own design goal.
+
+**So this is now a question for the human, not the harness** — which is the convention anyway.
+It is item 1 in `HUMAN_JUDGE.md`: can you train a horde into a line and sweep it in one pass? If
+that feels good in play, the bar is mis-specified and should be lowered to what the mechanic
+actually achieves. If it feels bad, that answer gives a real target to tune against.
 
 ---
 
