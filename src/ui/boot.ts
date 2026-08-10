@@ -290,7 +290,9 @@ export class BootOverlay {
     this.el.classList.remove('cz-gone', 'cz-fading', 'cz-paused', 'cz-failed', 'cz-loading');
     this.setTitle(this.titleHtml);
     if (this.cta) this.cta.textContent = 'CLICK TO DROP IN';
-    if (this.hint) this.hint.textContent = 'BUILD 005 · M3.5 THEY CLIMB — NOWHERE IS SAFE NOW';
+    // Keep this in step with the console banner in `main.ts` — this is the one the PLAYER sees,
+    // and a stale number here reads as "the deploy didn't land" even when the code is current.
+    if (this.hint) this.hint.textContent = 'BUILD 007 · M4 THE HORDE HAS A BODY';
   }
 
   paused(reason = 'PAUSED'): void {
