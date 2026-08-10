@@ -2,6 +2,9 @@
 
 > **READ THIS FIRST, EVERY SESSION.** This file is the permanent memory of the project.
 > If context was compacted, everything you need to not lose the plot is here and in `docs/`.
+>
+> **→ Then read `docs/CONTINUE_HERE.md`** — where the project stands right now and the exact next
+> task. It is the only doc that is allowed to go stale, and it is rewritten each session.
 
 ---
 
