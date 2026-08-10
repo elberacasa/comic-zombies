@@ -1160,16 +1160,41 @@ export function makeEnemyMaterial(opts: EnemyMaterialOptions = {}): EnemyMateria
      * makes the enemy the only green thing in the frame, the ink pass finds it and edges it.
      */
     rimStrength: 1.25 * presence,
+    /**
+     * FAR: a wide exponent so the term floods the silhouette and the body is findable across the
+     * arena — the ART §9 contract, measured by the squint test.
+     */
     rimPower: 1.1,
+    /**
+     * NEAR: a tight exponent so the rim hugs the edge instead of washing the surface.
+     *
+     * The wide far-field rim is what a player sees at 25 m and it is correct there. At melee
+     * range it covered nearly the whole body, and combined with `toneFloor: 0` and a halved
+     * halftone it turned a fully modelled corpse — skull, brow, jaw, hands, feet, torn coat —
+     * into a flat green mass. The playtester's words: "enemies skeletons should be more
+     * consistent and precise". The mesh was never the problem; the shading was hiding it.
+     *
+     * Measured: narrowing the rim alone restored the form but dropped squint dominance to 0.104
+     * against the 0.12 floor. Distance-splitting the term keeps both.
+     */
+    rimPowerNear: 3.2,
+    rimNearMul: 0.85,
+    rimNear: 3.5,
+    rimFar: 13,
     bands: 3,
     /**
      * 0.85 → 0.4. At 0.85 the shadow band was 85% screened into dots, and a dot screen
      * averages a hue toward the paper between the dots — which removes the very green the
      * enemy is supposed to be found by. An enemy still prints; it prints lighter than a wall.
      */
-    halftone: 0.4,
+    /**
+     * Raised 0.4 → 0.72 with `toneFloor` off the floor. The shadow band on an enemy now carries
+     * screen-tone like every other surface in the game, which is what makes a shoulder read as
+     * separate from a chest at conversation distance.
+     */
+    halftone: 0.72,
     /** No tone floor on a character: the body is a shape, not a background wash. */
-    toneFloor: 0,
+    toneFloor: 0.18,
     /**
      * 82.5°, and the old value of 105° was arithmetically wrong rather than merely a taste
      * call. `halftoneDots()` screens with `fract()` on a SQUARE lattice, so the dot pattern

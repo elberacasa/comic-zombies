@@ -289,3 +289,34 @@ minute; these are now hard limits, and they live in `CAMERA` in `src/game/tuning
   the total range modest and the spring gentle.
 - **Ship a COMFORT preset** that zeroes bob, lean, shake and FOV punch, reachable from the pause
   menu. Some players need it, and it costs us almost nothing.
+
+### 9.1 The rim serves two jobs, and they want opposite settings
+
+Far away the rim must **flood** the silhouette so an enemy is findable in a glance. Up close it
+must **hug the edge** so the form underneath can be read. A single Fresnel exponent cannot do
+both, and BUILD 007 shipped the far-field answer applied at every distance:
+
+> The playtester: *"enemies skeletons should be more consistent and precise."*
+
+The mesh was never the problem. The body already carried a skull, brow, jaw, hands, feet and a
+torn coat, and `tools/zombie.mjs` passed on every bone. But `rimPower: 1.1` is so wide a falloff
+that at melee range the term covers nearly the whole surface, and with `toneFloor: 0` and the
+halftone halved to 0.4 there was nothing underneath it to see. A fully modelled corpse rendered
+as a flat green mass.
+
+**So the rim is now distance-split** (`rimPowerNear` / `rimNear` / `rimFar` on `InkMaterial`):
+
+| | exponent | what it buys |
+|---|---|---|
+| ≤ 3.5 m | 3.2, ×0.85 strength | the edge reads as an edge; skull, shoulders and limbs have form |
+| ≥ 13 m | 1.1, full strength | unchanged from shipped — the §9 squint contract is untouched |
+
+Enemies also got their internal tone back: halftone 0.4 → 0.72 and `toneFloor` 0 → 0.18, so an
+enemy's shadow band carries screen-tone like every other surface in the game.
+
+**Measured squint dominance after the change:** 0.306 at 4 m, 0.198 at 8 m, against a 0.12 floor.
+Beyond `rimFar` the maths is bit-identical to before, so distant findability cannot regress —
+that is a property of the construction, not of a measurement.
+
+**The general rule:** when one term is asked to serve both readability-at-range and
+form-at-contact, split it by distance rather than compromising it at both.

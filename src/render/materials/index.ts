@@ -162,6 +162,13 @@ export interface InkMaterialOptions {
   /** Fresnel rim — this is what makes it read as AAA rather than flat. */
   rimColor?: number;
   rimPower?: number;
+  /** Rim exponent at `rimNear` and closer. Defaults to `rimPower` (no distance behaviour). */
+  rimPowerNear?: number;
+  /** Rim strength multiplier at `rimNear` and closer. */
+  rimNearMul?: number;
+  /** Distance, metres, at/below which the near rim applies, and at/above which the far one does. */
+  rimNear?: number;
+  rimFar?: number;
   rimStrength?: number;
   /** Number of light bands. 3 is the house standard. */
   bands?: number;
@@ -295,6 +302,17 @@ const FRAG = /* glsl */ `
   uniform vec3 uShadowColor;
   uniform vec3 uRimColor;
   uniform float uRimPower;
+  /**
+   * NEAR-FIELD rim shape. The rim serves two jobs that want opposite settings: far away it must
+   * FLOOD the silhouette so an enemy is findable (ART §9), and up close it must HUG the edge so
+   * the form underneath can be read. A single exponent cannot do both — at the wide value that
+   * makes a body findable at 25 m, the term covers nearly the whole surface at 3 m and erases
+   * every anatomical landmark the mesh has. Defaults equal the far values, so any material that
+   * does not opt in behaves exactly as before.
+   */
+  uniform float uRimPowerNear;
+  uniform float uRimNearMul;
+  uniform vec2 uRimRange;
   uniform float uRimStrength;
   uniform float uBands;
   uniform float uHalftone;
@@ -476,7 +494,10 @@ const FRAG = /* glsl */ `
     // constant across a face, so N·V is a per-face constant and this term floods whole
     // polygons instead of edging them. The real rim is drawn in screen space by passes/ink.ts,
     // off the depth discontinuity. What is left here is a gentle grazing-angle tint.
-    float rim = pow(1.0 - max(dot(N, V), 0.0), uRimPower);
+    float rimT = clamp((vDepth - uRimRange.x) / max(0.5, uRimRange.y - uRimRange.x), 0.0, 1.0);
+    float rimPow = mix(uRimPowerNear, uRimPower, rimT);
+    float rimMul = mix(uRimNearMul, 1.0, rimT);
+    float rim = pow(1.0 - max(dot(N, V), 0.0), rimPow) * rimMul;
     // The rim is a back light, so it lives on the side away from the key.
     float back = 0.45 + 0.55 * max(dot(N, uRimDir), 0.0);
     rim *= back * smoothstep(0.0, 0.35, 1.0 - keyRaw * 0.5);
@@ -529,6 +550,9 @@ export function makeInkMaterial(opts: InkMaterialOptions): InkMaterial {
       uShadowColor: { value: shadow },
       uRimColor: { value: color(opts.rimColor ?? PALETTE.ELECTRIC).clone() },
       uRimPower: { value: opts.rimPower ?? 3.2 },
+      uRimPowerNear: { value: opts.rimPowerNear ?? opts.rimPower ?? 3.2 },
+      uRimNearMul: { value: opts.rimNearMul ?? 1 },
+      uRimRange: { value: new Vector2(opts.rimNear ?? 4, opts.rimFar ?? 14) },
       // A material Fresnel is a FILL — the drawn rim lives in passes/ink.ts (screen space).
       uRimStrength: { value: opts.rimStrength ?? 0.22 },
       uBands: { value: opts.bands ?? 3 },
