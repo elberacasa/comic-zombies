@@ -8,3 +8,4 @@ dist/
 
 # agent test-harness build output (any .buildN variant)
 tools/.build*/
+.vercel
