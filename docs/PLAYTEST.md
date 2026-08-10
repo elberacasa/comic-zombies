@@ -5,6 +5,39 @@ answered, and what they said. **Feedback in this file outranks the roadmap.** Ne
 
 ---
 
+# BUILD 007 — PLAYER FEEDBACK  *(manual test, 2026-08-10)*
+
+> "i like how zombies behave but they can be a bit smarter, yes i wanna play more rounds the game
+> feels legit addictive but needs better enemies, graphics should improve, enemies skeletons
+> should be more consistent and precise, aaa+ quality at the level of cod activision"
+
+**THE LOOP IS VALIDATED.** "I wanna play more rounds / legit addictive" is the answer to the
+question M3 existed to ask, and the design reviewer's pre-fix verdict of "I would not say one more
+round" is now superseded by the only reviewer who counts. The economy, the combo, the boon draw
+and the round beat are doing their job — **stop redesigning them.** Everything below is quality,
+not structure.
+
+**Behaviour is liked; intelligence is not.** "I like how zombies behave" retires the conga
+investigation — the train reads fine in play, which is what the harness could not tell us. "They
+can be a bit smarter" is a different axis: awareness, flanking, reacting to what the player is
+doing, rather than pathing.
+
+**THE RIG DIAGNOSIS — the skeleton is fine, the surface over it is not.** `tools/zombie.mjs`
+passes: crown 1.852 m against a 1.84 m capsule, every bone segment well-formed, hitboxes solved
+from the posed mesh. The bones are correct. What is missing is everything the bones are supposed
+to be *wearing*. At melee range:
+
+- the head is a featureless faceted blob — no skull, no jaw, no brow, no eye sockets. It is also
+  the thing the player is asked to aim at precisely, and it offers no landmark to aim by.
+- limbs are smooth tubes tapering to a point: no elbow, no knee, no hands, no feet
+- one flat green over the whole body — no clothing, no exposed flesh, no wounds
+- no anatomical landmarks at all: no clavicle, no ribcage, no knuckles
+
+It reads as a green blob creature rather than a human corpse, and no amount of skinning quality
+fixes that — the deformation is smooth, there is simply nothing on it to deform.
+
+---
+
 # THE CONGA INVESTIGATION — the test was wrong before the game was
 
 I reported that the train mechanic was weak, based on `combat.mjs` showing the follow term adding

@@ -4,8 +4,8 @@
 
 | | |
 |---|---|
-| **Milestone** | **M5 — Free Web Release** (M0–M4 shipped) |
-| **State** | BUILD 007 live at comic-zombies.vercel.app; M5 starting |
+| **Milestone** | **M6 — Better Enemies** (M0–M5 shipped) |
+| **State** | Loop validated by the player — "legit addictive". Quality pass now. |
 | **Next user playtest** | BUILD 007 — answer `docs/HUMAN_JUDGE.md` (14 items, ~15 min) |
 | **Blocked on** | nothing. User feedback on BUILD 005 outranks M4 when it arrives. |
 | **Last updated** | 2026-08-10 |
@@ -189,12 +189,35 @@ Vercel build.
 
 **Done when:** a stranger can find it, play it, and tell you what they think.
 
-## M6 — Content & Systems 🔒
-Special enemies with genuinely different BEHAVIOUR, not stat reskins — `sprinter`, `brute`,
-`spitter` and `screamer` currently share one body and one AI. Wall-buys, the mystery box,
-power-up drops, and the rest of the boon pool.
-**Note:** points is still a dead stat until wall-buys and Pack-a-Punch land. That is the single
-biggest hole in the loop.
+## M6 — Better Enemies 🔨  *(driven by BUILD 007 player feedback)*
+
+The loop is validated — "legit addictive" — so this is a **quality** milestone, not a structural
+one. Three strands, in impact order:
+
+**1. THE BODY.** The skeleton is correct and the surface over it is not (see PLAYTEST for the
+full diagnosis). The head is a featureless blob the player is nonetheless asked to headshot
+precisely; limbs are tubes tapering to points with no hands, feet, elbows or knees; the whole
+body is one flat green with no clothing, flesh or wounds. Needed:
+- a **readable skull** — cranium, brow, jaw, eye sockets — so a headshot has a landmark to aim at
+- hands and feet; elbows and knees that read as joints
+- a two-material split, torn clothing over exposed flesh, so the silhouette has internal structure
+- per-instance variation that changes the SILHOUETTE, not just proportions: hunch, missing arm,
+  head loll, torn coat, girth. Twenty on screen must not read as twenty of one thing.
+- still comic: flat cel bands, heaviest ink weight in the game, ACID reserved (`ART §9`)
+
+**2. INTELLIGENCE.** "I like how zombies behave but they can be a bit smarter." Behaviour and
+pathing are liked and should not be rebuilt. What is missing is *awareness*: spreading to cut off
+a kiting route instead of all following the same line, reacting to being shot at, hanging back
+when the player is reloading versus committing when they are not, and specials that force a
+decision rather than adding hit points.
+
+**3. GENUINELY DIFFERENT ENEMIES.** `sprinter`, `brute` and `spitter` are currently
+`{...SHAMBLER, health, speed}` — one body, one AI, different numbers. Each needs its own
+silhouette and its own reason to change what the player does.
+
+**Not in this milestone:** wall-buys, the box, Pack-a-Punch. Points remains a dead stat until
+those land, and that is still the biggest hole in the loop — but the player asked for enemies
+and graphics, and their feedback outranks the roadmap.
 
 ## M7 — More Maps 🔒 *(`GAME_BIBLE §9.1`)*
 A second and third arena. Content, not engineering — **if** the couplings stay honest. Anything
