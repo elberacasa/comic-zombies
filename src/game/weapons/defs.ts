@@ -351,6 +351,113 @@ export const LONGSHOT: WeaponDef = {
 };
 
 /**
+ * ═══ REDLINE — battle rifle, the one that hits like a sniper and fires like an SMG ═══
+ *
+ * Identity: the gap between the ratatat and the longshot, and the only weapon that is good at
+ * BOTH ranges. 58 × 2.6 = 151 to a head at 520 rpm, `penetration: 1` so it goes through the
+ * first body in a conga line, and a **20-round magazine** — the SCAR-H's real capacity, and the
+ * whole risk. It kills three shamblers a mag and then you are reloading in front of the fourth.
+ *
+ * ─── WHY `archetype: 'smg'` ON A 7.62 BATTLE RIFLE ──────────────────────────────────────────
+ * Because `archetype` is not a claim about role in this codebase — the numbers carry the role,
+ * and `firing.ts` never reads the field. It is read in exactly four places, and two of them are
+ * VISIBLE:
+ *
+ *   · `economy/wallbuys.ts` draws the wall-buy card's gun silhouette from `GUN_PARTS[archetype]`.
+ *     `smg` is *folding stock · receiver · barrel · box mag · grip* — which is literally this
+ *     weapon's parts list. `marksman` adds **a scope and two mounts** that REDLINE does not have
+ *     and must not advertise on a card the player buys from.
+ *   · `economy/box.ts` weights the mystery box: smg 30, marksman 22. A rifle you can actually
+ *     fight a round with should be a common box roll, not a rare one.
+ *   · `audio/index.ts` resolves `gun_${id}` first and falls back to `gun_${archetype}`, so this
+ *     currently fires with the SMG's report. That is the one place the choice costs something —
+ *     `gun_smg` is a bandpass-3400 crack and a 7.62 wants more chest. A `gun_redline` recipe in
+ *     `audio/recipes.ts` would override it without touching this line. Noted, not owned here.
+ *   · `main.ts` prints the archetype in the equip toast.
+ *
+ * ─── AND THE ONE NUMBER THAT IS A CLEARANCE CONSTRAINT, NOT A FEEL ONE ──────────────────────
+ * `weaponKick: 1` is the ceiling, not a choice. `WEAPON.view.clearanceKickBudget` is 1.0 and the
+ * viewmodel's tightest pose keeps 0.073 m at that value; walked offline, 1.1 puts a vertex 0.067 m
+ * from the eye — inside `view.nearClearance` — because REDLINE's stock is the rearmost thing on
+ * any weapon in the arsenal. So the weight goes into `cameraKick` (which spends no clearance at
+ * all) and into the pattern's amplitude instead. To raise it, first pull `stock.z` in by 10 mm in
+ * `models/redline.ts`; that buys 1.2 and costs the gun 10 mm of drawn length.
+ */
+export const REDLINE: WeaponDef = {
+  id: 'redline',
+  name: 'REDLINE',
+  archetype: 'smg',
+  /**
+   * 58 body / 151 head. Three body shots or two heads on a round-1 shambler, against the
+   * ratatat's six and four — you feel every trigger pull land, which is the point of the gun.
+   */
+  damage: 58,
+  /** Above the SMG's 2.2, below the pistol's 2.5: precise, but not a sniper's reward. */
+  headshotMult: 2.6,
+  /**
+   * 520 rpm = 115 ms between shots. Deliberately between the ratatat's 900 and the longshot's 55,
+   * and deliberately just past `WEAPON.view.kickSettleResidual`'s rotational floor (438 rpm): the
+   * rate-aware kick spring stiffens itself for this gun, so sustained fire buzzes rather than
+   * heaves — exactly the behaviour that note was written to give the SMG.
+   */
+  rpm: 520,
+  auto: true,
+  /** TWENTY. The SCAR-H's real magazine, and the entire risk/reward of the weapon. */
+  magSize: 20,
+  reserveAmmo: 140,
+  reloadTime: 2.15,
+  /** 40–51 % of the bar. Late enough that it cannot be mashed, 0.24 s wide (≈14 frames). */
+  activeReloadWindow: [0.86, 0.24],
+  pellets: 1,
+  /**
+   * Hip 0.030 rad ≈ 1.7° — HALF AGAIN the SMG's, because a battle rifle is not a hip-fire weapon
+   * and the def should say so out loud. ADS 0.0022 is a near-laser: tighter than the SMG's 0.006,
+   * a hair looser than the pistol's 0.0018, five times looser than the longshot's.
+   */
+  spreadHip: 0.030,
+  spreadAds: 0.0022,
+  /**
+   * Twelve shots — a hard vertical crack that settles by shot 7, with the lateral going RIGHT for
+   * five, sweeping LEFT for five, and snapping back RIGHT on the last two. That reversal is what
+   * makes it a pattern you learn rather than a slope you hold against.
+   *
+   * The yaw column sums to EXACTLY ZERO over one cycle (40+74+96+84+30−38−96−126−114−60+110 = 0,
+   * in units of 1e-4). Keep it there if you retune it: a pattern with net lateral bias walks the
+   * player's aim sideways with no input.
+   */
+  recoilPattern: [
+    [0.0290, 0.0000],
+    [0.0268, 0.0040],
+    [0.0250, 0.0074],
+    [0.0236, 0.0096],
+    [0.0226, 0.0084],
+    [0.0220, 0.0030],
+    [0.0218, -0.0038],
+    [0.0221, -0.0096],
+    [0.0228, -0.0126],
+    [0.0239, -0.0114],
+    [0.0254, -0.0060],
+    [0.0272, 0.0110],
+  ],
+  /** Between the SMG's 3.4 and the sniper's 2.0. It settles, but it makes you wait a beat. */
+  recoilRecovery: 2.8,
+  /** The punch lives HERE, because the camera layer costs no viewmodel clearance. See above. */
+  cameraKick: 1.2,
+  weaponKick: 1,
+  /** 78 m useful, falling to 72 % at the far end. Owns everything except the long radial street. */
+  range: 78,
+  falloff: 0.72,
+  /** ONE body, not none and not four. The mid rung of the conga-line ladder the enemies build. */
+  penetration: 1,
+  adsTime: 0.24,
+  adsFov: 48,
+  moveSpeedMult: 0.91,
+  affix: 'none',
+  buyCost: 1600,
+  ammoCost: 800,
+};
+
+/**
  * Everything the game can hand you.
  *
  * `thumper` (GAME_BIBLE §3's launcher) is deliberately NOT here. The archetype note below this
@@ -360,7 +467,9 @@ export const LONGSHOT: WeaponDef = {
  * (arc, splash, self-knockback), so it ships when that exists rather than as a def that silently
  * fires an invisible bullet.
  */
-export const WEAPON_DEFS: readonly WeaponDef[] = [INKSLINGER, PRESS, RATATAT, BOOMSTICK, LONGSHOT];
+export const WEAPON_DEFS: readonly WeaponDef[] = [
+  INKSLINGER, PRESS, RATATAT, BOOMSTICK, LONGSHOT, REDLINE,
+];
 
 const _byId = new Map<string, WeaponDef>();
 for (const d of WEAPON_DEFS) _byId.set(d.id, d);

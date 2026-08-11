@@ -22,6 +22,7 @@ import { INKSLINGER } from './inkslinger';
 import { LONGSHOT } from './longshot';
 import { PRESS } from './press';
 import { RATATAT } from './ratatat';
+import { REDLINE } from './redline';
 import type { WeaponModelDef } from './types';
 
 /** Every weapon in the game, in equip order. One line per gun, and that is the whole list. */
@@ -32,6 +33,10 @@ export const WEAPON_MODELS: readonly WeaponModelDef[] = [
   RATATAT,
   BOOMSTICK,
   LONGSHOT,
+  // Last, so every existing equip index is untouched. It is the clean-sheet battle rifle the
+  // other five get rebuilt against — see the header of `models/redline.ts` for why its
+  // `depthCompress` is 0.62 and not the 1.0 the rework brief asked for.
+  REDLINE,
 ];
 
 /**
