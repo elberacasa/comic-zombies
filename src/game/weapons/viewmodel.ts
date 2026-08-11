@@ -220,6 +220,189 @@ interface SightSpec {
   notchHalfGap: number;
 }
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE DETAIL VOCABULARY — every optional part a profile can opt into.
+ *
+ * WEAPON_ART §0 is the law here and it is counter-intuitive: **more detail does not mean more
+ * small parts.** The inverted hull inflates every silhouette by a SCREEN-SPACE 7 px, so anything
+ * under `INK_FLOOR` has no albedo left between its two inflated faces and prints as solid black.
+ * That is not a theory — the trigger guard, the trigger, the muzzle fins and the front sight were
+ * all under the band once and an art review recorded the result as "five untextured boxes".
+ *
+ * So every shape below is authored BOLD, and `inkChunk()` clamps anything an author gets wrong
+ * back up to the floor and says so in dev. The four levers that actually buy perceived quality:
+ * bigger/fewer shapes · material separation · silhouette events · asymmetry.
+ *
+ * ─── WHERE THE PARTS LAND, AND WHY IT IS NOT ARBITRARY ──────────────────────────────────────
+ * Two new mesh groups carry the whole vocabulary (the draw-call budget allows exactly two):
+ *
+ *   · `steel`   — machined metal, LIGHTER than the frame. Parented to the SLIDE, so everything
+ *                 in it RECIPROCATES on a shot: ejection-port frame, charging handle, rail teeth,
+ *                 trigger. A port lip that stayed put while the slide cycled 13 mm underneath it
+ *                 would read as a bug on every single shot, and the pistol's slide cycle is the
+ *                 one mechanical animation this gun has.
+ *   · `polymer` — the parts a hand touches, DARKER than the frame. Parented to the ROOT group,
+ *                 i.e. STATIC: grip, heel, fore-end, stock, mag well, selector, stamped panels.
+ *
+ * Profile authors pick the part that has the parenting they want. Do not put `panels` on a
+ * reciprocating pistol slide (they are static); do not expect `railTeeth` to hold still.
+ *
+ * ─── THE BUDGET, RESTATED WHERE IT WILL BE READ ─────────────────────────────────────────────
+ * `assertClearance` measures reach as `hypot(|x| + sway, z)`. Every gun is between 0.387 and
+ * 0.393 against a 0.40 budget, so geometry added FORWARD (−z) at the muzzle end eats margin that
+ * does not exist. Geometry added BEHIND the hand (+z), INWARD, or VERTICALLY is free, and
+ * geometry added sideways at the RECEIVER is nearly free because |z| is small there and the
+ * measure is a hypotenuse. Detail the receiver, the stock, the top rail and the sides.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
+ * A recessed ejection port on the RIGHT of the receiver — per WEAPON_ART §1 the single most
+ * "gun-like" detail, and no gun had one.
+ *
+ * It is built as a FRAME of four proud bars around a bare patch of receiver rather than as a
+ * plate laid on top: a plate the same colour as its host reads as a raised rectangle, whereas a
+ * lighter frame standing 5 mm off the face gives the Sobel interior-detail pass (ART §3) a real
+ * depth step to ink, and the enclosed face falls into the cel shadow band on its own. The rear
+ * bar is a DEFLECTOR that stands proudest — that is the asymmetry event on the silhouette.
+ */
+interface EjectionPortSpec {
+  /** Opening height, metres. */
+  h: number;
+  /** Opening length along the receiver, metres. */
+  d: number;
+  /** Centre of the opening in gun space, metres. */
+  y: number;
+  z: number;
+  /**
+   * Radius of a shell sitting in the port, metres — RUST, rides the slide. `0` for none.
+   * Anything under half the ink floor is dropped rather than drawn as a black smear.
+   */
+  shellR: number;
+}
+
+/**
+ * A bold protruding charging handle / bolt handle. On `'right'` this is the strongest available
+ * "this is a rifle" silhouette event; on `'top'` it is a rail-mounted latch.
+ *
+ * `len` is how far it STANDS OFF the receiver, not its total size. The stem carries a paddle at
+ * its outer end so the shape ends in a hook rather than a stub — a hook survives the ink line,
+ * a taper does not.
+ */
+interface ChargingHandleSpec {
+  side: 'left' | 'right' | 'top';
+  /** Stand-off from the receiver face, metres. */
+  len: number;
+  /** Stem cross-section, metres. Floored at `INK_FLOOR`. */
+  thick: number;
+  /** Centre in gun space, metres. */
+  y: number;
+  z: number;
+}
+
+/** A fire-selector lever on the LEFT of the receiver: a round boss plus a bar. Polymer, static. */
+interface SelectorSpec {
+  /** Boss radius, metres. Floored at `INK_FLOOR / 2` so the boss is ≥ 10 mm across. */
+  r: number;
+  /** Lever length measured from the boss centre, metres. */
+  len: number;
+  /** Lever cross-section, metres. Floored at `INK_FLOOR`. */
+  thick: number;
+  /** Boss centre in gun space, metres. */
+  y: number;
+  z: number;
+  /** Lever angle measured from straight-back (+z); positive swings the tip UP. Degrees. */
+  angleDeg: number;
+}
+
+/**
+ * The step/funnel where a magazine enters the frame, so the mag reads as an INSERTED object
+ * rather than a box glued on. Static, while the magazine mesh animates down through it on a
+ * reload — which is exactly the read we want and costs nothing extra.
+ *
+ * It carries the same 0.30 rad rake the magazine build uses, so the two agree by construction.
+ */
+interface MagWellSpec {
+  /** Outer size of the well, metres. */
+  w: number;
+  h: number;
+  d: number;
+  /** Centre in gun space, metres. */
+  y: number;
+  z: number;
+  /** How far the bottom collar flares beyond the well on each side, metres. */
+  flare: number;
+}
+
+/**
+ * Protective ears either side of the front post. Instantly reads military.
+ *
+ * THEY LIVE IN THE `sights` GROUP, which means they ride the slide and carry the thinner
+ * `view.sightOutlinePx` line — correct on both counts, and free.
+ *
+ * `gap` IS A SIGHT-PICTURE CONSTRAINT. The rear notch is nearer the eye than the front post, so
+ * its window projects LARGER at the front plane — roughly `notchHalfGap × 1.5`. A wing inside
+ * that window eats the light bars the player aims with, which is the exact class of bug the SIGHT
+ * block above was written to close. The builder warns in dev when `gap` is too tight.
+ */
+interface SightWingsSpec {
+  /** How far the wing tops stand above `sight.lineY`, metres. May be 0 or negative. */
+  rise: number;
+  /** Wing thickness across the barrel, metres. Floored at `INK_FLOOR`. */
+  thick: number;
+  /** Distance from centre to the wing's INNER face, metres. See the note above. */
+  gap: number;
+  /** Wing depth along the barrel, metres. */
+  d: number;
+}
+
+/**
+ * A group of BOLD stamped cuts or vents — 2–3, never 8. They are POLYMER (dark) and sit nearly
+ * flush, so they read as holes cut into the host mass rather than as plates stuck on it.
+ *
+ * `hostHalfW` is what makes this reusable: the cuts sit on the faces of whatever mass they are
+ * cutting, which may be the receiver, an SMG's barrel shroud or a shotgun's heat shield.
+ */
+interface PanelsSpec {
+  /** How many. WEAPON_ART §0: more than 3 is against the rule and the builder says so. */
+  count: number;
+  /** Asymmetry is a feature — one side reads as authored. */
+  side: 'left' | 'right' | 'both';
+  /** Cut height and length along the gun, metres. */
+  h: number;
+  d: number;
+  /** Centre of the REARMOST cut, metres. */
+  y: number;
+  z: number;
+  /** Pitch along z; the cuts march FORWARD (−z), metres. */
+  step: number;
+  /** Half-width of the mass being cut — the cuts sit on its side faces. Metres. */
+  hostHalfW: number;
+}
+
+/**
+ * Chunky teeth along the top rail. Steel, rides the slide.
+ *
+ * THEIR HEIGHT IS A SIGHT-PICTURE CONSTRAINT, exactly as the RUST rib's is (see the rib note in
+ * `buildGunGeometry`): anything on the top of the receiver runs FORWARD from the rear notch and
+ * is therefore NEARER the eye than the front post at every ray below the sight line. The rib at
+ * a top of 0.0555 once occluded all but 16 px of a 38 px post. The builder warns if a tooth's
+ * top comes within 10 mm of `sight.lineY`.
+ */
+interface RailTeethSpec {
+  count: number;
+  /** Tooth width across the gun, height, and length along it, metres. */
+  w: number;
+  h: number;
+  d: number;
+  /** Centre of the REARMOST tooth, metres. */
+  y: number;
+  z: number;
+  /** Pitch along z; the teeth march FORWARD (−z), metres. */
+  step: number;
+}
+
 interface GunProfile {
   /** Matches `WeaponDef.id`. */
   id: string;
@@ -244,6 +427,83 @@ interface GunProfile {
   stock: { w: number; h: number; d: number; y: number; z: number; skeleton: boolean } | null;
   /** Warm-accent rib along the top of the receiver, between the sights. */
   rib: { w: number; h: number; d: number; y: number; z: number };
+
+  // ── THE OPTIONAL DETAIL VOCABULARY ──────────────────────────────────────────────────────
+  // Every one of these is opt-in. Omit it (or set it null) and the builder emits nothing, so a
+  // profile that says nothing about them is exactly the gun it was before. See the block of
+  // interfaces above for units, parenting and the constraints each one is under.
+  /** Recessed port with a proud lip and a rear deflector, RIGHT side. Steel, rides the slide. */
+  ejectionPort?: EjectionPortSpec | null;
+  /** Bold protruding handle, side or top. Steel, rides the slide. */
+  chargingHandle?: ChargingHandleSpec | null;
+  /** Fire selector, LEFT side. Polymer, static. */
+  selector?: SelectorSpec | null;
+  /** Flared well the magazine is inserted through. Polymer, static. */
+  magWell?: MagWellSpec | null;
+  /** Ears either side of the front post. Rides the sights, carries the sights' lighter ink. */
+  sightWings?: SightWingsSpec | null;
+  /** 2–3 bold stamped cuts. Polymer, static. */
+  panels?: PanelsSpec | null;
+  /** Chunky top-rail teeth. Steel, rides the slide. */
+  railTeeth?: RailTeethSpec | null;
+}
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE INK FLOOR, AS A FUNCTION AND NOT AS A COMMENT.
+ *
+ * WEAPON_ART §0: at `READABILITY.VIEWMODEL_OUTLINE_PX` (7 px) a part needs more than ~14 px of
+ * screen width or it has no albedo between its two inflated hull faces and renders as SOLID INK.
+ * The gun sits ~0.30 m from the eye at 78° FOV, where 0.008 m ≈ 13 px — so the floor is 0.010 m
+ * on every axis of every structural part, and it is a gate rather than a guideline.
+ *
+ * It was previously enforced by hand, and it had already drifted twice in this very file: the
+ * cocking serrations were 0.006 m and the fore-end ribs 0.008 m, i.e. both were printing as one
+ * black smear instead of as the grooves they were modelled to be. `inkChunk` makes that
+ * impossible to do silently — it CLAMPS to the floor and says which part broke it, so the four
+ * profile authors who will fill in the vocabulary above cannot reintroduce the bug by accident.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const INK_FLOOR = 0.010;
+
+/**
+ * The rake every magazine and every mag well is built on, radians. One number, so the well and
+ * the magazine that slides through it cannot be authored at two different angles.
+ */
+const MAG_RAKE = 0.30;
+
+/** A bevelled box that cannot be thinner than the ink line can survive. */
+function inkChunk(
+  w: number, h: number, d: number, bevel: number, seed: number, what: string,
+): BufferGeometry {
+  const thinnest = Math.min(w, h, d);
+  if (import.meta.env?.DEV && thinnest < INK_FLOOR - 1e-6) {
+    console.warn(
+      `[weapons/viewmodel] "${what}" is ${(thinnest * 1000).toFixed(1)} mm on its thinnest axis, ` +
+      `under the ${(INK_FLOOR * 1000).toFixed(0)} mm ink floor — it would print as solid black. ` +
+      'Clamped. See WEAPON_ART §0.',
+    );
+  }
+  return bevelBox(
+    Math.max(w, INK_FLOOR), Math.max(h, INK_FLOOR), Math.max(d, INK_FLOOR), bevel, seed,
+  );
+}
+
+/**
+ * Anything standing on top of the receiver runs FORWARD from the rear notch and is therefore
+ * NEARER the eye than the front post at every ray below the sight line — so it occludes the sight
+ * picture from the inside. This is the rib bug, generalised into a check.
+ */
+function guardSightLine(topY: number, P: GunProfile, what: string): void {
+  if (!import.meta.env?.DEV) return;
+  const ceil = P.sight.lineY - 0.010;
+  if (topY > ceil) {
+    console.warn(
+      `[weapons/viewmodel] ${P.id}: "${what}" tops out at ${topY.toFixed(4)} m, above the ` +
+      `${ceil.toFixed(4)} m ceiling set by sight.lineY ${P.sight.lineY}. It will occlude the ` +
+      'front post at ADS from below. Lower it or shorten it.',
+    );
+  }
 }
 
 const SIGHT = {
@@ -273,6 +533,44 @@ const SIGHT = {
  * other three are read against and the one whose clearance is already measured at 0.386 m.
  */
 const PROFILES: readonly GunProfile[] = [
+  /**
+   * INKSLINGER — the pistol, and the reference every other gun is read against.
+   *
+   * THE PROPORTIONS ARE FROZEN. `receiver`, `sight`, `depthCompress`, `barrel`, `muzzle`,
+   * `magazine` and `rib` are BUILD 007's numbers to the millimetre: this is the model whose
+   * clearance the whole budget is quoted from and whose `sight.lineY` the ADS solve is anchored
+   * to. Everything added below is DETAIL — new masses hung on a shape that did not move.
+   *
+   * ─── THE FIVE READS WEAPON_ART §1 ASKS THIS GUN FOR ─────────────────────────────────────
+   * ejection port · extractor · beavertail · slide-lock lever · a squared-off guard hook. Four
+   * of them are vocabulary parts; the other two are the base `stock` and `foreEnd` slots doing a
+   * job the vocabulary has no entry for, which is explained where each one is set.
+   *
+   * ─── AND WHY IT IS SEVEN ZONES AND NOT SEVENTY PARTS (§0) ───────────────────────────────
+   * Every addition is one BOLD mass in a zone that had nothing in it, and no two of them are on
+   * the same face:
+   *
+   *   rear-right   ejection port frame + brass in the port   (steel + RUST, rides the slide)
+   *   rear-left    slide-lock boss and lever                 (polymer, static)
+   *   top-rear     beavertail tang over the web of the hand  (polymer, static)
+   *   bottom       flared magwell funnel at the butt         (polymer, static)
+   *   front-low    squared guard hook                        (polymer, static)
+   *   front-top    protective ears round the front post      (sights, lighter ink)
+   *   front-left   two stamped cuts in the dust cover        (polymer, static)
+   *
+   * That is four value fields on one gun — polymer 0.29, frame 0.44, steel 0.57, BONE 0.73 —
+   * plus the RUST warm read, which §2 calls the biggest available win and which costs no
+   * geometry at all. Left and right now carry DIFFERENT events, so the gun is asymmetric from
+   * every angle the player can put it at.
+   *
+   * ─── CLEARANCE: MEASURED, NOT ASSERTED ──────────────────────────────────────────────────
+   * The whole point of the layout above is that NOT ONE of these parts is forward of the muzzle
+   * or outboard of the hand. Walked over all seven poses × the sway corners × the flourish
+   * signs, the model's worst vertex is unchanged in every pose and every metric — still
+   * `muzzle.fin2` at 0.394 / 0.414 swayed, still the magazine at reload, still the forearm at
+   * the near plane. The nearest any new part comes to being the offender is the sight ears at
+   * 0.404 swayed, ten millimetres inside the mass they sit behind.
+   */
   {
     id: 'inkslinger',
     depthCompress: V.depthCompress,
@@ -283,14 +581,198 @@ const PROFILES: readonly GunProfile[] = [
     muzzle: { r: 0.017, len: 0.030, z: -0.140, fins: 3, finW: 0.036 },
     magazine: { w: 0.024, h: 0.086, d: 0.036, y: -0.060, z: 0.016 },
     tube: null,
-    foreEnd: null,
-    stock: null,
+    /**
+     * THE SQUARED-OFF GUARD HOOK — §1's "very comic gun silhouette event", built out of the
+     * `foreEnd` slot because the trigger guard itself lives in the shared builder and a pistol
+     * has no support-hand fore-end to spend the slot on.
+     *
+     * It is a prow welded onto the front-bottom corner of the guard: it overlaps `guardFront`
+     * (which reaches z −0.0637) and `guardBottom` (which reaches y −0.0617) and then juts 6 mm
+     * further forward and 5 mm further down, at 24 mm wide against the guard bars' 14 mm. A
+     * step on the OUTLINE is the one kind of detail the ink line cannot erase, because the ink
+     * line *is* the outline — which is exactly why the hook is the only new part allowed to
+     * stick out past a silhouette the eye already knows.
+     *
+     * ONE RIB, NOT TWO, AND THE NUMBER IS ARITHMETIC RATHER THAN TASTE. `h > d`, so the slot's
+     * rib generator stacks them vertically at a pitch of `h × 0.62 / (ribs − 1)` — on a 20 mm
+     * face that is a 12.4 mm pitch for two ribs, and since every rib is `INK_FLOOR` (10 mm)
+     * tall, the GAP between them comes out at 2.4 mm. `inkChunk` cannot see that: it floors the
+     * part and is blind to the space between two of them, and 2.4 mm is a quarter of the floor.
+     * The two hulls would have overlapped and the pair would have printed as one solid black
+     * lump on the front of the guard — §0's failure exactly, arrived at from the other side.
+     *
+     * At one, the rib is a 28 × 10 × 20 mm band standing proud of a 24 × 20 × 16 mm block on
+     * every face: a two-tier hook with a real step in its outline, which is the one kind of
+     * detail the ink line cannot erase. Bigger, bolder, fewer.
+     */
+    foreEnd: { w: 0.024, h: 0.020, d: 0.016, y: -0.056, z: -0.062, ribs: 1 },
+    /**
+     * THE BEAVERTAIL, built out of the `stock` slot — a pistol has no stock, and a solid
+     * `stock` is precisely "a mass behind the grip", which is what a beavertail tang is.
+     *
+     * It runs back from the frame's rear face (z 0.012) under the slide's rear, and the slot's
+     * pad becomes the tang's flared terminus: 5 mm taller than the body, so the tip sweeps UP
+     * toward the hammer spur instead of tapering to nothing. That upsweep is the whole read —
+     * a taper would have died under the ink line, a step survives it.
+     *
+     * ITS HEIGHT IS ANATOMY, NOT STYLING. The bottom sits at y −0.007 and the fist's top edge
+     * at −0.006, so the tang lies ON the web of the hand rather than floating above a gap; the
+     * top overlaps the receiver's underside by 1 mm so it reads as one continuous frame. And it
+     * is POLYMER, which carries the grip's dark field up and around behind the hand — the frame
+     * grey is then a band between two dark masses instead of the whole gun.
+     */
+    stock: { w: 0.028, h: 0.018, d: 0.036, y: 0.002, z: 0.030, skeleton: false },
     rib: { w: 0.014, h: 0.011, d: 0.104, y: 0.0465, z: -0.052 },
+
+    /**
+     * THE EJECTION PORT — §1's "single most gun-like detail", with the front wall doing the
+     * extractor's job.
+     *
+     * SIZED BY THE SLIDE'S TOP FACE, NOT BY EYE. The lip stands 5 mm above the opening and is
+     * 10 mm thick, so `y + h/2 + 0.010` must land on or under the slide's 0.050 top: at
+     * y 0.030 / h 0.018 the lip's top is 0.049 and the shelf's bottom 0.011, i.e. the frame
+     * fills the side face edge to edge with 1 mm of slide showing above and below. A lip that
+     * broke the top face would run forward of the rear notch and start eating the sight
+     * picture from below, which is the rib bug all over again — the shipped RUST rib already
+     * closes the picture at 0.052, so at 0.049 this is behind it and invisible to ADS.
+     *
+     * The brass in the port is the fourth RUST mark and the only one that is not on the
+     * outline: it is a warm dot in the middle of the one rectangle the eye is drawn to. At
+     * r 0.006 it is 12 mm across in an 18 mm window — a comic-fat round, not a case rim.
+     */
+    ejectionPort: { h: 0.018, d: 0.034, y: 0.030, z: -0.034, shellR: 0.006 },
+    /**
+     * NO CHARGING HANDLE, DELIBERATELY. A pistol's cocking read is its serrations and its
+     * hammer spur, both of which it already has. A slide-mounted hook would have to go on the
+     * left (the right is the port) at the same z as the port's deflector — which would turn the
+     * one silhouette event this gun has into a matched pair and hand back the asymmetry §0 asks
+     * for. Fewer, bolder, and on one side only.
+     */
+    chargingHandle: null,
+    /**
+     * THE SLIDE-LOCK LEVER. The `selector` part is a round boss with a bar swung off it on the
+     * LEFT of the receiver, which is a slide stop's shape exactly — so the pistol spends the
+     * slot on the lever §1 asks it for rather than on a fire selector it does not have.
+     *
+     * It sits at y 0.006, in the seam between frame and slide, and sweeps 12° up and back to
+     * z −0.001. That puts it directly above the thumb (whose top is at −0.008), which is both
+     * where a slide stop lives and where the eye already is.
+     */
+    selector: { r: 0.008, len: 0.030, thick: 0.011, y: 0.006, z: -0.030, angleDeg: 12 },
+    /**
+     * THE FLARED MAGWELL. A pistol's magazine is inside its grip, so there is no well to show
+     * half way up — the only honest place for this part is the BUTT, as the funnel the mag is
+     * fed into, which is also the one comic-gun cliché that reads instantly at a glance.
+     *
+     * PLACED UNDER THE FIST, NOT INSIDE IT. The gloved fist is 62 mm wide and its bottom edge
+     * runs from y −0.082 to −0.102; a collar 46 mm across placed any higher would be swallowed
+     * whole and the flare would be invisible. At y −0.104 the collar's skirt lands at −0.126,
+     * four millimetres below the heel and 6.5 mm proud of it per side, so it emerges from under
+     * the hand as a distinct step. The magazine's floorplate then sits recessed 7 mm inside the
+     * mouth — the mag reads as INSERTED, which is the whole point of the part — and the reload
+     * drops it straight out through a funnel that stays put, because the well is static polymer
+     * and the magazine is not.
+     */
+    magWell: { w: 0.036, h: 0.016, d: 0.048, y: -0.104, z: 0.028, flare: 0.005 },
+    /**
+     * PROTECTIVE EARS. `gap` IS SOLVED, NOT PICKED. The rear notch is 0.235 m from the eye and
+     * the front post 0.321 m, so the notch's ±0.010 window projects to ±0.0137 at the front
+     * plane. At 0.017 the ears sit OUTSIDE that window entirely: they frame the post from
+     * beyond the light bars and take away none of them. (The builder's ×1.5 heuristic gives
+     * 0.015 — this clears the exact number by 3.3 mm, not the heuristic by nothing.)
+     *
+     * `rise` 0.001 keeps their tops a hair above the sight line, so the ears are the last thing
+     * the outline crosses on the way up. They are in `sightParts`, so they ride the slide and
+     * carry `view.sightOutlinePx` rather than the 7 px silhouette line.
+     */
+    sightWings: { rise: 0.001, thick: 0.011, gap: 0.017, d: 0.014 },
+    /**
+     * TWO STAMPED CUTS, LEFT ONLY, IN THE DUST COVER — the one panel of the frame that is
+     * forward of the hand and therefore actually visible in the rest pose. Two and not three:
+     * the host is 62 mm long and a third cut would put the pitch under the ink band.
+     *
+     * THE PITCH IS 28 mm, NOT 20, AND THAT IS THE SAME LAW AS THE PART THICKNESS. A 16 mm cut
+     * on a 20 mm pitch leaves a FOUR millimetre land between them, and a land has to survive
+     * the 7 px hull exactly as the cut does — at 4 mm the two inflated hulls overlap and the
+     * pair reads as one 36 mm dark bar rather than as two cuts. `inkChunk` floors the part and
+     * is blind to the space between two of them, which is why this has to be checked by hand.
+     * At 28 mm the land is 12 mm, and the forward cut still ends at z −0.094, seven millimetres
+     * inside the dust cover's own nose at −0.101 — so the group costs no reach and hangs off
+     * nothing.
+     *
+     * They go on the LEFT because the right-hand face at this height is under the port and the
+     * deflector, and a gun with a different event on each side is a gun that was drawn rather
+     * than mirrored. Polymer, so they are dark cuts in a mid-grey mass, not plates on it.
+     */
+    panels: {
+      count: 2, side: 'left', h: 0.011, d: 0.016,
+      y: -0.021, z: -0.058, step: 0.028, hostHalfW: 0.013,
+    },
+    /**
+     * NO RAIL TEETH. The slide's top face is 16 mm wide and already carries the RUST rib for
+     * its full length — teeth would have to sit on top of the rib, and anything up there runs
+     * forward of the rear notch and occludes the front post from below. The pistol's top is
+     * spoken for.
+     */
+    railTeeth: null,
   },
   /**
    * RATATAT — long, low and skeletal. Reads as *fast* before it fires: a slim receiver, a
    * vented shroud, a vertical grip the support hand is obviously clamped onto, and a wire stock
    * that says "this is braced against a shoulder" without adding a solid mass.
+   *
+   * ─── THE BRIEF: "I LOVED THE SMG" ────────────────────────────────────────────────────────
+   * So NOTHING about how it sits or what size it is has moved. `depthCompress`, `sight`,
+   * `receiver`, `serrations`, `barrel`, `muzzle`, `magazine`, `foreEnd`, `stock` and `rib` are
+   * BUILD 007's numbers to the millimetre. Everything below is DETAIL hung on a shape that did
+   * not change — WEAPON_ART §1's "make it LOOK like what it already feels like".
+   *
+   * ─── WHAT §1 ASKS THIS GUN FOR, AND WHERE EACH ONE LANDED ────────────────────────────────
+   *   vented shroud (3 BOLD slots)  → `panels`, three vertical cuts, LOWER LEFT flank
+   *   folding-stock hinge           → `selector` repurposed: a pivot boss between the receiver
+   *                                   and the two stock rails, with a latch arm swung off it
+   *   bold mag well                 → `magWell`, a flared mouth at the butt the stick feeds into
+   *   top rail, 3–4 chunky teeth    → `railTeeth`, four steel crossbars over the warm rib
+   * plus the "every gun gets" list: an ejection port with brass in it, a charging handle, and
+   * protective ears round the front post.
+   *
+   * ─── THE SIDES CARRY DIFFERENT EVENTS, WHICH IS THE §0 ASYMMETRY LEVER ───────────────────
+   * The rest pose sits the gun at x +0.125 with the muzzle toed in, so the face the player
+   * actually looks at all session is the LEFT one. That is where the parts that are *supposed*
+   * to be looked at went — the charging handle, the three stamped cuts and the stock hinge —
+   * and the right side takes the ejection port, which is the one detail that reads at ADS and
+   * on the outline from above. Left and right are now different guns from every angle.
+   *
+   *   front-low-left   three bold stamped cuts in the lower's flank   (polymer, static)
+   *   mid-left         charging handle standing 20 mm off the receiver (steel, rides slide)
+   *   mid-right        ejection port frame + brass in the port         (steel + RUST, slide)
+   *   top              four rail teeth crossing the RUST rib           (steel, rides slide)
+   *   rear-left        folding-stock pivot boss + latch arm            (polymer, static)
+   *   butt             flared magwell mouth the stick feeds through    (polymer, static)
+   *   front-top        ears round the front post                       (sights, lighter ink)
+   *
+   * Four value fields, none of them geometry: polymer 0.29 · frame 0.44 · steel 0.57 ·
+   * BONE 0.73, plus the RUST rib and the brass.
+   *
+   * ─── WHY THE VENTS ARE ON THE LOWER AND NOT ON THE SHROUD ────────────────────────────────
+   * They wanted to be on the receiver's forward third, which IS this gun's barrel shroud. They
+   * cannot be: `panels` is POLYMER and polymer is parented to the ROOT, while this gun's whole
+   * upper is the reciprocating `slide` mesh. A cut authored on the shroud face would stand
+   * still while its host travelled 11 mm back on every one of ~15 rounds a second, and at the
+   * front of the group it would end the stroke floating in mid-air ahead of the shroud's nose.
+   * The stamped-cut vocabulary is static, so it went on the one mass that is also static: the
+   * lower's flank, between the trigger guard and the foregrip, where a pressed-steel SMG puts
+   * its lightening cuts anyway. See the parenting note in the vocabulary block.
+   *
+   * ─── THE MAGAZINE IS NOT TOUCHED, AND THAT IS A CLEARANCE DECISION ───────────────────────
+   * §1 asks for the curve to be emphasised, and the honest answer is that it cannot be
+   * lengthened: MEASURED, this gun's binding constraint is the RELOAD pose, whose worst vertex
+   * is the magazine floorplate at 0.4170 m swayed against `MOVE.radius` 0.42 — three
+   * millimetres. Every millimetre added to `magazine.h` or `.d` is spent straight out of that.
+   * What the stick got instead is a MOUTH: the flared well below stops 11 mm short of the
+   * floorplate, so the raked body and the plate (which the shared builder kicks 14 mm rearward
+   * of it — that offset IS the banana kink) emerge from under the collar as a separate inserted
+   * object instead of dying inside the grip.
    */
   {
     id: 'ratatat',
@@ -315,38 +797,436 @@ const PROFILES: readonly GunProfile[] = [
     foreEnd: { w: 0.026, h: 0.056, d: 0.030, y: -0.020, z: -0.132, ribs: 3 },
     stock: { w: 0.024, h: 0.040, d: 0.086, y: 0.020, z: 0.074, skeleton: true },
     rib: { w: 0.013, h: 0.011, d: 0.130, y: 0.0505, z: -0.066 },
+
+    /**
+     * THE EJECTION PORT, AND IT IS FORWARD OF THE SERRATIONS ON PURPOSE.
+     *
+     * The five cocking serrations are `receiver.w + 0.002` wide — 1 mm proud of the side face —
+     * and they run from z 0.016 back to −0.057 in the y band 0.018–0.046, which is exactly the
+     * band a port lives in. A port dropped on top of them would interleave a continuous 5 mm
+     * proud frame with a stack of 1 mm proud teeth and both reads would be lost. At z −0.092 the
+     * deflector's rear face is −0.074, five millimetres clear of the last tooth, which also puts
+     * the port where an SMG actually has one: mid-receiver, above the trigger.
+     *
+     * SIZED BY THE RECEIVER'S SIDE FACE, NOT BY EYE. The receiver spans y 0.010–0.054. At
+     * y 0.032 / h 0.020 the top lip's top lands on 0.052 and the shelf's bottom on 0.012, so the
+     * frame fills the face edge to edge with 2 mm of receiver showing above and below. The lip
+     * stops under the 0.054 top face, so nothing here climbs onto the rail and starts eating the
+     * sight picture from below — the rib and the teeth already own that ceiling.
+     *
+     * The brass is the warm mark that is NOT on the outline: r 0.006 is 12 mm of round in a
+     * 20 mm window, a comic-fat case rather than a rim.
+     */
+    ejectionPort: { h: 0.020, d: 0.036, y: 0.032, z: -0.092, shellR: 0.006 },
+    /**
+     * THE CHARGING HANDLE, ON THE LEFT — which is both what an SMG does and where the player
+     * is looking. It is the biggest silhouette event on this gun that is not the magazine.
+     *
+     * Clear of the serrations (rear face −0.076 against their −0.057) and clear of the rail
+     * teeth in x, so the three steel parts never merge into one smear. At y 0.042 the paddle
+     * spans 0.030–0.054 and tops out flush with the receiver's top face: it breaks the upper
+     * outline without standing over it, and it ends in the builder's HOOK rather than a taper,
+     * because a hook survives the ink line.
+     *
+     * It stands 20 mm off a face that is 15 mm from centre, so the far edge of the paddle is at
+     * x −0.037 — INBOARD, toward screen centre, i.e. it costs the reach budget nothing at all.
+     */
+    chargingHandle: { side: 'left', len: 0.020, thick: 0.012, y: 0.042, z: -0.070 },
+    /**
+     * THE FOLDING-STOCK HINGE, built out of the `selector` slot. A round boss with a bar swung
+     * off it IS a hinge pivot and a latch, and this gun's fire-selector real estate is already
+     * spent on the charging handle 30 mm forward of it.
+     *
+     * IT IS PLACED TO BRIDGE TWO MASSES, WHICH IS WHAT MAKES IT READ AS A MECHANISM RATHER THAN
+     * A BUTTON. The receiver's rear face is at z 0.026 and the skeleton stock's two rails start
+     * at 0.031; the boss is 16 mm across at z 0.030, so it overlaps both and sits in the 12 mm
+     * gap between the rails (their inner faces are y 0.0276 and 0.0124). The arm then sweeps
+     * 18° down and back to (y 0.010, z 0.060), under the lower rail, where a folding stock's
+     * catch goes. Polymer and static — the stock it belongs to is static too.
+     */
+    selector: { r: 0.008, len: 0.032, thick: 0.012, y: 0.020, z: 0.030, angleDeg: -18 },
+    /**
+     * THE MAGWELL MOUTH. This gun feeds through its grip, so the only honest place for a well is
+     * the BUTT — and that is also the only place the stick is visible, so it is where the part
+     * does the most work.
+     *
+     * THE HEIGHT IS SET BY THE FLOORPLATE, NOT BY THE FIST. Raked at `MAG_RAKE` the collar's
+     * rear-bottom corner lands at y −0.126, while the magazine's floorplate corner is at −0.137:
+     * eleven millimetres of magazine emerges from under the mouth, so the mag reads as INSERTED
+     * and the reload drops it out through a funnel that stays put. Any lower and the collar
+     * swallows the plate whole and the whole point of the part is gone; any higher and the
+     * 62 mm fist hides it.
+     */
+    magWell: { w: 0.034, h: 0.018, d: 0.042, y: -0.104, z: 0.026, flare: 0.006 },
+    /**
+     * PROTECTIVE EARS. `gap` IS SOLVED, NOT PICKED. The rear notch sits 0.235 m from the eye and
+     * the front post 0.320 m (the 0.152 m between them, compressed by 0.56), so the notch's
+     * ±0.010 window projects to ±0.0136 at the front plane. At 0.017 the ears stand outside that
+     * window by 3.4 mm and take away none of the light bars. `rise` 0.001 keeps their tops a
+     * hair above the sight line so they are the last thing the outline crosses on the way up.
+     */
+    sightWings: { rise: 0.001, thick: 0.011, gap: 0.017, d: 0.014 },
+    /**
+     * THREE BOLD STAMPED CUTS, LEFT ONLY, IN THE LOWER'S FLANK — §1's vent group, on the mass
+     * that can actually carry it (see the header note about the reciprocating shroud).
+     *
+     * They are SLOTS, not dots: 16 mm tall against 14 mm long, in the frame body's 30 mm face
+     * (y −0.019 to 0.011), so they sit fully above the trigger guard's 0.019 top and fully
+     * inside the host. Pitch 24 mm against a 14 mm cut leaves a 10 mm land between them — the
+     * gap has to survive the ink line as well as the cut does, which is the lesson the cocking
+     * serrations learned at a 6 mm pitch. Three, and the group ends where the frame does.
+     */
+    panels: {
+      count: 3, side: 'left', h: 0.016, d: 0.014,
+      y: -0.008, z: -0.046, step: 0.024, hostHalfW: 0.014,
+    },
+    /**
+     * FOUR RAIL TEETH — and their HEIGHT is the whole design, because everything on top of a
+     * receiver runs forward of the rear notch and occludes the front post from below.
+     *
+     * The RUST rib already closes the picture at a top of 0.056. The teeth top out at 0.059,
+     * i.e. they cost the sight picture THREE MILLIMETRES of a 24 mm post and nothing else, while
+     * standing 5 mm proud of the receiver's 0.054 top face. (The builder's ceiling is
+     * `lineY − 0.010` = 0.064; this clears it by 5 mm, not by nothing.)
+     *
+     * They are 26 mm wide against the rib's 13, so they read as steel crossbars ACROSS the warm
+     * line rather than as a second stripe along it: four hard value breaks on the top outline,
+     * with the RUST showing through the 15 mm gaps between them. Steel, so they ride the slide —
+     * as does the rib underneath them, which is the only reason the pair can share a face.
+     */
+    railTeeth: { count: 4, w: 0.026, h: 0.011, d: 0.012, y: 0.0535, z: -0.030, step: 0.026 },
   },
   /**
    * BOOMSTICK — short, fat and top-heavy. Everything about it is BORE: the widest muzzle in the
    * game sitting on a stubby receiver, with a tube slung underneath and a ribbed pump the hand
    * is wrapped around. It should look like it hurts to fire, which is what the 2.6 weaponKick
    * is telling you in the def.
+   *
+   * ─── THE ONE STRUCTURAL CHANGE, AND WHY IT IS THE WHOLE GUN ──────────────────────────────
+   * It shipped as ONE 128 mm box from the hand to the choke, so the entire front half of the
+   * weapon was a single untextured slab and there was nowhere to put a heat shield — WEAPON_ART
+   * §1's first ask for this gun — because there was no exposed barrel to shield. The receiver is
+   * now 106 mm, cut from the FRONT (its rear face stays at z 0.020, i.e. the serrations, the
+   * hammer and the hand did not move), which opens a 29 mm window of bare barrel between the
+   * receiver's nose at −0.086 and the choke's rear at −0.115. That window is what everything
+   * else in this profile hangs on, and it costs zero reach because it is 22 mm of geometry
+   * DELETED from the −z end.
+   *
+   * The silhouette is now four events instead of one: fat brick → hard step down → banded
+   * shroud → the widest can in the game. Short and fat, which is what the gun is supposed to be,
+   * rather than long and blank, which is what it was.
+   *
+   * ─── WHAT §1 ASKS THIS GUN FOR, AND WHERE EACH ONE LANDED ────────────────────────────────
+   *   a heat shield, half-tube, 2 bold cutouts  → `foreEnd` (the shroud + its two clamp bands)
+   *                                               and `panels` (the cutouts, see below)
+   *   a visible shell in the ejection port      → `ejectionPort.shellR` 0.008 — 16 mm of RUST
+   *                                               brass in a 22 mm window, the fattest in the game
+   *   a receiver visibly THICKER than any other → w 0.042 → 0.046, against the pistol's 0.032 and
+   *                                               the marksman's 0.028. Half again as wide as
+   *                                               anything else, on a mass that is now short
+   *                                               enough for the width to read as GIRTH
+   *   a bold bead on a raised post              → the front blade moved back onto the receiver's
+   *                                               top face and grew ears (`sightWings`)
+   *   ribbing on the pump that reads as grip    → the shared builder's four pump ribs, unchanged;
+   *                                               see the note on the tube below
+   *
+   *   front-top      shroud + two proud clamp bands over the bare barrel  (polymer, static)
+   *   front-flanks   two bold cuts bitten out of the barrel's sides       (polymer, static)
+   *   mid-right      the biggest ejection port in the game + fat brass    (steel + RUST, receiver)
+   *   mid-left       cross-bolt safety: boss + lever swung down and back  (polymer, static)
+   *   top            RUST rib, shortened to stop at the base of the post  (RUST, receiver)
+   *   front-top      ears round the bead                                  (sights, lighter ink)
+   *
+   * FIVE value fields on one outline — polymer 0.29 · frame 0.44 · steel 0.57 · RUST 0.55 ·
+   * BONE 0.73 — which §2 calls the biggest available win and which costs no geometry at all.
+   *
+   * ─── CLEARANCE: MEASURED, NOT ASSERTED ──────────────────────────────────────────────────
+   * Walked over all seven poses × the five sway corners × the flourish signs, per vertex. The
+   * model's worst vertex is UNCHANGED in every pose and every metric — still the pump floorplate
+   * at reload (the offender this profile's `depthCompress` was solved against, and the reason
+   * that number is not touched), still the choke everywhere else, still the forearm at the near
+   * plane. The nearest any new part comes to being the offender is the forward clamp band at
+   * 0.354 reach / 0.375 swayed, i.e. 41 mm inside the 0.40 budget and 15 mm behind the choke's
+   * own number. Nothing here is forward of the muzzle or outboard of the hand.
    */
   {
     id: 'boomstick',
-    /** 0.58 — the RELOAD pose was the offender at 0.418 m, worst of any gun, then 0.403 at 0.64. */
+    /**
+     * 0.58 — the RELOAD pose was the offender at 0.418 m, worst of any gun, then 0.403 at 0.64.
+     * UNTOUCHED, and deliberately so: that pose's worst vertex is the PUMP, which this profile
+     * does not move, so there is no headroom here to spend and nothing gained by re-solving it.
+     */
     depthCompress: 0.58,
     sight: {
-      /** A single bead on a low rear notch — a shotgun is pointed, not aimed. */
-      lineY: 0.070, rearZ: 0.006, frontZ: -0.110,
+      /**
+       * A single bead on a low rear notch — a shotgun is pointed, not aimed.
+       *
+       * `frontZ` −0.110 → −0.076, and this is REQUIRED, not styling: with the receiver cut back
+       * to a nose of −0.086 the blade was left standing 8 mm above thin air over the shroud. At
+       * −0.076 the blade's front face is 6.5 mm inside the receiver's top face, so the post grows
+       * out of the mass it belongs to and stands 16 mm proud of it — which IS the "raised post"
+       * §1 asks for. The sight radius drops to 82 mm, which is correct for a gun whose own
+       * comment says it is pointed rather than aimed.
+       *
+       * `lineY`, `rearZ`, `notchHalfGap` and the blade sizes are untouched, so the ADS solve
+       * (`aimSocketOf` → `adsOffsetOf`) lands on exactly the numbers it already shipped.
+       */
+      lineY: 0.070, rearZ: 0.006, frontZ: -0.076,
       bladeW: 0.012, rearH: 0.018, frontH: 0.022, bladeD: 0.013, notchHalfGap: 0.012,
     },
-    receiver: { w: 0.042, h: 0.048, d: 0.128, y: 0.030, z: -0.044 },
-    serrations: 3,
-    barrel: { r: 0.020, len: 0.058, y: 0.014, z: -0.100 },
+    /**
+     * THE THICKEST RECEIVER IN THE GAME, AND NOW SHORT ENOUGH TO READ AS THICK. 46 mm across
+     * against the pistol's 32, the SMG's 30 and the marksman's 28 — and 106 mm long instead of
+     * 128, cut entirely off the front (rear face still z 0.020). Width relative to LENGTH is what
+     * the eye actually measures, and 46 × 106 reads as a brick where 42 × 128 read as a bar.
+     */
+    receiver: { w: 0.046, h: 0.048, d: 0.106, y: 0.030, z: -0.033 },
+    /**
+     * TWO, NOT THREE — an arithmetic consequence, and the right answer anyway. The serrations
+     * march back from z 0.015 at a 17 mm pitch, and the ejection port's deflector needs the band
+     * from −0.033 to −0.021; a third tooth would land at −0.029..−0.019 and interleave a 1 mm
+     * proud tooth stack with a 5 mm proud port frame, losing both reads (the SMG note). A pump
+     * gun's cocking read is the PUMP, so this is the one gun that can spend the serrations.
+     */
+    serrations: 2,
+    /**
+     * Fatter (r 0.020 → 0.022) and longer, because for the first time it is VISIBLE: it now
+     * spans −0.130 to −0.066, bridging the receiver's nose and the choke's rear through the
+     * 29 mm window the shortened receiver opened. Frame grey, so it is the mid value the polymer
+     * shroud above it and the polymer cuts in its flanks both read against.
+     */
+    barrel: { r: 0.022, len: 0.064, y: 0.014, z: -0.098 },
     /** The bore. `fins: 0` — a plain flared choke, because the diameter IS the detail. */
     muzzle: { r: 0.028, len: 0.030, z: -0.130, fins: 0, finW: 0 },
     magazine: null,
-    tube: { r: 0.014, len: 0.088, y: -0.012, z: -0.090 },
-    /** The pump. It rides the `magazine` slot so the reload animation racks it — see build(). */
-    foreEnd: null,
+    /**
+     * Fatter tube (0.014 → 0.016) — more bore under the barrel — but the SAME y and z, and that
+     * is a clearance decision rather than a taste one. The shared builder derives the PUMP from
+     * `tube.y` / `tube.z`, and the pump is this gun's worst vertex in the reload pose at 0.395 m
+     * against a 0.40 budget. Moving the tube forward by a millimetre moves the pump with it and
+     * spends margin that does not exist. The pump's four grip ribs (§1's "ribbing that reads as
+     * grip") are the builder's and are likewise left alone.
+     */
+    tube: { r: 0.016, len: 0.088, y: -0.012, z: -0.090 },
+
+    /**
+     * THE HEAT SHIELD, built out of the `foreEnd` slot — §1's first ask for this gun, and the
+     * reason the receiver was shortened at all.
+     *
+     * IT IS THE `foreEnd` AND NOT `railTeeth` BECAUSE OF PARENTING, not because of shape. A heat
+     * shield is clamped to the BARREL, and the barrel is in the static `frame` mesh; `railTeeth`
+     * and everything else in `steel` ride the receiver, which reciprocates 14 mm on every shot.
+     * A shroud that sheared 14 mm against the barrel it is bolted to would read as a bug on every
+     * trigger pull. `foreEnd` is polymer and static, i.e. it holds still with its host — and it
+     * is also DARK, so the shroud is a hard value break against the mid-grey barrel underneath
+     * rather than a second grey box.
+     *
+     * IT BRIDGES BOTH MASSES ON PURPOSE. It spans z −0.082 to −0.118, overlapping the receiver's
+     * nose (−0.086) by 4 mm and the choke's rear (−0.115) by 3 mm, so there is no floating gap at
+     * either end and the three masses read as one assembly. It sits at y 0.019–0.041 over a
+     * barrel that tops out at 0.036: a HALF-TUBE, covering the barrel's upper 17 mm and standing
+     * 5 mm proud, with the round frame-grey underside showing all the way along.
+     *
+     * TWO RIBS, NOT THREE, AND THE REASON IS THE INK LINE. The builder spaces them across
+     * `d × 0.68`; at two they are 24.5 mm apart with 14.4 mm of shroud showing between them,
+     * which survives the 7 px hull on both the band AND the gap. At three the gap falls to 2.9 mm
+     * and the whole stack prints as one black field — exactly the failure the cocking serrations
+     * and the fore-end ribs each had once (see `inkChunk`). They are 2 mm proud on every face, so
+     * each one is a step on the outline, which is the one kind of detail the ink cannot erase.
+     */
+    foreEnd: { w: 0.046, h: 0.022, d: 0.036, y: 0.030, z: -0.100, ribs: 2 },
+    /**
+     * NO STOCK, DELIBERATELY. A pistol-grip-only pump is the shape that says "this hurts to fire"
+     * before it is fired, which is the whole brief for the 2.6 weaponKick — and a stock is the
+     * one addition that would be spent at +z, where `nearClearance` (0.07 m, currently 0.084 at
+     * sprint) is the tight budget rather than reach. Fewer, bolder, and out of the one direction
+     * that has no room.
+     */
     stock: null,
-    rib: { w: 0.016, h: 0.011, d: 0.090, y: 0.0525, z: -0.044 },
+    /**
+     * The warm rib, shortened with the receiver (d 0.090 → 0.076, so its nose lands at −0.071)
+     * and DROPPED from y 0.0525 to 0.0505.
+     *
+     * THE DROP IS A SIGHT-PICTURE FIX, not tidying. The rib runs forward from the rear notch and
+     * is therefore nearer the eye than the post at every ray below the sight line — the pistol's
+     * rib once occluded all but 16 px of a 38 px post. Traced through the ADS solve: at a top of
+     * 0.058 this rib's silhouette crossed the front plane at y 0.0578 and ate 3.8 mm of the
+     * 16 mm of post that stands above the receiver; at a top of 0.056 it crosses at 0.0557 and
+     * eats 1.7 mm. It still stands 2 mm proud of the receiver's 0.054 top face and still runs
+     * from the notch to the base of the post, which is the job it was hired for.
+     */
+    rib: { w: 0.018, h: 0.011, d: 0.076, y: 0.0505, z: -0.033 },
+
+    /**
+     * THE BIGGEST EJECTION PORT IN THE GAME, WITH A SHELL IN IT — §1's second ask.
+     *
+     * SIZED BY THE RECEIVER'S SIDE FACE, NOT BY EYE. The receiver spans y 0.006–0.054. At
+     * y 0.030 / h 0.022 the top lip tops out at 0.051 and the shelf bottoms at 0.009, so the
+     * frame fills the face edge to edge with 3 mm of receiver showing above and below and nothing
+     * climbs onto the top rail to start eating the sight picture from below.
+     *
+     * PLACED BY THE TWO THINGS IT MUST NOT TOUCH. The deflector's rear face lands at −0.021,
+     * 9 mm clear of the last serration at −0.012; the front wall's face lands at −0.081, 5 mm
+     * inside the receiver's new nose at −0.086. There is exactly one 8 mm window of z where a
+     * 38 mm port fits between those two, and this is it.
+     *
+     * THE BRASS IS THE POINT. `shellR` 0.008 is 16 mm of RUST across a 22 mm opening — the
+     * fattest round in the game, against the pistol's and the SMG's 12 mm, because a shotgun
+     * shell IS fat and because this is the one warm mark on the gun that is not on the outline:
+     * a hot dot in the middle of the one rectangle the eye is drawn to.
+     */
+    ejectionPort: { h: 0.022, d: 0.038, y: 0.030, z: -0.052, shellR: 0.008 },
+    /**
+     * NO CHARGING HANDLE. This gun's charging handle is the pump, it is 44 mm across, the support
+     * hand is wrapped around it and the reload animation racks it. A second cocking device on the
+     * receiver would be a lie about the mechanism and would hand back the asymmetry §0 asks for,
+     * since the right side is already spent on the port.
+     */
+    chargingHandle: null,
+    /**
+     * THE CROSS-BOLT SAFETY, built out of the `selector` slot — a round boss with a bar swung off
+     * it is precisely a safety button and its detent lever, and it is what a pump gun has instead
+     * of a fire selector.
+     *
+     * It sits at y 0.012, in the seam between the receiver's 0.006 underside and the frame body,
+     * at z −0.010 — directly above the trigger, where a cross-bolt safety lives, and 21 mm above
+     * the thumb's top edge at −0.009 so the two masses never fuse. The lever sweeps 20° DOWN and
+     * back, which points it at the trigger finger rather than at nothing. LEFT side, because the
+     * right is the port: the two faces of this gun now carry different events, which is §0's
+     * asymmetry lever, and the left is the face the rest pose actually shows the player.
+     */
+    selector: { r: 0.008, len: 0.026, thick: 0.012, y: 0.012, z: -0.010, angleDeg: -20 },
+    /**
+     * NO MAG WELL. There is no magazine — the shells go up the tube, and the `magazine` slot on
+     * this gun is spent on the pump. A flared collar at the butt would be a funnel into a grip
+     * that nothing is ever inserted through, which is the one thing the part is not allowed to be.
+     */
+    magWell: null,
+    /**
+     * EARS ROUND THE BEAD. `gap` IS SOLVED, NOT PICKED. The rear notch sits 0.235 m from the eye
+     * and the front post 0.283 m (the 82 mm between them, compressed by 0.58), so the notch's
+     * ±0.012 window projects to ±0.0144 at the front plane. At 0.020 the ears stand 5.6 mm
+     * OUTSIDE that window and take away none of the light bars — the exact number cleared, not
+     * the builder's ×1.5 heuristic (0.018) scraped.
+     *
+     * `thick` 0.012 rather than the other guns' 0.011: on the gun whose whole identity is mass,
+     * the ears are the top corners of the front silhouette and they should be the heaviest ears
+     * in the game. `rise` 0.002 keeps their tops just above the sight line so they are the last
+     * thing the outline crosses on the way up, and they run from the receiver's 0.054 top face,
+     * so they read as forged out of it rather than perched on it.
+     */
+    sightWings: { rise: 0.002, thick: 0.012, gap: 0.020, d: 0.016 },
+    /**
+     * THE SHIELD'S TWO CUTOUTS — and they are hosted on the BARREL, which is the whole trick.
+     *
+     * `panels` emits POLYMER, and polymer cuts on a polymer shroud would be one dark mass with
+     * invisible detail in it: the part only reads because of the value break between the cut and
+     * its host. So the cuts go on the frame-grey BARREL instead, in the 15 mm band between the
+     * shroud's lower edge (0.019) and the pump's top (0.005) — which is exactly where a heat
+     * shield's slots are, and where the eye reads them as holes THROUGH the shroud into a dark
+     * interior rather than as tiles stuck onto it.
+     *
+     * `hostHalfW` is the barrel's radius, so at the barrel's equator each cut sits 2.5 mm proud
+     * of a 44 mm round mass — a bitten-out step, not a plate. Two, on BOTH flanks: this is the
+     * one detail on the gun that is allowed to be symmetric, because a shield with vents down one
+     * side only would read as damage. The asymmetry budget is spent on the port and the safety.
+     *
+     * z −0.090 → −0.088, AND IT IS THE VISIBLE LENGTH THAT IS BEING FLOORED, NOT THE MODELLED
+     * ONE. The bare-barrel window is only 29 mm wide (receiver nose −0.086 → choke rear −0.115)
+     * and two 16 mm cuts on a 24 mm pitch span 42 mm, so each one has an end buried inside a
+     * neighbour: at −0.090 the forward cut ran to −0.122, i.e. SEVEN millimetres of it sat
+     * inside the choke can and only 9 mm showed — under the ink floor, which is a floor on what
+     * the player can see. Two millimetres rearward splits the overhang evenly and leaves 10 mm
+     * of the rear cut and 11 mm of the forward one exposed, both clear of the floor. It also
+     * moves geometry BACKWARD, so it costs negative reach.
+     *
+     * The 8 mm land between them is the one number here that does not clear 10 mm, and it
+     * cannot: the window is 29 mm and 2 × 10 + 10 does not fit in it. It is the same 7-8 mm the
+     * cocking serrations have always run at, where the gap is meant to read as an ink LINE
+     * rather than as daylight.
+     */
+    panels: {
+      count: 2, side: 'both', h: 0.012, d: 0.016,
+      y: 0.014, z: -0.088, step: 0.024, hostHalfW: 0.022,
+    },
+    /**
+     * NO RAIL TEETH. The top face is 46 mm wide and already carries the RUST rib for its full
+     * length, and anything standing on top of the rib runs forward of the rear notch and occludes
+     * the post from below — `guardSightLine`'s ceiling here is 0.060 and the rib is already at
+     * 0.056. This gun's top is spoken for, and it is spoken for by the one warm mark that leads
+     * the eye to the bead.
+     */
+    railTeeth: null,
   },
   /**
    * LONGSHOT — the longest thing in the game, and the only one with a full stock. A raised
    * ghost-ring rail rather than a scope tube (see the header note): the rear aperture sits
    * 30 mm above the pistol's line, which is what makes the ADS picture read as precision.
+   *
+   * ─── THE BUG THIS PROFILE EXISTS TO FIX ──────────────────────────────────────────────────
+   * "Raised ghost-ring rail" was a lie the geometry never told. `sight.lineY` is 0.098 and the
+   * receiver's top face was 0.055, so the rear blades' bottoms sat at 0.068 and the front
+   * blade's at 0.064 — THIRTEEN AND NINE MILLIMETRES OF AIR under three floating slabs, with
+   * nothing between them and the gun. The rear pair also stood at x ±0.019 on a receiver that
+   * was ±0.014 wide, i.e. outboard of their own host as well as above it. Nothing was raising
+   * the sights; they were simply authored high. That is why this gun was flagged as the most
+   * likely to look wrong, and it is the first thing fixed below: `railTeeth` is spent as the
+   * RAIL, not as decoration, and it runs from under the rear aperture to under the front post.
+   *
+   * ─── THE ONE STRUCTURAL CHANGE, AND WHY IT IS THE WHOLE SILHOUETTE ────────────────────────
+   * The receiver was 200 mm and the barrel was buried inside it: with a nose at −0.176, a
+   * handguard running to −0.189 and the choke's rear at −0.201, exactly TWELVE MILLIMETRES of
+   * barrel were visible on the longest gun in the game. §1 asks this rifle for a long fluted
+   * barrel and there was no barrel to flute. The receiver is now 170 mm, cut from the FRONT (its
+   * rear face stays at z 0.024, so the hammer, the hand and the sight's `rearZ` did not move),
+   * and the handguard is shorter and pulled back to −0.150 — which opens a 51 mm window of bare
+   * round barrel between the handguard's nose and the choke. Both edits DELETE geometry from the
+   * −z end, so the change costs negative reach.
+   *
+   * The barrel is also lifted from y 0.014 to 0.034, onto the receiver's own axis. It was 20 mm
+   * BELOW the muzzle can (which the builder places at `receiver.y`), which nobody could see
+   * while it was inside the receiver and everybody would see the moment it was exposed: a round
+   * barrel entering the back of a can it does not line up with.
+   *
+   * Silhouette is now five events instead of two: stock → long receiver under a slotted rail →
+   * hard step down → bare fluted barrel → the can. Plus a bolt handle out to the right and a
+   * bipod stub hanging under the handguard, which are the two events on the OUTLINE — the one
+   * kind of detail the ink line cannot erase, because the ink line *is* the outline.
+   *
+   * ─── WHAT §1 ASKS THIS GUN FOR, AND WHERE EACH ONE LANDED ─────────────────────────────────
+   *   a proper scope-rail with bold teeth  → `railTeeth`, five 46 mm crossbars, and they are
+   *                                          STRUCTURAL: they are what the sights stand on
+   *   a cheek riser on the stock           → the `stock` slot, raised and pushed FORWARD into
+   *                                          the receiver; see the note there for the trade
+   *   a bipod stub under the fore-end      → `magWell` repurposed: a block with a flared foot,
+   *                                          hung under the handguard's nose
+   *   2–3 bold flutes along the barrel     → `panels`, hosted on the BARREL, in the window the
+   *                                          shortened receiver opened
+   *   a bolt handle out to the RIGHT       → `chargingHandle`, at the rear of the action
+   * plus the "every gun gets" list: an ejection port with brass in it, a lever on the left, and
+   * protective ears round the front post.
+   *
+   *   top            five steel crossbars carrying both sights     (steel, rides receiver)
+   *   front-top      ears round the post, standing ON the rail     (sights, lighter ink)
+   *   rear-right     bolt handle standing 20 mm off the action     (steel, rides receiver)
+   *   mid-right      ejection port frame + brass in the port       (steel + RUST, receiver)
+   *   mid-left       bolt-release lever swung down and back        (polymer, static)
+   *   front-flanks   two bold flutes bitten out of the barrel      (polymer, static)
+   *   front-low      bipod stub + flared foot under the handguard  (polymer, static)
+   *
+   * FIVE value fields on one outline — polymer 0.29 · frame 0.44 · steel 0.57 · RUST 0.55 ·
+   * BONE 0.73 — which §2 calls the biggest available win and which costs no geometry at all.
+   *
+   * ─── CLEARANCE: MEASURED, NOT ASSERTED ───────────────────────────────────────────────────
+   * Walked per vertex over all seven poses × the five sway corners × the flourish signs. The
+   * model's worst vertex is UNCHANGED in every pose and every metric, to four decimals — still
+   * `muzzle.fin3` at 0.3941 reach / 0.4146 swayed, still the magazine at reload (0.3792 /
+   * 0.4087), still the forearm at the near plane (0.0893 at sprint). Nothing added here is
+   * forward of the muzzle or outboard of the hand: the highest-ranked NEW part is a sight ear at
+   * 0.3775 reach / 0.4004 swayed — 22 mm inside the reach budget and 20 mm inside `MOVE.radius`
+   * — then the barrel flutes at 0.3747, the rail's front tooth at 0.3599, the bipod foot at
+   * ~0.349, the port at 0.3300 and the bolt handle at 0.3005, which is a full 100 mm of slack.
+   * The stock moving FORWARD also bought near-plane margin rather than spending it.
    */
   {
     id: 'longshot',
@@ -355,23 +1235,275 @@ const PROFILES: readonly GunProfile[] = [
      * gun reached 0.426 m — past the 0.40 budget AND past `MOVE.radius` (0.42), i.e. it would
      * genuinely have punched the muzzle through walls. Its forward parts were shortened too;
      * compression alone would have squashed it into looking short rather than long.
+     *
+     * UNTOUCHED, and deliberately: the pose that binds it is REST/EQUIP on `muzzle.fin3`, and
+     * this profile does not move the muzzle by a millimetre, so there is no headroom here to
+     * spend and nothing to gain by re-solving it.
      */
     depthCompress: 0.46,
     sight: {
-      lineY: 0.098, rearZ: 0.020, frontZ: -0.156,
-      bladeW: 0.012, rearH: 0.030, frontH: 0.034, bladeD: 0.013, notchHalfGap: 0.013,
+      /**
+       * `lineY` and `rearZ` ARE THE AIM SOLVE and they are byte-identical to what shipped —
+       * `aimSocketOf` reads exactly those two numbers, so `adsOffsetOf` lands on the same
+       * translation and the boot assertion still reports the socket dead on the camera axis.
+       * Everything else in this block is sight PICTURE, which is a different contract.
+       *
+       * `frontZ` −0.156 → −0.132, and this is REQUIRED, not styling: with the receiver cut back
+       * to a nose of −0.146 the blade would have been left standing 43 mm above thin air, out
+       * past the end of its own host. At −0.132 its front face is 7 mm inside the receiver's
+       * nose and it stands on the rail's front tooth, which is what makes the post read as
+       * MOUNTED. The sight radius falls to 152 mm; what the player actually reads as precision
+       * is the 43 mm the sight line stands above the receiver's top face, and that is unchanged.
+       *
+       * `notchHalfGap` 0.013 → 0.012 IS A GEOMETRY CONSTRAINT ON THE EARS, not taste. The
+       * builder (correctly) refuses a wing inside the rear notch's window projected forward, and
+       * at 0.013 the smallest legal `sightWings.gap` was 0.0195 — which would have stood the
+       * ears 5.5 mm off a receiver only ±0.016 wide, i.e. floating, which is the exact failure
+       * this whole profile is here to end. At 0.012 the ears come in to 0.019 and land on the
+       * rail. The picture gets WIDER light bars, not narrower: the notch projects to ±0.0156 at
+       * the front plane against a 6 mm post half-width, giving 0.0314 rad of bar per side
+       * against the pistol's 0.0253.
+       */
+      lineY: 0.098, rearZ: 0.020, frontZ: -0.132,
+      bladeW: 0.012, rearH: 0.030, frontH: 0.034, bladeD: 0.013, notchHalfGap: 0.012,
     },
-    receiver: { w: 0.028, h: 0.042, d: 0.200, y: 0.034, z: -0.076 },
-    serrations: 3,
-    barrel: { r: 0.013, len: 0.104, y: 0.014, z: -0.166 },
+    /**
+     * 170 mm, not 200, cut entirely off the FRONT (rear face still z 0.024) — see the header
+     * note. 32 mm wide rather than 28: the sights and the rail both stand on this face, and a
+     * ±0.014 host under a ±0.024 sight assembly is what "floating" looks like from the side.
+     * At 32 × 170 it is still the slimmest long gun by ratio (5.3:1 against the shotgun's 2.3).
+     */
+    receiver: { w: 0.032, h: 0.042, d: 0.170, y: 0.034, z: -0.061 },
+    /**
+     * NONE, AND THAT IS THE MECHANISM SPEAKING. Cocking serrations are a slide's cocking read
+     * and this gun does not have a slide — it has a BOLT, which is now modelled, sticks out to
+     * the right and is the biggest silhouette event on the weapon. Three 1 mm-proud teeth in the
+     * band z 0.014…−0.020 would also have interleaved with the port's 5 mm-proud deflector at
+     * −0.030…−0.018 and lost both reads, which is the failure the SMG and the shotgun each
+     * documented. The rear of this receiver now carries the rail's first tooth on top, the bolt
+     * handle to the right, the release lever to the left and the RUST spur behind — it is the
+     * busiest 40 mm on the gun without them.
+     */
+    serrations: 0,
+    /**
+     * LIFTED ONTO THE RECEIVER'S AXIS (y 0.014 → 0.034) and fattened to r 0.014. Both are
+     * consequences of it becoming visible for the first time: the builder places the muzzle can
+     * at `receiver.y`, so at 0.014 the barrel entered the back of the can 20 mm low, and a
+     * 28 mm barrel between a 32 mm receiver and a 34 mm can is the taper a heavy barrel wants.
+     * Spans −0.114…−0.218, so it bridges the receiver's nose and the choke's rear with 51 mm of
+     * bare round in between.
+     */
+    barrel: { r: 0.014, len: 0.104, y: 0.034, z: -0.166 },
+    /**
+     * UNTOUCHED. `fin3` is the model's worst vertex in the rest, equip and sprint poses at
+     * 0.3941 m against a 0.40 budget — every millimetre this profile spends elsewhere is spent
+     * because this line was not touched.
+     */
     muzzle: { r: 0.017, len: 0.034, z: -0.218, fins: 4, finW: 0.034 },
+    /**
+     * UNTOUCHED, and it is the RELOAD pose's worst vertex (0.3792 reach / 0.4087 swayed on the
+     * floorplate) — the one place on this gun where a millimetre of `h` or `d` comes straight
+     * out of `MOVE.radius`. It is also invisible in every other pose: raked at `MAG_RAKE` it
+     * spans y −0.102…−0.014 inside a gloved fist that spans −0.102…−0.006, i.e. it is swallowed
+     * whole. That is what frees the `magWell` slot for the bipod stub below.
+     */
     magazine: { w: 0.022, h: 0.078, d: 0.044, y: -0.058, z: 0.008 },
     tube: null,
-    /** A long slim handguard rather than a vertical grip — you cradle a marksman rifle. */
-    foreEnd: { w: 0.030, h: 0.030, d: 0.082, y: -0.006, z: -0.148, ribs: 4 },
-    /** Full stock: the mass behind the grip that says "braced". */
-    stock: { w: 0.030, h: 0.060, d: 0.112, y: 0.010, z: 0.086, skeleton: false },
-    rib: { w: 0.013, h: 0.011, d: 0.140, y: 0.0545, z: -0.076 },
+    /**
+     * THE HANDGUARD, SHORTER AND PULLED BACK — the other half of the barrel window.
+     *
+     * 82 → 76 mm and its nose moved from −0.189 to −0.150, which leaves the barrel bare from
+     * there to the choke. It is RAISED with the barrel (y −0.006 → 0.004) so its top face at
+     * 0.022 still overlaps the barrel's underside by 2 mm and the receiver's by 9 mm: no
+     * floating gap at either end, which is the thing that makes three masses read as one
+     * assembly.
+     *
+     * FOUR RIBS → THREE, AND THE REASON IS THE INK LINE. The builder spaces them across
+     * `d × 0.68`; at four on a 76 mm block the gaps fall to 7.6 mm, under the band, and the
+     * whole stack prints as one black field — the failure `inkChunk` exists to stop and the one
+     * the fore-end ribs already had once. At three the pitch is 25.8 mm and 15.8 mm of
+     * handguard shows between 10 mm ribs, so both the rib AND the gap survive the line.
+     */
+    foreEnd: { w: 0.034, h: 0.036, d: 0.076, y: 0.004, z: -0.112, ribs: 3 },
+    /**
+     * THE STOCK, AND WHAT IT IS DOING ABOUT §1's CHEEK RISER.
+     *
+     * It shipped FLOATING: its front face was at z 0.030 against a receiver whose rear face is
+     * 0.024, so there were six millimetres of daylight between the butt and the action. It now
+     * starts at 0.021 and overlaps by 3 mm, and the comb rises from 0.040 to 0.044 — 11 mm under
+     * the receiver's top face, which is a cheek-weld line rather than a slab that stops nowhere
+     * in particular. It is 2 mm wider than the receiver, so the shoulder is a step on the
+     * outline, and the butt pad the builder adds is a second step 3 mm proud of that.
+     *
+     * A SEPARATE RAISED COMB IS THE ONE §1 ASK THIS PROFILE DOES NOT SPEND A SLOT ON. There is
+     * no comb part in the vocabulary; the only slot shaped like one is `magWell`, and at this
+     * gun's rest pose (x +0.125, yaw −14°) the buttstock sits in the far bottom-right corner of
+     * the frame while the handguard's underside is dead centre — so the slot goes to the bipod
+     * stub, which is on the outline in the zone the player actually looks at. Comb geometry buys
+     * nothing where nobody is looking.
+     *
+     * The comb stops SHORT of burying the RUST hammer spur, deliberately: at a top of 0.044 the
+     * spur still stands 9 mm proud of it, and the spur is the rearmost warm mark on the model.
+     */
+    stock: { w: 0.032, h: 0.060, d: 0.118, y: 0.014, z: 0.080, skeleton: false },
+    /**
+     * The warm rib, shortened with the receiver (140 → 120 mm) so its nose lands at −0.126,
+     * half a millimetre behind the front post's rear face — it still runs from the notch to the
+     * base of the post, which is the job it was hired for. Its top stays at 0.060, which is
+     * 9 mm UNDER the rail teeth above it, so the teeth are 46 mm of steel crossing a 13 mm warm
+     * line and the RUST shows through the 18.5 mm gaps between them rather than being covered.
+     *
+     * It cannot occlude the sight picture from here: traced through the ADS solve its silhouette
+     * crosses at −0.126 rad against the front post's bottom at −0.112, i.e. it passes below the
+     * post at every ray. The rail above it is the part that had to be checked; see there.
+     */
+    rib: { w: 0.013, h: 0.011, d: 0.120, y: 0.0545, z: -0.066 },
+
+    /**
+     * THE EJECTION PORT, AND ON THIS GUN IT IS THE BOLT'S PORT — the longest in the game at
+     * 44 mm, because a marksman cartridge is long and because the bolt handle 54 mm behind it
+     * has to read as the thing that opens it.
+     *
+     * SIZED BY THE RECEIVER'S SIDE FACE, NOT BY EYE. The receiver spans y 0.013…0.055. At
+     * y 0.034 / h 0.020 the top lip tops out at 0.054 and the shelf bottoms at 0.014, so the
+     * frame fills the face edge to edge with a millimetre of receiver showing above and below
+     * and nothing climbs onto the top face, where the rail and the sight picture live.
+     *
+     * PLACED BY THE TWO THINGS IT MUST NOT TOUCH. The deflector's rear face lands at −0.018,
+     * eleven millimetres clear of the bolt paddle's front face at −0.007 — the two proudest
+     * steel masses on this flank, and they must not fuse into one smear. The front wall lands at
+     * −0.084, sixty-two millimetres inside the receiver's nose.
+     *
+     * `shellR` 0.006 is 12 mm of RUST across a 20 mm opening: a rifle case is SLIM, which is why
+     * this is the pistol's and the SMG's round rather than the shotgun's 16 mm. It is the one
+     * warm mark on the gun that is not on the outline — a hot dot in the middle of the one
+     * rectangle the eye is drawn to.
+     */
+    ejectionPort: { h: 0.020, d: 0.044, y: 0.034, z: -0.052, shellR: 0.006 },
+    /**
+     * THE BOLT HANDLE — §1's "strongest possible *this is a rifle* silhouette event", and the
+     * only part on any of the four guns that is allowed to stick out to the RIGHT.
+     *
+     * ITS SIZE IS THE BUDGET SPEAKING. `len` 0.018 puts the paddle's outer face at x 0.036,
+     * which makes it the model's widest +x point — 7 mm outboard of the gloved fist. That is
+     * affordable only because it sits at z 0.002, i.e. essentially ON the eye's own depth, and
+     * reach is a hypotenuse: MEASURED, the paddle's worst pose is 0.3005 m reach / 0.3247 swayed
+     * against budgets of 0.40 and 0.42. A hundred millimetres of slack. The same 20 mm of
+     * stand-off hung off the muzzle end would have blown the budget on its own.
+     *
+     * PLACED AT THE REAR OF THE ACTION, WHICH IS WHERE A BOLT GUN PUTS IT: z 0.002 is 11 mm
+     * behind the port's deflector and 10 mm forward of the stock's front face, in the one window
+     * on this flank that is not already spoken for. `thick` 0.013 gives a 14 mm stem standing
+     * proud of the receiver and a 12 × 25 × 18 mm paddle on the end of it, so the shape ends in
+     * the builder's HOOK — a hook survives the ink line and a taper does not.
+     */
+    chargingHandle: { side: 'right', len: 0.018, thick: 0.013, y: 0.028, z: 0.002 },
+    /**
+     * THE BOLT RELEASE, built out of the `selector` slot. A round boss with a bar swung off it,
+     * on the LEFT of the action, is exactly what a bolt rifle has there — and this gun's
+     * fire-selector real estate does not exist, because it does not have a fire selector.
+     *
+     * The boss straddles the receiver's lower edge (y 0.012…0.028 against a receiver bottom of
+     * 0.013), which is what makes it read as a control let INTO the action rather than a button
+     * stuck onto it. The lever sweeps 14° down and back to y 0.013, nineteen millimetres above
+     * the gloved fist's top edge at −0.006 and seventeen above the thumb's — the two masses can
+     * never fuse, and the eye is already at the thumb.
+     *
+     * LEFT, because the right flank is spent on the port and the bolt: this gun is a different
+     * object from each side, which is §0's asymmetry lever, and the rest pose (x +0.125, yaw
+     * −14°) shows the player the LEFT face all session.
+     */
+    selector: { r: 0.008, len: 0.028, thick: 0.012, y: 0.020, z: -0.012, angleDeg: -14 },
+    /**
+     * THE BIPOD STUB — §1's third ask, built out of the `magWell` slot, which this gun's own
+     * magazine has no use for (see the note there: it is buried inside the fist).
+     *
+     * A block with a flared collar under it IS a bipod's mounting lug with its leg pack folded
+     * against the barrel, and the slot's `MAG_RAKE` cant of 17° is what sells it as a folded
+     * mechanism rather than a box glued on. It hangs from y −0.016 (2 mm up inside the
+     * handguard, so there is no floating gap) down to −0.051, and the collar is 28 mm across
+     * against the handguard's 34 — narrower than its host, so it reads as a separate hanging
+     * part instead of a thickening of the same one.
+     *
+     * IT IS THE BOTTOM OUTLINE'S ONLY EVENT FORWARD OF THE TRIGGER GUARD, which is why the slot
+     * went here rather than on the comb. That edge ran dead straight from the hand to the muzzle
+     * and now reads guard (−0.062) → lower rail (−0.030) → notch → bipod foot (−0.051) →
+     * handguard (−0.014) → bare barrel. MEASURED at ~0.349 reach: 51 mm inside the budget,
+     * because it is tucked under the handguard's nose rather than hung past it.
+     */
+    magWell: { w: 0.018, h: 0.022, d: 0.024, y: -0.030, z: -0.132, flare: 0.005 },
+    /**
+     * EARS ROUND THE POST — and on this gun they do a second job the other three do not need:
+     * they are 44 mm tall, running from the sight line all the way DOWN to the receiver's top
+     * face, so they are the mass that stops the front blade floating 43 mm above its own gun.
+     *
+     * `gap` IS SOLVED, NOT PICKED. The rear notch sits 0.235 m from the eye and the front post
+     * 0.305 m (the 152 mm between them, compressed by 0.46), so the notch's ±0.012 window
+     * projects to ±0.0156 at the front plane. At 0.019 the ears stand 3.4 mm OUTSIDE that window
+     * and take away none of the light bars — the exact number cleared, not the builder's ×1.5
+     * heuristic (0.018) scraped. Their inner faces are 3 mm outboard of the receiver's side
+     * face, and the rail's front tooth (±0.023) is directly under them, so they land on steel.
+     *
+     * They are in `sightParts`, so they ride the receiver and carry `view.sightOutlinePx` rather
+     * than the 7 px silhouette line — 44 mm of blade either side of the post would otherwise be
+     * the heaviest ink on the gun.
+     */
+    sightWings: { rise: 0.001, thick: 0.012, gap: 0.019, d: 0.014 },
+    /**
+     * TWO BOLD FLUTES PER FLANK, HOSTED ON THE BARREL — §1's fluted barrel, in the 51 mm window
+     * the shortened receiver and the pulled-back handguard opened between them.
+     *
+     * THE HOST IS THE POINT. `panels` emits POLYMER, so a flute cut into the polymer handguard
+     * would be one dark mass with invisible detail in it; on the frame-grey barrel it is a hard
+     * value break, which §2 calls the cheapest quality lever we have. `hostHalfW` is the
+     * barrel's radius, so at the equator each cut stands 2.5 mm proud of a 28 mm round — a
+     * bitten-out step, not a plate.
+     *
+     * Two of 20 mm at a 30 mm pitch leaves a 10 mm land between them, exactly the ink floor:
+     * the GAP has to survive the line as well as the cut does, which is the lesson the cocking
+     * serrations learned at a 6 mm pitch. They run −0.153…−0.203, i.e. from 3 mm forward of the
+     * handguard's nose to just under the choke, so the flutes span the whole exposed length.
+     *
+     * BOTH flanks, and that is deliberate: a barrel fluted down one side only would read as
+     * damage. The asymmetry budget on this gun is spent on the bolt and the release lever.
+     */
+    panels: {
+      count: 2, side: 'both', h: 0.014, d: 0.020,
+      y: 0.034, z: -0.163, step: 0.030, hostHalfW: 0.014,
+    },
+    /**
+     * THE SCOPE RAIL — five bold crossbars, and unlike every other gun's use of this part they
+     * are STRUCTURAL. They are what both sights stand on.
+     *
+     * THE HEIGHT IS SOLVED FROM THE BLADES, NOT PICKED. The receiver's top face is 0.055 and the
+     * rear blades' bottoms are 0.068; a tooth of h 0.014 at y 0.062 sits bottom-flush on the
+     * face and tops out at 0.069, so it closes that 13 mm of daylight exactly and the aperture
+     * lands on metal. The front blade's bottom (0.064) then sits 5 mm INSIDE the front tooth, so
+     * the post grows out of the rail instead of hovering over it.
+     *
+     * THE SPAN IS SOLVED FROM THE SAME TWO NUMBERS. `z` 0.014 puts the first tooth under the
+     * rear aperture (z 0.020) and a `step` of 0.0365 lands the fifth on the front post's z
+     * (−0.132) to the millimetre. 18 mm teeth on a 36.5 mm pitch leave 18.5 mm of gap — tooth
+     * and gap both clear the ink floor by 8 mm, which is what stops five bars printing as one.
+     *
+     * AND THE SIGHT-PICTURE CHECK, WHICH IS THE ONE THAT KILLS RAILS. Everything on top of a
+     * receiver runs FORWARD of the rear notch and is therefore NEARER the eye than the post at
+     * every ray below the sight line — the pistol's rib once ate all but 16 px of a 38 px post.
+     * Traced through the ADS solve: the REAR tooth crosses at −0.122 rad, below the post's
+     * bottom at −0.112, so it never enters the picture at all; the FRONT tooth crosses at
+     * −0.095, but it sits at the post's own depth (both 0.305 m, since `step × 4` lands it on
+     * `frontZ`) — it is not occluding the post, it IS the post's base. Every tooth between the
+     * two is bounded by those. The picture reads as 29 mm of BONE standing out of a rail, which
+     * is what a ghost ring is supposed to look like. (`guardSightLine`'s ceiling here is 0.088
+     * and the teeth top out at 0.069, clearing it by 19 mm rather than by nothing.)
+     *
+     * 46 mm wide against a 32 mm receiver — 7 mm proud per side, so the rail overhangs its own
+     * host and puts a real depth step down the whole length of the flank the player looks at,
+     * and the rear blades at ±0.024 land within a millimetre of its edge. Steel, so it rides the
+     * receiver, as do the sights bolted to it and the warm rib underneath — the only reason the
+     * three can share a face.
+     */
+    railTeeth: { count: 5, w: 0.046, h: 0.014, d: 0.018, y: 0.062, z: 0.014, step: 0.0365 },
   },
 ];
 
@@ -417,8 +1549,23 @@ interface GunModel {
 }
 
 interface GunGeometry {
-  /** Static lower: frame, grip, trigger guard. */
+  /** Static lower: frame, barrel, trigger guard. */
   frame: BufferGeometry;
+  /**
+   * THE DARK FIELD — the parts a hand touches: grip, heel, fore-end, stock, mag well, selector,
+   * stamped panels. Static (parented to the root group).
+   *
+   * WEAPON_ART §2 calls material separation "the biggest available win", and it is the cheapest
+   * one we have: the ink style gives us flat colour fields, so a hard value break between two
+   * adjacent masses reads as detail at ZERO geometric cost and zero ink risk. Almost the entire
+   * gun used to be one grey, which is precisely why it read flat no matter how many boxes it had.
+   */
+  polymer: BufferGeometry;
+  /**
+   * THE LIGHT FIELD — machined metal: ejection-port frame, charging handle, rail teeth, trigger.
+   * Parented to the SLIDE, so all of it reciprocates on a shot.
+   */
+  steel: BufferGeometry;
   /** Reciprocating upper: the slide mass and its serrations. */
   slide: BufferGeometry;
   /** The sights. Their own mesh, riding the slide, so they can carry their own lighter ink. */
@@ -459,6 +1606,8 @@ interface GunGeometry {
 function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometry {
   const SIGHT = P.sight;
   const frameParts: BufferGeometry[] = [];
+  const polymerParts: BufferGeometry[] = [];
+  const steelParts: BufferGeometry[] = [];
   const slideParts: BufferGeometry[] = [];
   const sightParts: BufferGeometry[] = [];
   const trimParts: BufferGeometry[] = [];
@@ -478,15 +1627,17 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   frameParts.push(rail);
 
   // ── grip: raked back, tapered, with a flared heel ──────────────────────────────────────
+  // POLYMER, not frame grey. The hand touches it, so it is the dark end of the value ladder —
+  // and a dark grip under a TEAL glove is what stops the two masses fusing into one blob.
   const grip = bevelBox(0.030, 0.098, 0.044, 0.008, 13);
   place(grip, { rx: 0.30 });
   place(grip, { y: -0.062, z: 0.016 });
-  frameParts.push(grip);
+  polymerParts.push(grip);
 
   const heel = bevelBox(0.033, 0.014, 0.050, 0.005, 14);
   place(heel, { rx: 0.30 });
   place(heel, { y: -0.108, z: 0.030 });
-  frameParts.push(heel);
+  polymerParts.push(heel);
 
   // ── trigger guard: three bars, faceted like an inked curve ─────────────────────────────
   // 0.008 → 0.014: under the ink band the whole guard printed solid black, which is why the
@@ -521,18 +1672,22 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
     const fe = P.foreEnd;
     const block = bevelBox(fe.w, fe.h, fe.d, 0.005, 81);
     place(block, { y: fe.y, z: fe.z });
-    frameParts.push(block);
+    polymerParts.push(block);
     for (let i = 0; i < fe.ribs; i++) {
       // Ribs run across the SHORT axis of whichever way the fore-end is oriented: stacked down
       // a vertical grip, spaced along a handguard.
+      //
+      // 0.008 → INK_FLOOR. They were 2 mm under the band, so the whole rib stack was printing as
+      // one black field instead of as grip texture — the same failure the trigger guard had.
+      // Bolder and fewer: the spacing below spreads them so the gaps survive the line too.
       const vertical = fe.h > fe.d;
       const rib = vertical
-        ? bevelBox(fe.w + 0.004, 0.008, fe.d + 0.004, 0.002, 82 + i)
-        : bevelBox(fe.w + 0.004, fe.h + 0.004, 0.008, 0.002, 82 + i);
+        ? inkChunk(fe.w + 0.004, INK_FLOOR, fe.d + 0.004, 0.002, 82 + i, 'foreEnd.rib')
+        : inkChunk(fe.w + 0.004, fe.h + 0.004, INK_FLOOR, 0.002, 82 + i, 'foreEnd.rib');
       place(rib, vertical
         ? { y: fe.y + fe.h * 0.30 - i * (fe.h * 0.62 / Math.max(1, fe.ribs - 1)), z: fe.z }
         : { y: fe.y, z: fe.z + fe.d * 0.34 - i * (fe.d * 0.68 / Math.max(1, fe.ribs - 1)) });
-      frameParts.push(rib);
+      polymerParts.push(rib);
     }
   }
 
@@ -552,18 +1707,18 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
     const st = P.stock;
     if (st.skeleton) {
       for (const sy of [1, -1]) {
-        const rail = bevelBox(st.w, 0.012, st.d, 0.003, 91 + sy);
+        const rail = inkChunk(st.w, 0.012, st.d, 0.003, 91 + sy, 'stock.rail');
         place(rail, { y: st.y + sy * st.h * 0.34, z: st.z });
-        frameParts.push(rail);
+        polymerParts.push(rail);
       }
     } else {
       const body = bevelBox(st.w, st.h, st.d, 0.008, 93);
       place(body, { y: st.y, z: st.z });
-      frameParts.push(body);
+      polymerParts.push(body);
     }
     const pad = bevelBox(st.w + 0.006, st.h + 0.010, 0.016, 0.004, 94);
     place(pad, { y: st.y, z: st.z + st.d * 0.5 + 0.008 });
-    frameParts.push(pad);
+    polymerParts.push(pad);
   }
 
   // ── slide / receiver: the fat top mass, with cut serrations at the rear ────────────────
@@ -571,11 +1726,21 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   place(slide, { y: P.receiver.y, z: P.receiver.z });
   slideParts.push(slide);
 
+  // COCKING SERRATIONS — bolder and further apart than they shipped.
+  //
+  // They were 0.006 m thick on a 0.012 m pitch: BOTH the tooth and the gap were under the ink
+  // band, so the hull inflated each tooth over its own neighbour and the whole stack printed as
+  // one black patch at the back of the slide. WEAPON_ART §0 exactly — the parts were modelled and
+  // the line was erasing them. At the floor on a 0.017 pitch the tooth holds albedo and the 7 mm
+  // gap holds an ink line, which is what "serrations" is supposed to look like.
+  const SERRATION_PITCH = 0.017;
   for (let i = 0; i < P.serrations; i++) {
-    const serration = bevelBox(P.receiver.w + 0.002, P.receiver.h * 0.65, 0.006, 0.0015, 22 + i);
+    const serration = inkChunk(
+      P.receiver.w + 0.002, P.receiver.h * 0.65, INK_FLOOR, 0.0015, 22 + i, 'serration',
+    );
     place(serration, {
       y: P.receiver.y,
-      z: P.receiver.z + P.receiver.d * 0.5 - 0.010 - i * 0.012,
+      z: P.receiver.z + P.receiver.d * 0.5 - 0.010 - i * SERRATION_PITCH,
     });
     slideParts.push(serration);
   }
@@ -598,6 +1763,177 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
     sightParts.push(rear);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // THE OPTIONAL DETAIL VOCABULARY. Every block below is skipped entirely when the profile
+  // says nothing about it, so a profile that opts into none of it builds the gun it built
+  // before, vertex for vertex. See the interface block above for units and the rules each
+  // part is under.
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+
+  /** The receiver's side faces and its top face — where nearly all of this detail lives. */
+  const rSideX = P.receiver.w * 0.5;
+  const rTopY = P.receiver.y + P.receiver.h * 0.5;
+
+  // ── sight wings: ears either side of the front post ────────────────────────────────────
+  // In `sightParts`, so they ride the slide and carry the sights' lighter ink rather than the
+  // silhouette's 7 px. They are at `frontZ`, which the front blade already occupies, so they
+  // never become the model's worst forward vertex — the muzzle can is 20-40 mm ahead of them.
+  if (P.sightWings) {
+    const wg = P.sightWings;
+    if (import.meta.env?.DEV && wg.gap < SIGHT.notchHalfGap * 1.5) {
+      console.warn(
+        `[weapons/viewmodel] ${P.id}: sightWings.gap ${wg.gap} is inside the rear notch's window ` +
+        `at the front plane (~${(SIGHT.notchHalfGap * 1.5).toFixed(4)} m). The wings will eat the ` +
+        'light bars either side of the post, which is the whole sight picture.',
+      );
+    }
+    const top = SIGHT.lineY + wg.rise;
+    const h = Math.max(0.014, top - rTopY);
+    for (const sx of [-1, 1]) {
+      const wing = inkChunk(wg.thick, h, wg.d, 0.003, 143 + sx, 'sightWings.wing');
+      place(wing, {
+        x: sx * (wg.gap + wg.thick * 0.5),
+        y: top - h * 0.5,
+        z: SIGHT.frontZ,
+      });
+      sightParts.push(wing);
+    }
+  }
+
+  // ── ejection port: a proud FRAME around a bare patch of receiver ───────────────────────
+  // Not a plate laid on the face — see `EjectionPortSpec`. The rear bar is a deflector and it
+  // stands proudest of the four, which is the asymmetry the silhouette is here for.
+  if (P.ejectionPort) {
+    const ep = P.ejectionPort;
+    const lipX = rSideX - 0.001;      // outer face ~5 mm proud of the receiver
+    const topLip = inkChunk(0.012, INK_FLOOR, ep.d + 0.012, 0.003, 101, 'ejectionPort.topLip');
+    place(topLip, { x: lipX, y: ep.y + ep.h * 0.5 + 0.005, z: ep.z });
+    steelParts.push(topLip);
+
+    const shelf = inkChunk(0.012, INK_FLOOR, ep.d + 0.006, 0.003, 102, 'ejectionPort.shelf');
+    place(shelf, { x: lipX, y: ep.y - ep.h * 0.5 - 0.005, z: ep.z });
+    steelParts.push(shelf);
+
+    // The front wall doubles as the extractor read. A separate 10 mm claw inside a 20 mm port
+    // would just fill the port with ink, so the wall does both jobs.
+    const wall = inkChunk(0.012, ep.h + 0.020, INK_FLOOR, 0.003, 103, 'ejectionPort.wall');
+    place(wall, { x: lipX, y: ep.y, z: ep.z - ep.d * 0.5 - 0.005 });
+    steelParts.push(wall);
+
+    const deflector = inkChunk(0.014, ep.h + 0.024, 0.012, 0.004, 104, 'ejectionPort.deflector');
+    place(deflector, { x: rSideX + 0.001, y: ep.y, z: ep.z + ep.d * 0.5 + 0.006 });
+    steelParts.push(deflector);
+
+    // A shell showing in the port. RUST, riding the slide — one more warm mark, on the one part
+    // of the gun the eye lands on. Dropped rather than drawn when it is under the ink band.
+    if (ep.shellR >= INK_FLOOR * 0.5) {
+      const shell = inkCylinder(ep.shellR, 0.016, 7, { seed: 105 });
+      place(shell, { rz: Math.PI * 0.5 });
+      place(shell, { x: rSideX - 0.008, y: ep.y, z: ep.z + ep.d * 0.2 });
+      accentSlideParts.push(shell);
+    }
+  }
+
+  // ── charging handle: a stem that ends in a HOOK, never a taper ─────────────────────────
+  if (P.chargingHandle) {
+    const ch = P.chargingHandle;
+    const t = Math.max(ch.thick, INK_FLOOR);
+    if (ch.side === 'top') {
+      const stem = inkChunk(t, ch.len, t, 0.003, 111, 'chargingHandle.stem');
+      place(stem, { y: rTopY + ch.len * 0.5 - 0.004, z: ch.z });
+      steelParts.push(stem);
+      const paddle = inkChunk(t + 0.014, 0.012, 0.016, 0.004, 112, 'chargingHandle.paddle');
+      place(paddle, { y: rTopY + ch.len - 0.004, z: ch.z });
+      steelParts.push(paddle);
+      guardSightLine(rTopY + ch.len + 0.002, P, 'chargingHandle');
+    } else {
+      const sign = ch.side === 'right' ? 1 : -1;
+      const stem = inkChunk(ch.len, t, t, 0.003, 111, 'chargingHandle.stem');
+      place(stem, { x: sign * (rSideX + ch.len * 0.5 - 0.004), y: ch.y, z: ch.z });
+      steelParts.push(stem);
+      // The hook: deeper along the barrel than it is thick, so the outline gets a step in it.
+      const paddle = inkChunk(0.012, t + 0.012, 0.018, 0.004, 112, 'chargingHandle.paddle');
+      place(paddle, { x: sign * (rSideX + ch.len - 0.004), y: ch.y, z: ch.z });
+      steelParts.push(paddle);
+    }
+  }
+
+  // ── selector: a boss and a lever, LEFT side. Polymer, static (it is on the frame) ───────
+  if (P.selector) {
+    const sl = P.selector;
+    const boss = inkCylinder(Math.max(sl.r, INK_FLOOR * 0.5), 0.012, 7, { seed: 121 });
+    place(boss, { rz: Math.PI * 0.5 });
+    place(boss, { x: -(rSideX + 0.002), y: sl.y, z: sl.z });
+    polymerParts.push(boss);
+
+    const lever = inkChunk(
+      Math.max(sl.thick, INK_FLOOR), Math.max(sl.thick, INK_FLOOR), sl.len, 0.003, 122,
+      'selector.lever',
+    );
+    // Built extending straight back from the boss, then swung about it — so `angleDeg` means what
+    // it says no matter what `len` is.
+    place(lever, { z: sl.len * 0.5 });
+    // Negated: a +x rotation swings a +z arm DOWN, and "positive means the tip goes up" is the
+    // only version of this an author will guess right.
+    place(lever, { rx: -sl.angleDeg * DEG2RAD });
+    place(lever, { x: -(rSideX + 0.005), y: sl.y, z: sl.z });
+    polymerParts.push(lever);
+  }
+
+  // ── mag well: the step that makes the magazine read as INSERTED ────────────────────────
+  // Same 0.30 rad rake the magazine build uses, so the two agree by construction rather than by
+  // two authors picking the same number twice.
+  if (P.magWell) {
+    const mw = P.magWell;
+    const well = inkChunk(mw.w, mw.h, mw.d, 0.005, 131, 'magWell.well');
+    place(well, { rx: MAG_RAKE });
+    place(well, { y: mw.y, z: mw.z });
+    polymerParts.push(well);
+
+    // The funnel is at the BOTTOM of the well, where the magazine goes in — and "the bottom" of a
+    // raked well is down its own local −y, not down the world's.
+    const flare = Math.max(mw.flare, 0.004);
+    const collar = inkChunk(
+      mw.w + flare * 2, 0.012, mw.d + flare * 2, 0.004, 132, 'magWell.collar',
+    );
+    place(collar, { rx: MAG_RAKE });
+    place(collar, {
+      y: mw.y - mw.h * 0.5 * Math.cos(MAG_RAKE),
+      z: mw.z + mw.h * 0.5 * Math.sin(MAG_RAKE),
+    });
+    polymerParts.push(collar);
+  }
+
+  // ── stamped panels / vents: DARK and near-flush, so they read as cuts, not as plates ────
+  if (P.panels) {
+    const pn = P.panels;
+    if (import.meta.env?.DEV && pn.count > 3) {
+      console.warn(
+        `[weapons/viewmodel] ${P.id}: panels.count ${pn.count} — WEAPON_ART §0 says 2-3 BOLD cuts, ` +
+        'never 8 fine ones. Past three they merge into one smear under the ink line.',
+      );
+    }
+    const signs: readonly number[] = pn.side === 'both' ? [-1, 1] : [pn.side === 'right' ? 1 : -1];
+    for (let i = 0; i < pn.count; i++) {
+      for (const sx of signs) {
+        const cut = inkChunk(0.011, pn.h, pn.d, 0.002, 151 + i * 2 + (sx > 0 ? 1 : 0), 'panels.cut');
+        place(cut, { x: sx * (pn.hostHalfW - 0.003), y: pn.y, z: pn.z - i * pn.step });
+        polymerParts.push(cut);
+      }
+    }
+  }
+
+  // ── rail teeth: chunky, and UNDER the sight line ───────────────────────────────────────
+  if (P.railTeeth) {
+    const rt = P.railTeeth;
+    guardSightLine(rt.y + rt.h * 0.5, P, 'railTeeth');
+    for (let i = 0; i < rt.count; i++) {
+      const tooth = inkChunk(rt.w, rt.h, rt.d, 0.002, 161 + i, 'railTeeth.tooth');
+      place(tooth, { y: rt.y, z: rt.z - i * rt.step });
+      steelParts.push(tooth);
+    }
+  }
+
   // ── trim / accent ──────────────────────────────────────────────────────────────────────
   // Oversized muzzle brake: three fins on a short can. Pure comic — real pistols do not have
   // this, and that is the point. It is the read at the business end.
@@ -612,10 +1948,16 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
     trimParts.push(fin);
   }
 
-  const trigger = bevelBox(0.011, 0.022, 0.011, 0.002, 37);
+  // The trigger moves to POLYMER, and the choice of field is a PARENTING decision as much as a
+  // colour one. It was BONE (luma 0.73) — the gun's brightest value, spent on a 22 mm part buried
+  // inside the guard where the eye is never asked to look. It cannot go in `steel`, because
+  // `steel` rides the slide: a trigger that travelled the slide's 14 mm on every shot would end
+  // the stroke inside the rear bar of its own guard. `polymer` is static and dark, which is what
+  // a trigger is, and it separates hard against the mid-grey frame right behind it.
+  const trigger = inkChunk(0.011, 0.022, 0.011, 0.002, 37, 'trigger');
   place(trigger, { rx: 0.2 });
   place(trigger, { y: -0.032, z: -0.032 });
-  trimParts.push(trigger);
+  polymerParts.push(trigger);
 
   // ── THE WARM READ (RUST) ───────────────────────────────────────────────────────────────
   // ART §1 allows two hues per material and the palette reserves GOLD for interactables, so the
@@ -705,12 +2047,12 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // and it comes for free by hanging it off the same bone the animation already drives.
   if (P.magazine) {
     const mag = bevelBox(P.magazine.w, P.magazine.h, P.magazine.d, 0.004, 41);
-    place(mag, { rx: 0.30 });
+    place(mag, { rx: MAG_RAKE });
     place(mag, { y: P.magazine.y, z: P.magazine.z });
     magParts.push(mag);
 
     const plate = bevelBox(P.magazine.w + 0.008, 0.010, P.magazine.d + 0.010, 0.003, 42);
-    place(plate, { rx: 0.30 });
+    place(plate, { rx: MAG_RAKE });
     place(plate, { y: P.magazine.y - P.magazine.h * 0.5 - 0.004, z: P.magazine.z + 0.014 });
     magParts.push(plate);
   } else if (P.tube) {
@@ -731,6 +2073,8 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
 
   const out: GunGeometry = {
     frame: mergeForStatic(frameParts),
+    polymer: mergeForStatic(polymerParts),
+    steel: mergeForStatic(steelParts),
     slide: mergeForStatic(slideParts),
     sights: mergeForStatic(sightParts),
     trim: mergeForStatic(trimParts),
@@ -741,14 +2085,14 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
     core,
   };
   for (const g of [
-    ...frameParts, ...slideParts, ...sightParts, ...trimParts, ...accentParts,
-    ...accentSlideParts, ...handParts, ...magParts,
+    ...frameParts, ...polymerParts, ...steelParts, ...slideParts, ...sightParts, ...trimParts,
+    ...accentParts, ...accentSlideParts, ...handParts, ...magParts,
   ]) g.dispose();
 
   // ── the lens compensation + overall scale, applied once to everything ───────────────────
   for (const g of [
-    out.frame, out.slide, out.sights, out.trim, out.accent, out.accentSlide, out.hand,
-    out.magazine, out.core,
+    out.frame, out.polymer, out.steel, out.slide, out.sights, out.trim, out.accent,
+    out.accentSlide, out.hand, out.magazine, out.core,
   ]) {
     place(g, { sx: MODEL_SCALE, sy: MODEL_SCALE, sz: MODEL_SCALE * P.depthCompress });
     g.computeBoundingSphere();
@@ -964,11 +2308,16 @@ function assertClearance(g: GunGeometry, P: GunProfile = PROFILES[0] as GunProfi
         _local.compose(_pos, _quat, _one);
 
         for (const geo of [
-          g.frame, g.slide, g.sights, g.trim, g.accent, g.accentSlide, g.hand, g.magazine, g.core,
+          g.frame, g.polymer, g.steel, g.slide, g.sights, g.trim, g.accent, g.accentSlide,
+          g.hand, g.magazine, g.core,
         ]) {
-          // `sights` and `accentSlide` ride the slide and the magazine has its own reload offset;
-          // everything else is rigid to the root.
+          // `sights`, `accentSlide` and `steel` ride the slide and the magazine has its own
+          // reload offset; everything else is rigid to the root. `steel` is in this list because
+          // it carries the charging handle and the port deflector — the two parts most likely to
+          // become a gun's worst lateral vertex, and a clearance check that cannot see them is
+          // the same shape of hole BUILD 005 and BUILD 006 each had to close.
           const childZ = geo === g.slide || geo === g.sights || geo === g.accentSlide
+            || geo === g.steel
             ? (p.slideZ ?? 0)
             : 0;
           const childY = geo === g.magazine ? (p.magY ?? 0) : 0;
@@ -1164,6 +2513,65 @@ export class Viewmodel {
       // distance fog can only ever be a rounding error, so it is switched off outright.
       fog: 0,
     });
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE VALUE LADDER — WEAPON_ART §2's "biggest available win", and it is not a metaphor.
+     *
+     * The gun shipped as ONE grey with a BONE trim, which is the actual reason it read as five
+     * untextured boxes: under a flat cel shader with no texture maps, a value break between two
+     * adjacent masses is the ONLY interior detail that the 7 px ink line cannot erase. Geometry
+     * costs clearance budget and risks the ink floor; a second flat field costs neither.
+     *
+     * Four fields now, and they are a real ladder rather than four nearby greys:
+     *
+     *   polymer  ~0.29   grip · heel · fore-end · stock · trigger · selector · mag well · panels
+     *   frame    ~0.44   receiver · slide · barrel · guard          (unchanged, the reference)
+     *   steel    ~0.57   port frame · charging handle · rail teeth · magazine
+     *   BONE      0.73   sights · muzzle brake                      (unchanged)
+     *
+     * ART §9 IS INTACT. The whole ladder sits under `READABILITY.ENV_VALUE_CEIL` (0.78) and under
+     * `ACID` (0.79) — the enemy still owns the top of the value ladder and both reserved hues,
+     * and `GOLD` still means "interactable" and appears on this object only as the muzzle core.
+     *
+     * AND THE MATERIALS DIFFER BY MORE THAN VALUE, which is the half of this that is free.
+     * Polymer is matte: specular 0.10, gleam 0.08, a wide soft tone floor. Steel is machined:
+     * specular 0.85 with a small tight gleam. Two masses at the same value under the same light
+     * still separate when one of them takes a hard clipped highlight and the other takes none, so
+     * the split survives even when the gun is lit flat. Halftone angles are 15° apart per family
+     * (ART §2.2) so the shadow bands do not moiré into each other.
+     *
+     * The polymer value is deliberately NOT taken below SLATE's 0.32 by much: the note above
+     * records what happened when the whole gun sat at 0.26 against a SLATE wall. This is a
+     * minority field bounded on every side by the 0.44 frame, which is what makes 0.29 safe here
+     * and would not make it safe for the body.
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     */
+    const polymerMat = makeInkMaterial({
+      name: 'Ink:viewmodel-polymer',
+      color: hexMix(PALETTE.SLATE, PALETTE.INK_SOFT, 0.28),
+      shadowColor: PALETTE.INK_SOFT,
+      rimColor: PALETTE.ELECTRIC,
+      rimStrength: 0.30,
+      halftoneAngle: 60,
+      toneFloor: 0.30,
+      specular: 0.10,
+      gleam: 0.08,
+      gleamSize: 0.45,
+      fog: 0,
+    });
+    const steelMat = makeInkMaterial({
+      name: 'Ink:viewmodel-steel',
+      color: hexMix(PALETTE.SLATE, PALETTE.PAPER, 0.42),
+      shadowColor: PALETTE.TEAL,
+      rimColor: PALETTE.ELECTRIC,
+      rimStrength: 0.28,
+      halftoneAngle: 0,
+      toneFloor: 0.24,
+      specular: 0.85,
+      gleam: 0.75,
+      gleamSize: 0.20,
+      fog: 0,
+    });
     /** The ONE warm mark on the weapon, and it lives on the silhouette. Never GOLD: GOLD means
      *  "you can interact with this" (ART §6) and the gun is not a pickup. */
     const accentMat = makeInkMaterial({
@@ -1248,7 +2656,9 @@ export class Viewmodel {
       halftone: 0,
       fog: 0,
     });
-    this.materials.push(bodyMat, accentMat, gloveMat, trimMat, sightMat, coreMat);
+    this.materials.push(
+      bodyMat, polymerMat, steelMat, accentMat, gloveMat, trimMat, sightMat, coreMat,
+    );
 
     // ── one Group per weapon, all built now, all but one hidden ──────────────────────────
     // The six materials above are SHARED by all four guns: they are the art direction, not the
@@ -1266,7 +2676,13 @@ export class Viewmodel {
       // reads as the thing being held rather than as a mitten laid over the gun.
       this.addMesh(gp.hand, gloveMat, 'vm-hand', true, group);
       this.addMesh(gp.frame, bodyMat, 'vm-frame', true, group);
+      // THE DARK FIELD, static: grip, heel, fore-end, stock, trigger, selector, well, panels.
+      this.addMesh(gp.polymer, polymerMat, 'vm-polymer', true, group);
       const slide = this.addMesh(gp.slide, bodyMat, 'vm-slide', true, group);
+      // THE LIGHT FIELD, parented to the SLIDE so every machined detail reciprocates with it.
+      // Empty until a profile opts into the vocabulary; `addMesh` skips the ink hull in that case
+      // rather than welding an attribute that is not there.
+      this.addMesh(gp.steel, steelMat, 'vm-steel', true, slide);
       // THE SIGHTS GET THEIR OWN MESH AND THEIR OWN, LIGHTER LINE. They ride the slide (so they
       // cycle with it) but they are not the silhouette — they are the one piece of INTERIOR
       // detail on this gun that the player is asked to read precisely, and at the silhouette's
@@ -1276,7 +2692,12 @@ export class Viewmodel {
       // Rides the slide, so it cycles with it on every shot.
       this.addMesh(gp.accentSlide, accentMat, 'vm-accent-slide', true, slide);
       this.addMesh(gp.trim, trimMat, 'vm-trim', true, group);
-      const mag = this.addMesh(gp.magazine, trimMat, 'vm-mag', true, group);
+      // The magazine moves from BONE to STEEL — same mesh, same draw call, one material swap.
+      // A bone-white magazine put the gun's brightest value on its largest low mass, hanging
+      // below the frame where it competed with the sights for the eye. At the steel value it
+      // still reads as a separate inserted object against the 0.44 frame and the dark mag well,
+      // which is the read `magWell` exists to sell.
+      const mag = this.addMesh(gp.magazine, steelMat, 'vm-mag', true, group);
       // The muzzle core is the one emissive thing on the gun. It joins LAYER.BLOOM (keeping
       // LAYER.DEFAULT, which `markBloom` does not clear) so the selective bloom halos it.
       const core = this.addMesh(gp.core, coreMat, 'vm-core', false, group);
@@ -1310,7 +2731,11 @@ export class Viewmodel {
     (parent ?? this.root).add(mesh);
     this.meshes.push(mesh);
 
-    if (outline) {
+    // An EMPTY part group is legal — the detail vocabulary is opt-in, so `steel` has nothing in
+    // it until a profile asks for something. `mergeForStatic` hands back a bare BufferGeometry in
+    // that case; three renders it as zero triangles, but `buildOutlineHull` would try to weld an
+    // attribute that is not there. So the hull is skipped rather than the mesh.
+    if (outline && geo.getAttribute('position')) {
       // ART §9 / M2 §1: enemy 8 px > VIEWMODEL 7 px > heaviest prop 6 px. One contract, in
       // `READABILITY` — at the prop cap the gun's contour was indistinguishable from the
       // dumpster in front of it, which is a missing ink hierarchy exactly where the player is
