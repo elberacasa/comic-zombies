@@ -64,7 +64,7 @@ import {
   type BodyVariant, type EnemyStateName, type SurfaceRing,
 } from '@/game/enemies/defs';
 import {
-  BonePalette, OY, OZ, POSE_STRIDE, RX, RY, RZ, SKIN_DECL, SKIN_INFLUENCES, SKIN_MAIN,
+  BonePalette, OX, OY, OZ, POSE_STRIDE, RX, RY, RZ, SKIN_DECL, SKIN_INFLUENCES, SKIN_MAIN,
   SX, SY, SZ, clearPose, makePoseBuffer, solveAo, solveSkin,
 } from '@/game/enemies/rig';
 
@@ -827,6 +827,25 @@ export class EnemyBody {
     _pose[p + RY] += s * ANIM.hipTwist * amp;
     _pose[p + OY] += -Math.abs(s) * ANIM.bobDown * amp;
 
+    // ── THE LURCH ──────────────────────────────────────────────────────────────────────────
+    // "the gait is a walk cycle; COD zombies LURCH." Everything above is symmetric: the pelvis
+    // rolls the same amount each way and drops the same amount onto either foot, which is a
+    // WALK — a tidy one — no matter how much stoop is piled on top of it.
+    //
+    // Two things make it a lurch, and neither is a rotation:
+    //
+    //  1. WEIGHT TRANSFER IS A TRANSLATION. A body carries its mass over the planted foot; it
+    //     does not pivot around its own centreline. `OX` has existed on every bone since the rig
+    //     was written and nothing had ever used it. `s` is +1 at the right foot-plant and −1 at
+    //     the left, so this IS the stance side, for free.
+    //  2. THE LIMP IS ASYMMETRIC. `dragSide` already decides which leg drags, but the pelvis was
+    //     dropping identically onto the good leg and the bad one. Landing on the bad leg has to
+    //     cost more — that single sign is the difference between "walking" and "something wrong
+    //     with that one".
+    const dragSign = this.dragSide === 0 ? 1 : -1;
+    _pose[p + OX] += s * ANIM.weightShift * amp;
+    _pose[p + OY] += -Math.max(0, s * dragSign) * ANIM.lurchDrop * amp;
+
     // ── spine: a permanent hunch, a counter-twist, and squash/stretch on twos ──
     // SIGN: a bone ABOVE its joint leans BACK for a positive rx (see the note on ANIM.windupLean),
     // so the hunch — which is forward — is negative all the way up the spine.
@@ -844,7 +863,12 @@ export class EnemyBody {
     const chestPitch = -(this.variant.stoop * 0.55 + ANIM.hunch * a.speed01);
     const ch = BONE.CHEST * POSE_STRIDE;
     _pose[ch + RX] += chestPitch;
-    const chestTwist = -s * ANIM.spineTwist * amp + this.torsoTwist;
+    // A LEADING SHOULDER. `torsoTwist` is a random constant with a random sign, so it reads as
+    // noise; this one is keyed to `dragSign`, which means the shoulder that comes at you is
+    // always the one over the leg that works. One injury, expressed twice — that reads as a
+    // body, where two unrelated random offsets read as jitter.
+    const chestTwist = -s * ANIM.spineTwist * amp + this.torsoTwist
+      + dragSign * ANIM.shoulderLead;
     _pose[ch + RY] += chestTwist;
     _pose[ch + RZ] += this.shoulderHike * 0.5 + this.torsoLean * 0.55;
     // The stretch has to travel: a stretched belly must lift the chest or the torso pulls apart.

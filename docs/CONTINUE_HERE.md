@@ -3,7 +3,7 @@
 **Read `CLAUDE.md` first, then this.** This file is the "you are here" pointer — it is rewritten
 at the end of every working session and is the only doc that goes stale on purpose.
 
-Last updated: 2026-08-10, end of the M6 session.
+Last updated: 2026-08-10, end of the BUILD 008 session (specials + bodies).
 
 ---
 
@@ -42,28 +42,51 @@ requirement, which is why a hitching frame rate or an unstable image is a bug, n
 
 ---
 
-## NEXT TWO TASKS, in order
+## WHAT BUILD 008 DID (both tasks above are DONE — awaiting the human's verdict)
 
-### 1. Wire specials into the round mix  ← START HERE
-The Screamer is fully implemented and verified but **the round director never spawns it.** It only
-appears via `CZ.spawn(1,'screamer')`. Look at the composition/tier table in
-`src/game/rounds/director.ts` and introduce specials at set rounds the way BO2 does — a first
-screamer around round 5–8, then a rising share, capped so a round never becomes all specials.
-`GAME_BIBLE §6` says "composition shifts (specials introduced at set rounds)".
+**`docs/HUMAN_JUDGE.md` is written and unanswered. Get those 11 answers before building more.**
 
-### 2. Better bodies — "not blobs, bodies with their movement"
-The mesh is more complete than it looks: skull, brow, jaw, hands, feet and a torn coat all exist,
-and `tools/zombie.mjs` passes on every bone. The last session found that the *shading* was hiding
-it (see `ART §9.1`) and fixed the rim. What is still missing is **anatomical read and motion
-quality**:
-- limbs taper but have no elbow/knee landmark; hands and feet are small and read as stumps
-- one flat hue over the whole body — no clothing-vs-flesh split, no wounds
-- the gait is a walk cycle; COD zombies *lurch* — weight shifts, drags, a shoulder leading
-- per-instance variation exists in the data but barely changes the silhouette at 10 m
+### 1. Specials are in the round mix ✅
+`ROUND.specialsEnabled` is on, intro rounds are `sprinter 4 · brute 7 · screamer 8`. Enabling the
+flag was not enough on its own: the share ramp is `(n - intro + 1) × 1.2%`, so on a special's own
+intro round it had a **1.2% chance per spawn** — i.e. it would show up several rounds late or
+never. `director.ts::planDebuts()` now pins one guaranteed spawn of each debuting kind at wave
+index `floor(toSpawn × 0.34)`, so a debut is a beat, and the ramp carries the share up from there.
+Verified in-browser: round 8 order was `shambler, sprinter, shambler ×6, SCREAMER, brute, …`.
 
-Files: `src/game/enemies/body.ts` (regions, surfaces), `rig.ts`, `defs.ts` (`SURFACE`, `VARIANTS`,
-`ANIM`). Keep the hold-frame timing (~4.4 frames/pose, `ART §8`) — smooth deformation, jerky
-timing, that pairing is the style.
+Spitter is parked at round 9999 on purpose — no projectile yet, and a spitter that does not spit
+is a pink shambler, which breaks the `ART §9` read.
+
+### 2. Bodies got joints, extremities and a lurch ✅
+Every limb ring used to fall monotonically (arm 0.124 → 0.084, leg 0.150 → 0.088). **A monotonic
+taper is the blob** — nothing tells you where the limb bends. The joints were never guesses: from
+`SKEL`, elbow is y 1.047, wrist 0.727, knee 0.395, ankle 0.010, and the rings already sampled
+exactly those heights and did nothing there. Now: deltoid → taper → **elbow knob (+z)** → forearm
+belly → **wrist pinch**; and hip → thigh belly → **patella (−z)** → **calf belly (+z)** → **ankle
+pinch**. Hands are 29% wider, flatter (u 0.152 vs v 0.112) and 63 mm longer; feet 15% wider and
+23% longer; `BONE_TAIL` for hand/foot was extended to match, or the hitbox capsule would end
+short of the new fingers and toes.
+
+**Why it was a tube in the first place:** `BODY.minHalfWidth` = 0.070 is asserted at boot
+(`body.ts::assertInkFloor`) because anything thinner renders as solid ink under the 8 px outline.
+Staying clear of that floor is easiest if you never sculpt. But the floor only forbids going
+*thinner* — the landmarks are made by ADDING mass at the joints, which costs the floor nothing.
+Wrist and ankle sit at 0.072, 2 mm clear; boot assertion passes.
+
+The lurch (`body.ts::poseGait`): `OX` had existed on every bone since the rig was written and
+**nothing had ever used it**. Weight transfer is a translation, not a rotation — the pelvis now
+shifts onto the planted foot (`ANIM.weightShift`), drops harder when it lands on the drag leg
+(`lurchDrop`), and one shoulder is carried ahead, keyed to `dragSide` so the injury reads as one
+coherent thing instead of two random offsets (`shoulderLead`).
+
+Budget after: **194 draw calls, 459k triangles at 25 alive** — unchanged, because no ring
+*counts* changed. Hit registration unchanged (limb miss ≤0.9% at 5/15/30 m).
+
+### 3. Next, once the judge sheet comes back
+Still open from the human's own list, in their words: *"they can be a bit smarter"* (awareness,
+flanking — the AI is still one `melee` role for everything except the Screamer), and the
+clothing-vs-flesh split / wounds, which is the one part of "better bodies" NOT done — the body is
+still one flat hue. That is a `SURFACE`/material job, not a geometry one.
 
 ---
 
@@ -72,6 +95,10 @@ timing, that pairing is the style.
 - **Points is a dead stat.** ~4,400 earned in round 1 and nothing to spend it on until wall-buys,
   the mystery box and Pack-a-Punch exist. Biggest structural hole in the loop; deferred because
   the player asked for enemies and graphics first, and their feedback outranks the roadmap.
+- **`node tools/stairs.mjs` has 3 failing checks** — bodies ending up inside geometry, and
+  chase stalls up to ~23 s, in both the spawn and the roof-camp scenarios. Long-standing and
+  byte-identical before/after BUILD 008 (checked by stashing the diff). This is the measurable
+  half of the human's *"they can be a bit smarter"* and the best-evidenced next engineering task.
 - **`node tools/combat.mjs` has 1 failing check** — the conga follow adds 12–18% queue length
   against a 20% bar it set for itself. Investigated at length: the harness was order-dependent
   (fixed), two steering fixes were tried and both made it worse (reverted), and the player then

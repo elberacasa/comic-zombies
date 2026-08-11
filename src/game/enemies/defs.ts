@@ -249,10 +249,13 @@ export const SKEL: readonly BoneRest[] = [
 export const BONE_TAIL: Readonly<Record<number, readonly [number, number, number]>> = {
   [BONE.HEAD]: [0, 0.300, 0.010],
   [BONE.JAW]: [0, -0.075, -0.150],
-  [BONE.HAND_R]: [0, -0.170, -0.030],
-  [BONE.HAND_L]: [0, -0.170, -0.030],
-  [BONE.FOOT_R]: [0, -0.020, -0.170],
-  [BONE.FOOT_L]: [0, -0.020, -0.170],
+  // The hand and the foot both GREW (see `SURFACE.hand` / `SURFACE.foot`), and these tails are
+  // what the skin solve binds against and what the limb hitbox capsule is measured along. Left
+  // at their old lengths the new fingers and toes would hang off the end of both.
+  [BONE.HAND_R]: [0, -0.245, -0.040],
+  [BONE.HAND_L]: [0, -0.245, -0.040],
+  [BONE.FOOT_R]: [0, -0.020, -0.235],
+  [BONE.FOOT_L]: [0, -0.020, -0.235],
   [BONE.RAG]: [-0.040, -0.400, 0.030],
 };
 
@@ -404,25 +407,57 @@ export const SURFACE = {
    * One arm, authored on the RIGHT (+X). The left is re-authored, not mirrored, so the two are
    * not one drawing printed twice. Root ring sits INSIDE the chest — the shoulder-seam fix.
    */
+  //
+  // ─── LANDMARKS, NOT A TAPER ───────────────────────────────────────────────────────────────
+  // Every ring below used to fall monotonically from 0.124 at the shoulder to 0.084 at the
+  // wrist. A monotonically tapering tube is the definition of the note the human wrote — "not
+  // blobs, but bodies" — because a taper has no ANATOMY in it: nothing tells you where the arm
+  // bends until it bends, and a limb whose joint you cannot locate reads as a sock.
+  //
+  // The joints are not guesses. Walking `SKEL` from HIPS gives shoulder y 1.372, ELBOW 1.047,
+  // WRIST 0.727 in bind space, and the rings already sampled exactly those heights — they just
+  // did nothing there. So the shape now goes deltoid → triceps belly → TAPER INTO the elbow →
+  // condyle knob → forearm belly → wrist pinch, which is the sequence an inker draws.
+  //
+  // THE PINCH IS BOUNDED BY THE INK FLOOR, NOT BY TASTE. `BODY.minHalfWidth` = 0.070 and
+  // `body.ts::assertInkFloor` fails the boot if anything goes under, so the wrist and the ankle
+  // stop at 0.072. That floor is also *why* this file was a tube: staying clear of it is easiest
+  // if nothing is ever sculpted. But the floor only forbids going THINNER — the landmarks below
+  // are made by ADDING mass at the joints, which costs the floor nothing and buys silhouette.
+  // ──────────────────────────────────────────────────────────────────────────────────────────
   arm: [
-    { y: 1.452, u: 0.108, v: 0.108, round: 0.5 },
-    { y: 1.395, u: 0.124, v: 0.122, round: 0.4 },
-    { y: 1.310, u: 0.116, v: 0.114, round: 0.35 },
-    { y: 1.200, u: 0.106, v: 0.106, round: 0.35 },
-    { y: 1.110, u: 0.100, v: 0.100, round: 0.35 },
-    { y: 1.047, u: 0.096, v: 0.098, round: 0.35 },
-    { y: 0.985, u: 0.094, v: 0.094, round: 0.35 },
-    { y: 0.880, u: 0.090, v: 0.090, round: 0.35 },
-    { y: 0.790, u: 0.086, v: 0.086, round: 0.35 },
-    { y: 0.727, u: 0.084, v: 0.084, round: 0.4 },
+    { y: 1.452, u: 0.110, v: 0.110, round: 0.5 },
+    /* deltoid cap — BODY says "heavy shoulders", and this is where they live */
+    { y: 1.395, u: 0.136, v: 0.130, round: 0.4 },
+    { y: 1.310, u: 0.120, v: 0.116, round: 0.35 },
+    { y: 1.200, u: 0.099, v: 0.100, round: 0.35 },
+    /* narrowest of the upper arm, immediately above the joint */
+    { y: 1.110, u: 0.088, v: 0.092, round: 0.35 },
+    /* ELBOW (SKEL: y 1.047). A hard knob pushed BACK (+z) — the olecranon point. */
+    { y: 1.047, z: 0.014, u: 0.112, v: 0.108, round: 0.28 },
+    /* forearm belly, straight under the joint */
+    { y: 0.985, u: 0.104, v: 0.100, round: 0.32 },
+    { y: 0.880, u: 0.092, v: 0.090, round: 0.35 },
+    { y: 0.790, u: 0.078, v: 0.078, round: 0.4 },
+    /* WRIST (SKEL: y 0.727). The pinch is what makes the hand a separate mass. */
+    { y: 0.727, u: 0.072, v: 0.073, round: 0.45 },
   ] as readonly SurfaceRing[],
-  /** The over-sized splayed hand — the part that actually comes at the player. */
+  /**
+   * The over-sized splayed hand — the part that actually comes at the player.
+   *
+   * Was a 0.118 lump barely wider than the 0.084 wrist it grew out of, i.e. a stump. It is now
+   * BROAD AND FLAT (u 0.152 against v 0.112) and 63 mm longer, so it reads as fingers rather
+   * than as the end of the arm. Width, not length, is what carries at 10 m.
+   */
   hand: [
-    { y: 0.760, u: 0.086, v: 0.084, round: 0.5 },
-    { y: 0.700, z: -0.012, u: 0.104, v: 0.100, round: 0.35 },
-    { y: 0.640, z: -0.024, u: 0.118, v: 0.112, round: 0.3 },
-    { y: 0.585, z: -0.030, u: 0.110, v: 0.102, round: 0.25 },
-    { y: 0.545, z: -0.026, u: 0.078, v: 0.074, round: 0.4 },
+    { y: 0.762, u: 0.076, v: 0.076, round: 0.5 },
+    /* heel of the hand */
+    { y: 0.700, z: -0.014, u: 0.112, v: 0.098, round: 0.32 },
+    /* KNUCKLES — the widest point of the whole arm */
+    { y: 0.628, z: -0.030, u: 0.152, v: 0.112, round: 0.24 },
+    /* fingers, splayed */
+    { y: 0.552, z: -0.038, u: 0.146, v: 0.104, round: 0.20 },
+    { y: 0.482, z: -0.030, u: 0.100, v: 0.082, round: 0.35 },
   ] as readonly SurfaceRing[],
   /** Shoulder x of each arm chain in bind space (`SKEL` CLAV.x + ARM.x). */
   armX: 0.248,
@@ -430,22 +465,43 @@ export const SURFACE = {
   /** The left shoulder sits a touch higher — nothing on this body is symmetric. */
   armDropL: 0.012,
 
-  /** One leg, authored on the RIGHT (+X). Root ring inside the pelvis. */
+  /**
+   * One leg, authored on the RIGHT (+X). Root ring inside the pelvis.
+   *
+   * Same story as the arm, and worse: 0.150 → 0.088 with the KNEE (SKEL: y 0.395) sitting in the
+   * middle of the slope doing nothing, and no calf at all — the old profile was *narrower* below
+   * the knee than above it the whole way down, which is a chicken leg, not a human one.
+   *
+   * The two z-offsets are the point of the silhouette: the patella pushes FORWARD (−z) and the
+   * calf belly pushes BACK (+z), so a bent leg now has a front and a back instead of being a
+   * bendy cylinder. That is legible from behind at 10 m, which is where the horde usually is.
+   */
   leg: [
-    { y: 0.905, u: 0.150, v: 0.148, round: 0.4 },
-    { y: 0.828, u: 0.146, v: 0.146, round: 0.35 },
-    { y: 0.740, u: 0.138, v: 0.140, round: 0.30 },
-    { y: 0.600, u: 0.126, v: 0.130, round: 0.30 },
-    { y: 0.470, u: 0.114, v: 0.120, round: 0.35 },
-    { y: 0.395, u: 0.108, v: 0.114, round: 0.35 },
-    { y: 0.320, u: 0.104, v: 0.108, round: 0.35 },
-    { y: 0.200, u: 0.096, v: 0.100, round: 0.35 },
-    { y: 0.090, u: 0.090, v: 0.094, round: 0.4 },
-    { y: 0.030, u: 0.088, v: 0.092, round: 0.5 },
+    { y: 0.905, u: 0.152, v: 0.150, round: 0.4 },
+    /* glute / hip mass */
+    { y: 0.828, u: 0.156, v: 0.152, round: 0.35 },
+    /* thigh belly — the heaviest cross-section on the body */
+    { y: 0.740, u: 0.148, v: 0.146, round: 0.30 },
+    { y: 0.600, u: 0.128, v: 0.132, round: 0.30 },
+    /* narrow, just above the joint */
+    { y: 0.470, u: 0.104, v: 0.110, round: 0.32 },
+    /* KNEE (SKEL: y 0.395) — the patella, pushed FORWARD */
+    { y: 0.395, z: -0.014, u: 0.124, v: 0.122, round: 0.26 },
+    /* CALF belly, pushed BACK */
+    { y: 0.320, z: 0.016, u: 0.118, v: 0.120, round: 0.32 },
+    { y: 0.200, z: 0.010, u: 0.102, v: 0.104, round: 0.35 },
+    { y: 0.090, u: 0.078, v: 0.082, round: 0.4 },
+    /* ANKLE pinch — hard against the 0.070 ink floor, same as the wrist */
+    { y: 0.030, u: 0.072, v: 0.076, round: 0.5 },
   ] as readonly SurfaceRing[],
   legX: 0.132,
-  /** The foot slab, hung off `BONE.FOOT_*`. Sole at y ≈ 0, toes forward (-Z). */
-  foot: { x: 0.132, y: 0.062, z: -0.070, w: 0.215, h: 0.145, d: 0.320 },
+  /**
+   * The foot slab, hung off `BONE.FOOT_*`. Sole at y ≈ 0, toes forward (-Z).
+   * Grown 15% wider and 23% longer: against a pinched 0.072 ankle a small foot reads as a stump,
+   * and the foot is the part that sells the DRAG — you have to be able to see it not clear the
+   * ground. Still far above `minSlabDim`.
+   */
+  foot: { x: 0.132, y: 0.064, z: -0.098, w: 0.248, h: 0.152, d: 0.395 },
 
   /** The torn coat flap. Two slabs, off ONE shoulder blade, never mirrored. */
   rag: [
@@ -668,6 +724,16 @@ export const ANIM = {
   hipTwist: 0.175,
   /** The pelvis drops on every foot-plant. This is the weight. */
   bobDown: 0.062,
+  /**
+   * ── THE LURCH (see `body.ts::poseGait`) ──
+   * Lateral weight transfer onto the planted foot, METRES. A walking body carries its mass over
+   * the foot it is standing on; the old gait only rolled and dropped, which is a march.
+   */
+  weightShift: 0.045,
+  /** Extra pelvis drop when the weight lands on the DRAG leg. Asymmetry is what makes a limp. */
+  lurchDrop: 0.038,
+  /** Constant yaw carrying the good-side shoulder ahead, radians. Keyed to `dragSide`. */
+  shoulderLead: 0.20,
   /** Extra hunch on top of the variant's baked stoop. */
   hunch: 0.16,
   spineTwist: 0.24,

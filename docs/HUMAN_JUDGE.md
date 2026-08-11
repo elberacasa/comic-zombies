@@ -1,218 +1,111 @@
-# HUMAN JUDGE — BUILD 007
+# HUMAN JUDGE — BUILD 008 · SPECIALS + BODIES
 
-**14 items. Each one is under a minute. Go top to bottom — the order is chosen so you never have
-to restart or backtrack.**
+**11 items. Each one is under a minute.** The order is chosen so you never have to restart.
 
-Everything measurable has already been measured; none of it is repeated here. These are only the
-questions a machine genuinely cannot answer. Write whatever you actually think on the
-**Answer:** line — "fine", "hate it", one word is a useful answer.
+Everything measurable is already measured and is NOT repeated here (types, build, console, draw
+calls 194, triangles 459k at 25 alive, hit registration at 5/15/30 m, heap, sim cost). These are
+only the questions a machine cannot answer. One word on the **Answer:** line is a useful answer.
 
 ---
 
 ## TO REPRODUCE FAST
 
 ```bash
-npm run dev          # then open the printed localhost URL and CLICK to lock the pointer
+npm run dev          # open the printed localhost URL, CLICK to lock the pointer
 ```
+
+Test **locally, not on Vercel** — the production build does not expose `window.CZ`.
 
 | | |
 |---|---|
 | move / sprint / jump | `WASD` · `SHIFT` · `SPACE` |
-| slide / dive | tap `CTRL` · hold `CTRL` |
-| fire / aim / reload | `LMB` · `RMB` · `R` (tap `R` again in the gold zone = active reload) |
-| **spawn 1 / 10** | `N` · `M` |
-| **+5 right on top of you** | `Z` |
-| **fill to 25** | `X` |
-| **kill everything** | `K` |
-| debug overlay · nav draw | `` ` `` · `F8` |
-| pause | `P` or `ESC` |
+| fire / ADS / reload | `LMB` · `RMB` · `R` |
+| spawn 10 · fill to 25 · kill all | `M` · `X` · `K` |
 
-In the browser console (F12) — the two that matter this build:
-
-```js
-CZ.skipToRound(10)      // jump the GAMEPLAY to round 10 (count, health, speed, spawn cap)
-CZ.setEscalation(20)    // paint round 20's LOOK right now, without playing it.
-                        // CZ.setEscalation() with no argument snaps back to live.
-```
-
-`CZ.spawnNear(3)` · `CZ.camp('roof_ne')` · `CZ.killAll()` · `CZ.stats()` are the other handy ones.
+Open the console (`` ` `` toggles the debug overlay) for the `CZ.` commands below.
 
 ---
 
-## A · MOVEMENT — the regression you reported
+## A. THE BODIES — this is the main event
 
-### 1. Walk up every staircase you can find. Just hold W.
+The note was *"not blobs, but bodies with their movement."* Three things changed: the limbs got
+real **joints**, the hands and feet got **bigger**, and the walk got a **lurch**.
 
-This is the "**after the gravity changes i cant go upstairs**" bug. It was real, it had three
-separate causes, and it is fixed. Walk up the plaza stairs, the east stairs to the market roof,
-the west fire escape (both flights), the loading-dock steps, and step onto the plaza monument.
-Try each one **at an angle** and **sprinting**, not just square-on — that is how it used to break.
+**1.** `CZ.killAll()` then `CZ.spawn(1)`. Walk up to about 10 m and just watch one zombie walk.
+Can you now see an **elbow and a knee** — a specific place where the limb bends, rather than a
+tube that curves?
 
-Does every flight go up, first try, without you thinking about it?
+Answer:
 
-**Answer:**
+**2.** Same zombie. Look at the **hands**. They are 29% wider and flatter now. Do they read as
+*hands coming at you*, or still as stumps on the end of the arms?
 
-### 2. At the top of a flight, do you get a little hop?
+Answer:
 
-Cresting a ramp still throws you a few centimetres into the air before you settle. It is small and
-it may read as fine — momentum carrying you over the lip. Tell me if it reads as a *bug* instead.
+**3.** Same zombie, watch it from **behind** as it walks away. The calf now bulges backward and
+the kneecap forward. Does the leg have a front and a back, or is it still a bendy cylinder?
 
-**Answer:**
+Answer:
 
-### 3. Walk off a roof edge. Then walk off a low kerb.
+**4.** THE LURCH. Watch the hips. The body now shifts its weight **sideways onto the planted
+foot**, and drops harder when it lands on its bad leg. Does it read as *something wrong with that
+one*, or just as a walk?
 
-You should fall off both — no floating, no invisible ledge holding you up. Does falling feel like
-weight, or like being switched off?
+Answer:
 
-**Answer:**
+**5.** Is the lurch **too much**? This is the one most likely to be overcooked — say so if it
+looks drunk, seasick, or like the body is sliding rather than stepping.
 
-### 4. Hold W across flat open street for a few seconds without touching the mouse.
+Answer:
 
-You should track dead straight. Does anything pull you sideways, stick, or stutter?
+**6.** `CZ.spawn(25)`. With a full horde, can you still tell individual zombies apart — or does
+the extra motion turn the crowd into visual noise?
 
-**Answer:**
-
----
-
-## B · THE ZOMBIES — "better movement… slow… aren't truly a threat"
-
-### 5. `CZ.spawnNear(3)`. Look at one from about 5 m, from the side, while it walks.
-
-The whole body is new — it is properly skinned now instead of rigid chunks. The *timing* was
-deliberately left alone. Do the elbows and knees still read as **drawn**, with weight and snap, or
-has it gone smooth and rubbery like generic game animation?
-
-**Answer:**
-
-### 6. Same zombie. Is the head obviously a target?
-
-The head hitbox used to be 59% wider than the skull you were aiming at — you could not learn it.
-It now matches the drawing. Can you tell where to shoot without thinking? Does it still read as a
-head at 25 m?
-
-**Answer:**
-
-### 7. Shoot heads. Do crits feel *earned*, or just harder?
-
-The target is smaller and honest now. Land a few. Is the hit feedback — sound, pop, the word —
-satisfying enough to make you want the next one?
-
-**Answer:**
-
-### 8. `CZ.spawn(15)`. Train them: walk backwards in a wide circle and let them string out.
-
-This is the CoD loop you asked for. Do they form a **line you can sweep**, or a blob that wraps
-around you? Can you stack headshots down the queue and feel a combo building?
-
-**Answer:**
-
-### 9. Shoot an arm off. Then a leg.
-
-**Answer:**
-
-### 10. `CZ.skipToRound(10)`. Now actually fight.
-
-By round 10 most of them sprint. Three of them on you drops you in well under two seconds. Are
-they genuinely dangerous now — do you feel pressure to keep moving? Or still a nuisance?
-
-**Answer:**
-
-### 11. Do they still get stuck, or fail to reach you?
-
-Run around, go up to a roof, camp there a moment (`CZ.camp('roof_ne')` then `CZ.spawnStreet(15)`).
-Do they come and find you everywhere, or do you see any standing still, jittering, or stuck inside
-walls? **If you see one stuck, tell me roughly where.**
-
-**Answer:**
+Answer:
 
 ---
 
-## C · THE LOOK — "so people dont get bored quick"
+## B. THE SPECIALS — they now actually appear in play
 
-### 12. `CZ.setEscalation(1)`, look around. Then `CZ.setEscalation(20)`. Same spot, same view.
+Until this build the Screamer only existed via a console command. Specials now enter the mix at
+set rounds, and a special's **first** round is guaranteed rather than a dice roll.
 
-Round 20 should feel like a *worse night* — dirtier, tighter, more hostile — without you losing
-the ability to read the space or spot a zombie. Is the change obvious enough to be worth it? Is it
-too much? Does anything get so dark you cannot fight in it?
+**7.** `CZ.skipToRound(8)` and play the round out. A **Screamer** (tall, pink/HOT) is guaranteed
+to arrive about a third of the way in. Did you **notice it arrive** — did it read as an event?
 
-**Answer:**
+Answer:
 
-### 13. Go up high — the NE roof or a catwalk — and look out over the city.
+**8.** Let one Screamer finish its wind-up on purpose. It calls in 4 more bodies. Is that
+punishing enough to make you want to prioritise it next time — or can you ignore it?
 
-The rooftops were the weakest-looking part of the game and got the most work. Does a high route
-now look as finished as the street, or is it still the boring part?
+Answer:
 
-**Answer:**
+**9.** Can you pick the Screamer out of a crowd **fast enough to act on it**, or do you find it
+only after it has already screamed?
 
-### 14. Anything off-model, ugly, or annoying?
+Answer:
 
-Wrong colour, flat lighting, a surface that looks like a programmer box, UI that breaks the comic
-language, a sound that grates, anything that reads as "prototype". Be blunt and specific.
+**10.** `CZ.skipToRound(20)`. Now it is roughly half specials (brutes, sprinters, screamers).
+Is that mix **fun** or is it chaos? Specifically: does anything feel unfair rather than hard?
 
-**Answer:**
-
----
-
-## THE TWO THAT DRIVE THE NEXT MILESTONE
-
-### What is the single worst thing about the game right now?
-
-**Answer:**
-
-### What should we do next?
-
-**Answer:**
+Answer:
 
 ---
 
-## ONE DECISION ONLY YOU CAN MAKE
+## C. THE ONE REGRESSION RISK
 
-Enemy health now follows CoD's real curve exactly. That means it never stops growing: by round 20
-a zombie takes **26 headshots** with the starting gun. Pack-a-Punch (×2.1) exists in the code but
-**nothing currently sells it**, so right now there is no way out of that wall.
+**11.** Play rounds 8 → 12 normally, without skipping. Do rounds now take **too long to clear**?
+Screamers add bodies outside the round's own count, so a round can stretch. It cannot get stuck —
+that is proven — but it can drag, and dragging is the thing that kills "one more round".
 
-Three options — pick one:
-
-- **A.** Leave it. Ship the upgrade station next milestone so the curve is survivable.
-- **B.** Cap health at a round (one number, `ROUND.hpCapRound` — 12 or 15) so late rounds stay
-  fightable with what you have.
-- **C.** Something else — say what.
-
-**Answer:**
+Answer:
 
 ---
 
-## FOR THE RECORD — what the machines verified, so you don't have to
+## KNOWN, NOT WORTH REPORTING
 
-Don't spend a second checking these; they are here only so you know what is already covered.
-
-- Typecheck, production build and browser console all clean. No GL errors.
-- All **9 staircases** climb — verified twice, headless and in the real browser with real key
-  presses. Both flights that were completely stuck now work.
-- All **17 ledges** in the arena drop you when you walk off them.
-- 25 zombies on screen: **199 draw calls / 465k triangles** against a 350 / 900k budget.
-- No memory leak across a dozen simulated rounds; GPU resources plateau.
-- Walking a straight line drifts **exactly zero** metres. Camera roll and FOV punch are inside
-  their comfort budgets.
-- With the camera parked the picture is genuinely still (≈0.2% of pixels move, budget 0.5%) — the
-  print does not crawl, at round 1 or round 20.
-
-**Two things are known-imperfect and are NOT worth your time to confirm** — they are already on
-the list: a few zombies out of 25 can still wedge briefly against thin roof railings during long
-sessions, and the horde is slower up the *east stair specifically* than it should be (11 of 15
-make it). Both are being tracked.
-
----
-
-## 15 · CAN YOU TRAIN A HORDE?  *(added after the conga investigation — see PLAYTEST)*
-
-`CZ.skipToRound(10)` then `CZ.spawnStreet(20)`. Now run a wide circle around the plaza and keep
-running it. Do they string out into a **line behind you that you can sweep in one pass**, or do
-they fan into a crescent that wraps around you?
-
-This is the core skill of a zombies mode and the one thing the automated harness cannot judge.
-Its own measurement says the follow steering improves the queue by 12–18% against a 20% target it
-set for itself — close enough that only playing it decides whether the mechanic is doing its job.
-
-**Answer:**
-
+- Points still has nothing to spend it on (wall-buys / Pack-a-Punch not built yet).
+- The Spitter does not appear at all — it has no projectile yet, so it is parked deliberately.
+- The east gantry is still a safe camp spot (level geometry, needs an intermediate tier).
+- Some zombies still stall or clip scenery on the far side of the arena — measured and
+  pre-existing (`tools/stairs.mjs`, 3 failing checks), not touched by this build.
