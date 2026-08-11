@@ -576,7 +576,7 @@ const FIELDS: Record<string, FieldSet> = {
   /** DESERT TAN — the light gun, and the only one that reads pale at a glance. */
   longshot: {
     frame: hexMix(hexMix(PALETTE.BONE, PALETTE.RUST, 0.34), PALETTE.INK, 0.26),
-    polymer: hexMix(PALETTE.INK_SOFT, PALETTE.BONE, 0.16),
+    polymer: hexMix(hexMix(PALETTE.BONE, PALETTE.RUST, 0.30), PALETTE.INK, 0.62),
     steel: hexMix(hexMix(PALETTE.BONE, PALETTE.CONCRETE, 0.30), PALETTE.INK, 0.18),
     wood: FIELD.wood,
   },
@@ -2823,9 +2823,30 @@ export class Viewmodel {
     });
     /** The glove. Cool and a value step below the frame, so the hand reads as a separate
      *  object behind the gun rather than as more gun. */
+    /**
+     * THE GLOVE RECEDES. It was `hexMix(TEAL, INK_SOFT, 0.38)` — a saturated blue-teal at luma
+     * 0.34, and it is the single largest, nearest object in the frame on EVERY weapon.
+     *
+     * The playtester, after shape, surface and per-gun palettes had all landed and the guns still
+     * read alike: "they all have the same blue in the back (the part the player sees)". Measured,
+     * and they had found the thing every one of my own measurements missed — I had been excluding
+     * `vm-hand` from every comparison BECAUSE it is shared by design (same player, same hand), so
+     * I never once looked at the biggest object on screen. It carries 417 vertices in the near
+     * half of all four guns, and on the boomstick — which has no stock — it is the LARGEST rear
+     * mass there is, beating the grip's 297. Four different guns, one loud blue hand in front of
+     * every one of them.
+     *
+     * The hand must stay shared: the player does not change gloves when they change weapon. So
+     * the fix is not to colour it per gun, it is to stop it COMPETING. Dark, desaturated, low —
+     * it should read as "a hand in shadow holding the thing", and let each weapon's own palette
+     * be the colour your eye lands on. Roughly halves its luma and drops most of its chroma.
+     *
+     * Keeping it above the ink floor matters as much as darkening it: too dark and a 7 px hull
+     * closes the fingers into one black mitten, which is the failure this file has hit before.
+     */
     const gloveMat = makeInkMaterial({
       name: 'Ink:viewmodel-glove',
-      color: hexMix(PALETTE.TEAL, PALETTE.INK_SOFT, 0.38),
+      color: hexMix(PALETTE.INK, PALETTE.CONCRETE, 0.36),
       shadowColor: PALETTE.INK_SOFT,
       rimColor: PALETTE.ELECTRIC,
       rimStrength: 0.22,
