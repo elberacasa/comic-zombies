@@ -34,7 +34,42 @@ import {
 import type { QualityTier, RenderService } from '@/core/types';
 
 /** Render-scale bounds. Below ~0.55 the ink line starts to break up on thin geometry. */
-const RenderScale = { MIN: 0.55, TARGET_MS: 13.5, RELAX_MS: 10.5 } as const;
+/**
+ * ═══ THE DIAL MUST BE INVISIBLE, NOT JUST EFFECTIVE ═══
+ *
+ * The playtester, twice: *"graphics are going low and they look bad suddenly swapping quality"*.
+ * The first report was the governor HUNTING at round start (fixed — a spike now resets the
+ * counter). This is the second and different one: the dial was doing the right thing and you
+ * could still SEE it happen.
+ *
+ * Two causes, both here rather than in the logic:
+ *
+ *  · `STEP` was 0.1. A 10% resolution change in one frame is a visible pop — the whole image
+ *    softens at once, which reads as the game breaking rather than as a graceful degrade.
+ *    0.04 is below the threshold where you notice a single step, so the frame rate is bought
+ *    gradually instead of in cliffs.
+ *  · `MIN` was 0.55 — THIRTY PERCENT of the pixels. That is not a soft image, it is a bad one,
+ *    and no frame rate is worth it in a game whose whole pitch is the way it looks. 0.74 is 55%
+ *    of the pixels and is the point measured to still read as intended.
+ *
+ * WHY A RESOLUTION DROP IS SAFE AT ALL: the halftone pitch and the ink weight are authored in
+ * CSS pixels and converted per `pixelRatio`, so the dots and the lines keep their on-screen size
+ * as the buffer shrinks. A drop softens edges; it does not restyle the drawing. That is the
+ * property that makes this dial usable and it is why resolution goes before any feature.
+ *
+ * Costs traded knowingly: a smaller step means more `applyResolution()` calls, and each one
+ * reallocates render targets. Bounded at 7 steps from 1.0 to MIN, spaced by `ADJUST_S`, which is
+ * far below the rate at which that allocation is noticeable.
+ */
+const RenderScale = {
+  MIN: 0.74,
+  TARGET_MS: 13.5,
+  RELAX_MS: 10.5,
+  /** Per-adjustment change. Small enough that ONE step is not perceptible. */
+  STEP: 0.04,
+  /** Seconds between steps once the governor has committed to adjusting. */
+  ADJUST_S: 0.6,
+} as const;
 import { PALETTE, color, rgb8Hex } from '@/art/palette';
 import { setArtAnisotropy } from '@/art/textures';
 import {
@@ -639,26 +674,24 @@ export class ComicRenderer implements RenderService {
     if (ms > RenderScale.TARGET_MS) {
       this.slowFor += dt;
       if (this.slowFor >= AUTO_QUALITY_HOLD) {
-        this.slowFor = 0;
-        this.autoGrace = AUTO_QUALITY_GRACE;
-        if (this._renderScale > RenderScale.MIN + 0.005) {
-          const next = Math.max(RenderScale.MIN, this._renderScale - 0.1);
-          console.info(
-            `[render] ${Math.round(1 / this.frameAvg)} fps sustained — render scale ` +
-            `${this._renderScale.toFixed(2)} → ${next.toFixed(2)}`);
-          this.renderScale = next;
-        } else {
-          // Out of resolution to give. Only now is a feature allowed to go.
-          const i = TIER_ORDER.indexOf(this._quality);
-          if (i > 0) {
-            const next = TIER_ORDER[i - 1] as QualityTier;
-            console.info(
-              `[render] ${Math.round(1 / this.frameAvg)} fps sustained at minimum render scale ` +
-              `— dropping quality ${this._quality} → ${next}`);
-            this.quality = next;
-            this.renderScale = 1;   // a cheaper tier earns its resolution back
-          }
+        // Stay in adjusting mode rather than re-arming the full hold: the first step costs 3 s of
+        // sustained slowness to earn, and after that the dial converges at `ADJUST_S`. Small
+        // steps are only invisible if there are enough of them to actually reach the target.
+        this.slowFor = AUTO_QUALITY_HOLD - RenderScale.ADJUST_S;
+        if (this._renderScale > RenderScale.MIN + 0.002) {
+          this.renderScale = Math.max(RenderScale.MIN, this._renderScale - RenderScale.STEP);
         }
+        // ── AND THEN IT STOPS. NO AUTOMATIC TIER DROP DURING A RUN. ──────────────────────
+        //
+        // This used to fall through to `quality = TIER_ORDER[i - 1]` once resolution bottomed
+        // out. A tier drop switches bloom, grain and the prepass scale OFF — it does not soften
+        // the image, it CHANGES it, mid-fight, without the player doing anything. That is the
+        // literal definition of the bug GAME_BIBLE §8.5 names: "anything that varies without the
+        // player causing it is a bug", and it is the thing the playtester was actually seeing.
+        //
+        // A machine that cannot hold 60 at MIN scale should pick a lower tier ONCE, at boot,
+        // where it costs nothing and surprises nobody — or the player sets it themselves in the
+        // graphics menu, which now exists. Degrading their run to buy frames is not our call.
       }
     } else if (ms < RenderScale.RELAX_MS && this._renderScale < 1) {
       // Headroom. Climb back, slower than we fell — recovering resolution is a nicety, dropping
@@ -667,7 +700,7 @@ export class ComicRenderer implements RenderService {
       this.fastFor += dt;
       if (this.fastFor >= AUTO_QUALITY_RECOVER) {
         this.fastFor = 0;
-        this.renderScale = Math.min(1, this._renderScale + 0.1);
+        this.renderScale = Math.min(1, this._renderScale + RenderScale.STEP);
       }
     } else {
       this.slowFor = 0;
