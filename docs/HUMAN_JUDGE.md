@@ -1,14 +1,10 @@
-# HUMAN JUDGE — BUILD 008 · SPECIALS + BODIES
+# HUMAN JUDGE — BUILD 010 · THE OVERNIGHT BUILD
 
-**11 items. Each one is under a minute.** The order is chosen so you never have to restart.
+**15 items. Each one is under a minute.** Go top to bottom; the order avoids restarts.
 
 Everything measurable is already measured and is NOT repeated here (types, build, console, draw
-calls 194, triangles 459k at 25 alive, hit registration at 5/15/30 m, heap, sim cost). These are
-only the questions a machine cannot answer. One word on the **Answer:** line is a useful answer.
-
----
-
-## TO REPRODUCE FAST
+calls, clearance, harnesses, allocation). These are only the questions a machine cannot answer.
+One word on the **Answer:** line is a useful answer. "hate it" is a useful answer.
 
 ```bash
 npm run dev          # open the printed localhost URL, CLICK to lock the pointer
@@ -18,85 +14,123 @@ Test **locally, not on Vercel** — the production build does not expose `window
 
 | | |
 |---|---|
-| move / sprint / jump | `WASD` · `SHIFT` · `SPACE` |
+| move / sprint / jump / slide | `WASD` · `SHIFT` · `SPACE` · `CTRL` |
 | fire / ADS / reload | `LMB` · `RMB` · `R` |
+| **swap weapon** | **`Q`** or mouse wheel |
+| **cycle the arsenal (debug)** | **`J`** |
+| interact / buy | `F` or `E` |
 | spawn 10 · fill to 25 · kill all | `M` · `X` · `K` |
-
-Open the console (`` ` `` toggles the debug overlay) for the `CZ.` commands below.
-
----
-
-## A. THE BODIES — this is the main event
-
-The note was *"not blobs, but bodies with their movement."* Three things changed: the limbs got
-real **joints**, the hands and feet got **bigger**, and the walk got a **lurch**.
-
-**1.** `CZ.killAll()` then `CZ.spawn(1)`. Walk up to about 10 m and just watch one zombie walk.
-Can you now see an **elbow and a knee** — a specific place where the limb bends, rather than a
-tube that curves?
-
-Answer:
-
-**2.** Same zombie. Look at the **hands**. They are 29% wider and flatter now. Do they read as
-*hands coming at you*, or still as stumps on the end of the arms?
-
-Answer:
-
-**3.** Same zombie, watch it from **behind** as it walks away. The calf now bulges backward and
-the kneecap forward. Does the leg have a front and a back, or is it still a bendy cylinder?
-
-Answer:
-
-**4.** THE LURCH. Watch the hips. The body now shifts its weight **sideways onto the planted
-foot**, and drops harder when it lands on its bad leg. Does it read as *something wrong with that
-one*, or just as a walk?
-
-Answer:
-
-**5.** Is the lurch **too much**? This is the one most likely to be overcooked — say so if it
-looks drunk, seasick, or like the body is sliding rather than stepping.
-
-Answer:
-
-**6.** `CZ.spawn(25)`. With a full horde, can you still tell individual zombies apart — or does
-the extra motion turn the crowd into visual noise?
-
-Answer:
+| debug overlay | `` ` `` |
 
 ---
 
-## B. THE SPECIALS — they now actually appear in play
+## A. THE BUGS YOU REPORTED
 
-Until this build the Screamer only existed via a console command. Specials now enter the mix at
-set rounds, and a special's **first** round is guaranteed rather than a dice roll.
+**1. THE SMG.** `CZ.give('ratatat')` (or `J`), spawn a crowd with `M`, and hold the trigger into
+them. It "lagged the whole game" before. **Does it now fire cleanly at full rate?**
 
-**7.** `CZ.skipToRound(8)` and play the round out. A **Screamer** (tall, pink/HOT) is guaranteed
-to arrive about a third of the way in. Did you **notice it arrive** — did it read as an event?
-
-Answer:
-
-**8.** Let one Screamer finish its wind-up on purpose. It calls in 4 more bodies. Is that
-punishing enough to make you want to prioritise it next time — or can you ignore it?
+The cause was not frame rate — every hit froze the world for 75 ms and the SMG fires every
+66.7 ms, so the freeze never finished recovering and the *world clock* ran at 23–59% speed while
+you held the trigger. Watch specifically for: does your own movement stay smooth while firing?
 
 Answer:
 
-**9.** Can you pick the Screamer out of a crowd **fast enough to act on it**, or do you find it
-only after it has already screamed?
+**2. Same test, headshots.** That was the worst case (~23% world speed). Aim high into a crowd and
+hold. Still clean?
 
 Answer:
 
-**10.** `CZ.skipToRound(20)`. Now it is roughly half specials (brutes, sprinters, screamers).
-Is that mix **fun** or is it chaos? Specifically: does anything feel unfair rather than hard?
+**3. ZOMBIES NO LONGER GET PUSHED BACK.** Shoot a single zombie walking at you (`K` then `N`).
+It should **keep coming** — flinching, but never travelling backwards. Does it read as relentless
+now, or did losing the push make bullets feel like they do nothing?
+
+That last one is the real risk: knockback *and* effects were both cut in the same build. If a hit
+now feels weak, say so — that would be worse than the original bug.
+
+Answer:
+
+**4. EFFECTS / BLOOD.** You said "too much effects, we want mostly the blood". Fire into a crowd.
+Is the per-hit stack simpler and blood-dominant now — and is it still obvious when you connect?
+
+Answer:
+
+**5. DAMAGE NUMBERS.** They now show the real damage dealt. Shoot a body, then a head. **Can you
+read the difference at a glance,** and does seeing the true number make the guns feel more
+legible?
 
 Answer:
 
 ---
 
-## C. THE ONE REGRESSION RISK
+## B. THE WEAPONS — "our main screen"
 
-**11.** Play rounds 8 → 12 normally, without skipping. Do rounds now take **too long to clear**?
-Screamers add bodies outside the round's own count, so a round can stretch. It cannot get stuck —
-that is proven — but it can drag, and dragging is the thing that kills "one more round".
+**6.** `J` through all four. Do they now read as **four different guns you'd want to hold**, or
+still like boxes? Look for: ejection ports, charging handles, sight wings, the SMG's vented
+shroud, the shotgun's heat shield, the marksman's bolt handle.
+
+Answer:
+
+**7. THE MATERIAL SPLIT** is the change I expect to matter most — the gun used to be almost
+entirely one grey and now has three flat value fields (dark polymer where your hands go, mid
+frame, light steel on the bolt and muzzle). **Does it read as a made object rather than a prop?**
+
+Answer:
+
+**8.** Which of the four looks **worst**? I'd guess the longshot — heaviest foreshortening and a
+ghost-ring rail. Name the worst one and what's wrong with it.
+
+Answer:
+
+**9. ADS on each gun.** The sights are solved per weapon, not eyeballed. Do the sights line up
+with where the bullets actually go, on all four?
+
+Answer:
+
+---
+
+## C. THE NEW HUD
+
+**10. STRAIGHT UI + LEGIBILITY.** Every gauge you read is now axis-aligned — the tilt *was* the
+blur, since rotated text can't land on the pixel grid. **Is the text sharper? Does the HUD still
+feel like a comic**, or did it lose character? (The round title card and popups deliberately kept
+their tilt.)
+
+Answer:
+
+**11. THE COMPASS** (top centre). Turn around slowly. Readable and useful, or noise?
+
+Answer:
+
+**12. THE MINIMAP** (top left). Spawn a crowd. Zombies are `ACID` dots, **specials are `HOT`**.
+`CZ.skipToRound(8)` for a guaranteed Screamer. **Can you spot the Screamer on the minimap and go
+kill it?** That's the whole reason it exists.
+
+Answer:
+
+---
+
+## D. THE ECONOMY — points finally buy things
+
+**13. WALL-BUYS.** Walk the arena; chalk outlines on walls sell weapons. Buy one with `F`. Then
+walk back to the same wall — it now sells **ammo**. Does the buy feel good, and is the prompt
+readable while you're being chased?
+
+Answer:
+
+**14. THE MYSTERY BOX AND PACK-A-PUNCH.** Find the box, spin it. Find Pack-a-Punch, upgrade a gun.
+Do these feel like events worth walking across the map for?
+
+Answer:
+
+**15. ⚠ BALANCE — THE ONE I MOST WANT YOUR VERDICT ON, AND I THINK IT IS WRONG.**
+
+Round 1 pays about **4,400 points**. A wall SMG is 1,200, a box spin 950, Pack-a-Punch 5,000, all
+four perks 9,500. In BO2, round 1 pays roughly **500–1,000** against a 2,500 Juggernog — so we are
+about **4× richer than the game we are copying**, and scarcity is where the tension lives.
+
+Play rounds 1–6 normally and tell me: **can you afford everything almost immediately?** If yes,
+prices go up (or income comes down) and the whole early game gets its shape back. I did not retune
+this blind because it is a feel call and it is yours.
 
 Answer:
 
@@ -104,8 +138,11 @@ Answer:
 
 ## KNOWN, NOT WORTH REPORTING
 
-- Points still has nothing to spend it on (wall-buys / Pack-a-Punch not built yet).
-- The Spitter does not appear at all — it has no projectile yet, so it is parked deliberately.
-- The east gantry is still a safe camp spot (level geometry, needs an intermediate tier).
-- Some zombies still stall or clip scenery on the far side of the arena — measured and
-  pre-existing (`tools/stairs.mjs`, 3 failing checks), not touched by this build.
+- The **launcher (`thumper`) does not exist** — it needs real projectile code, unlike the four
+  hitscan guns. Deliberate.
+- The **Spitter** never spawns; same reason (no projectile).
+- Perks are **four**, not BO2's seven — they'd collide with the 26 boons. See
+  `docs/BO2_MECHANICS.md §4`.
+- **Map integrity** (walls you can walk through, zombies clipping scenery) was the last job of the
+  night — check `docs/MAP_INTEGRITY.md` and the commit log for where it landed.
+- The **east gantry** is still a safe camp spot (level geometry, not AI).
