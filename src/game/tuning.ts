@@ -877,6 +877,33 @@ export const WEAPON = {
   hitstopBody: 0.02,
   hitstopCrit: 0.045,
   hitstopKill: 0.06,
+  /**
+   * MINIMUM SECONDS BETWEEN TWO GUN-REQUESTED HITSTOPS. The fix for "the SMG lags the whole game
+   * when firing" — and it was never a frame-rate bug.
+   *
+   * One hitstop is `hitstopBody` 0.02 of freeze plus `HITSTOP_RECOVERY` 0.055 of ramp = a 75 ms
+   * cycle. The ratatat's interval at 900 rpm is 60/900 = **66.7 ms**, which is SHORTER, so every
+   * shot re-armed the freeze before the previous one had finished recovering and the world clock
+   * never came back to 1.0 while the trigger was held. Measured by integrating the recovery
+   * curve: ~59% world speed on a stream of body hits and **~23% on headshots**. The frame rate
+   * was fine the whole time; the *world* was in slow motion, which is exactly what the player
+   * described. Every other weapon was safe purely by arithmetic — the pistol's 150 ms cap, the
+   * shotgun's 667 ms, the marksman's 1091 ms are all longer than the cycle.
+   *
+   * 0.13 is the pistol's own cadence, i.e. the rhythm these hitstop values were authored against,
+   * so the reference weapon is byte-identical and only the guns that outrun the effect are
+   * capped. Result: 79% world speed on sustained body hits, 60% on headshots — but the number
+   * that matters is that every window now ends with 30–55 ms at exactly scale 1.0, so the fixed
+   * accumulator always gets real steps and the player never stops moving.
+   *
+   * Enforced at the REQUEST site in `weapons/firing.ts`, never inside `Time.hitstop` — the nuke,
+   * the explosion and the death cam come through the same call and must not be throttled by a
+   * gun's fire rate. A kill is always allowed through: it is a beat, and it is self-limiting.
+   *
+   * NOT fixed by shortening `HITSTOP_RECOVERY`: the exponential snap IS the feel, and shortening
+   * it would degrade every weapon in the game to fix one.
+   */
+  hitstopMinGap: 0.13,
 
   /** Trauma added to the camera per shot, scaled by the weapon's `cameraKick`. */
   shotTrauma: 0.055,
@@ -1405,9 +1432,77 @@ export const ENEMY = {
    */
   meleeCooldownJitter: 0.22,
 
-  /** Flinch: seconds of stagger per hit, and the knockback impulse per unit of damage. */
-  flinchTime: 0.12,
+  /**
+   * THE HIT REACTION, and why it is now almost entirely ANIMATION.
+   *
+   * BUILD 010, the playtester: *"zombies should keep walking when u shoot them? they feel weird
+   * moving back when shot"*. They are right, and the numbers were indefensible. `e.push` decays
+   * at e^-6.5t, so one impulse travels `impulse / 6.5` metres before it is gone:
+   *
+   * | shot                     | impulse         | travel, BEFORE  | travel, NOW |
+   * |--------------------------|-----------------|-----------------|-------------|
+   * | inkslinger body, 42 dmg  | 1.47 m/s        | **0.226 m back**| 0.018 m     |
+   * | longshot, 145 dmg        | 5.08 m/s        | **0.781 m back**| 0.062 m     |
+   * | ratatat held, 26 × 15/s  | 2.10 m/s steady | **walks backwards at 2.1 m/s** | 0.17 m/s of drag |
+   *
+   * And the comparison that decides it: a staggered shambler walks at 1.62 × 0.25 = 0.40 m/s, so
+   * it covers 6.2 cm in the 0.154 s the push lasts. Every one of the old figures was several
+   * times that — the body genuinely reversed — and `ai.ts::contactFactor` takes its forward speed
+   * to ~0 inside the melee standoff, i.e. at exactly the range you do most of your shooting.
+   * BO2 zombies are not pushed around the map. The relentless walk is the horror of the mode, and
+   * positional knockback also made trains unpredictable, which is the competitive half of §8.5.
+   *
+   * The fix is a SPLIT, not a deletion. `knockbackPerDamage` is unchanged, because it is still
+   * the REACTION IMPULSE — what a hit is worth in m/s — and two designed mechanics measure it at
+   * exactly this calibration:
+   *   · `NAV.climbBreakImpulse` = 2.6 is documented as "one 85-damage headshot tears a body off a
+   *     mantle", which is only true at 0.035. A CLIMBING body therefore still banks the full
+   *     impulse, so shooting them off a ledge is bit-for-bit what it was.
+   *   · splash (`damageSphere`) still translates at full strength. An explosion is allowed to
+   *     throw a body; that is what an explosion is.
+   * What changed is how much of that impulse a body ON ITS FEET may spend on TRANSLATION —
+   * see `knockbackTranslation`. The flinch and shudder springs (`ANIM.flinch*`, `ANIM.shudder*`)
+   * are untouched: the hit is now read entirely off them.
+   */
   knockbackPerDamage: 0.035,
+  /**
+   * Fraction of the reaction impulse a GROUNDED body spends on world translation.
+   *
+   * 0.08: an inkslinger body shot moves a shambler 1.8 cm against the 6.2 cm it walks forward in
+   * the same window, so the net motion is always forward and no single bullet reads as a shove.
+   * Held fire is the case that matters more — a ratatat mag-dump settles at 0.17 m/s of drag
+   * against 0.40 m/s of staggered walk, so a full auto burst SLOWS the horde instead of reversing
+   * it. Not zero on purpose: a wall of gunfire visibly biting is worth keeping.
+   */
+  knockbackTranslation: 0.08,
+  /**
+   * Hard ceiling on accumulated grounded knockback, m/s. At the 6.5/s decay, 0.65 is 10 cm of
+   * travel — the most that can happen without the body reading as reversing even at contact,
+   * where its own forward speed is 0.
+   *
+   * Nothing in the current arsenal reaches it: boomstick lands 0.54 m/s when all 8 pellets
+   * connect at point blank (8 cm — the shotgun is the one gun that visibly nudges, and it earns
+   * that by delivering 192 damage in a single instant), longshot 0.41, inkslinger 0.12. This is
+   * a guard rail for Pack-a-Punch damage multipliers and stacked boons, not a normal-case clamp.
+   * Splash and the climb are exempt; they are the genuinely physical cases.
+   */
+  knockbackTranslationMax: 0.65,
+  /**
+   * Seconds of stagger per hit, before the ×1.0–2.6 scale in `reactions.ts::applyHit`.
+   *
+   * 0.07, was 0.12 — the other half of "they should keep walking". The stagger STATE is what
+   * stops a zombie (`ai.ts::stateSpeedMult` gives it 0.25× speed); the flinch SPRING is what
+   * SHOWS the hit, and the spring is additive and runs in every state. So shortening the state
+   * costs the read nothing. At 0.12 a typical 42-damage body shot bought 0.27 s of stagger
+   * against the inkslinger's 0.15 s fire interval — any sustained fire pinned a body at quarter
+   * speed permanently. 0.07 puts that same shot at 0.155 s: a held trigger still suppresses (it
+   * should), but a marksman rifle at 1.09 s between shots no longer does.
+   *
+   * Not lower: the Screamer counter (`ai.ts` 'scream' → `staggerT > 0` cancels the call) and the
+   * melee interrupt both trigger on ENTERING stagger, so they are unaffected by the duration,
+   * but the state still has to survive long enough to be seen as a stumble.
+   */
+  flinchTime: 0.07,
 
   /**
    * THE UNSTICK (BUILD 004 blocker). Steering is not pathfinding — GAME_BIBLE §4 buys a horde

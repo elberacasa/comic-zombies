@@ -29,13 +29,16 @@
  *  This is the same convention `main.ts` already relies on for `player:damaged`.
  * ═══════════════════════════════════════════════════════════════════════════════════════════
  *
- * ZERO ALLOCATION. Everything below runs on module-level scratch (`_`-prefixed) and one reused
- * `DamageInfo`. A shotgun firing 8 pellets into a crowd allocates nothing.
+ * ZERO ALLOCATION. Everything below runs on module-level scratch (`_`-prefixed): the vectors, one
+ * reused `DamageInfo`, one reused `hit:world` payload. A shotgun firing 8 pellets into a crowd
+ * allocates nothing — that claim was aspirational until BUILD 009, when the payload literal that
+ * broke it was hoisted out.
  */
 
 import { Vector3 } from 'three';
 import type {
-  BodyPart, Damageable, DamageInfo, EnemyHit, GameCtx, RNG, WeaponDef, WeaponInstance,
+  BodyPart, Damageable, DamageInfo, EnemyHit, GameCtx, ImpactKind, RNG, SurfaceKind, WeaponDef,
+  WeaponInstance,
 } from '@/core/types';
 import { clamp01 } from '@/core/mathx';
 import { PLAYER, WEAPON } from '@/game/tuning';
@@ -62,6 +65,63 @@ const _damage: DamageInfo = {
   weaponId: '',
   affix: 'none',
 };
+
+/**
+ * One reusable `hit:world` payload.
+ *
+ * The header above already promises consumers that the payload VECTORS are shared scratch, and
+ * the bus is synchronous (`Emitter.emit` calls every handler inline), so the wrapper object can
+ * be shared on exactly the same terms — nobody may retain it, and nobody does: the VFX handler
+ * copies `point`/`normal` into `_v`/`_n` on entry, the audio handler reads `point.x/y/z` straight
+ * into `engine.play`. `point` and `normal` are permanently aliased to the module scratch the
+ * trace already fills, so an emit writes ONE field.
+ *
+ * Worth an object: the boomstick fires 8 pellets per trigger pull and each one that reaches a
+ * wall emitted a fresh literal — 8 objects per pull, at 90 rpm, forever.
+ */
+const _worldHit: { point: Vector3; normal: Vector3; surface: SurfaceKind; kind: ImpactKind } = {
+  point: _point,
+  normal: _normal,
+  surface: 'concrete',
+  // Every emit from this file is a bullet. If a future launcher branch lands here it must set
+  // this field per shot rather than assume it.
+  kind: 'bullet',
+};
+
+/**
+ * HITSTOP RATE LIMIT (BUILD 009 — "the SMG lags the whole game when firing").
+ *
+ * The minimum real-time gap between two REQUESTED hitstops, and the reason it is 0.13 s: that is
+ * the pistol's own cadence (400 rpm semi ⇒ 150 ms cap, ~200 ms in a human hand), which is what
+ * `hitstopBody` 0.02 / `hitstopCrit` 0.045 were authored against. The pistol therefore comes out
+ * byte-identical — it can never fire fast enough to be gated.
+ *
+ * WHAT IT FIXES. One hitstop costs its freeze plus `HITSTOP_RECOVERY` 0.055 s of ramp-back
+ * (core/time.ts) = 75 ms of degraded world time for a body hit. `ratatat` is 900 rpm, i.e. a
+ * 66.7 ms interval — SHORTER than one cycle — so every shot re-armed the freeze before the
+ * previous had recovered and the world never returned to scale 1 while the trigger was held.
+ * Integrated over the easeOutExpo recovery that is ~59% world speed on a stream of body hits and
+ * ~23% on a stream of headshots (45 ms freeze inside a 66.7 ms window), with the sim accumulator
+ * seeing `HITSTOP_FLOOR` 0.02 during each freeze — zero fixed steps, so the PLAYER's own movement
+ * stopped ~15 times a second. The frame rate was never the problem; the world clock was.
+ *
+ * WHAT IT COSTS. Nothing below ~460 rpm (1 / 0.13 s = 7.7 shots/s) — inkslinger 400, boomstick
+ * 90 and longshot 55 are all under that line and come out unchanged. The freeze itself is never
+ * shortened either; only how often a gun may ask for one. Integrating the recovery curve over a 130 ms window gives, for
+ * sustained fire at any rate: 79% average world speed on body hits (was 59%) and 60% on
+ * headshots (was 23%). The number that actually matters is not the average though — it is that
+ * every window now ends with 30–55 ms at exactly scale 1.0, so the fixed accumulator always gets
+ * real steps and the player never stops moving.
+ *
+ * Deliberately at the REQUEST, not in `Time.hitstop`: the nuke, the explosion and the death cam
+ * ask for freezes through the same call and must not be throttled by a gun's cadence.
+ *
+ * Lives in `WEAPON.hitstopMinGap` next to the three durations it governs — it is a feel value and
+ * feel values belong in `tuning.ts` where they can be found and tuned together.
+ */
+
+/** `time.unscaledElapsed` of the last hitstop this file requested. */
+let _lastHitstopAt = -1e9;
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Damage model
@@ -206,12 +266,9 @@ export function traceShot(ctx: GameCtx, p: ShotParams): ShotResult {
     r.hitWorld = true;
     if (r.targets === 0) r.distance = world.distance;
     r.end.copy(_point);
-    ctx.events.emit('hit:world', {
-      point: _point,
-      normal: _normal,
-      surface: world.surface,
-      kind: 'bullet',
-    });
+    // `_worldHit.point` / `.normal` ARE `_point` / `_normal`, already filled above.
+    _worldHit.surface = world.surface;
+    ctx.events.emit('hit:world', _worldHit);
   }
 
   return r;
@@ -287,8 +344,37 @@ function applyEnemyHit(
   // HITSTOP — the cheapest heaviness there is (ART §5, GAME_BIBLE §8). Kill beats crit beats
   // body, and `Time.hitstop` stacks by max, so a penetrating shot through three zombies gives
   // one crisp freeze rather than a slideshow.
+  //
+  // RATE-LIMITED at the request — see `WEAPON.hitstopMinGap`. A KILL is always let through: it is the
+  // beat the whole feel is built around, and it self-limits (you cannot kill faster than zombies
+  // die). It still stamps the clock, so the next body freeze is pushed a full gap past it.
+  //
+  // …AND SO IS EVERY OTHER HIT OF THE SAME TRIGGER PULL (`sameFrame`). Without this the gate
+  // silently broke the "kill beats crit beats body" line above, which is the whole point of the
+  // paragraph: `boomstick` throws 8 pellets and `longshot` penetrates 3 bodies, all resolved
+  // inside ONE `fireShot` call, and only the FIRST of them cleared the gate. A blast whose
+  // pellet 1 hit a torso and pellet 3 hit a skull got the 0.02 body freeze and threw the 0.045
+  // crit freeze away — the shotgun headshot, the single most satisfying thing in the arsenal,
+  // stopped feeling different from a chest shot.
+  //
+  // It costs nothing, because this is a max-stack and not a new freeze: `Time.hitstop` only ever
+  // RAISES `_hitstop` (`if (s > this._hitstop)`), so N requests inside one frame produce exactly
+  // one freeze of the largest of them — which is what the header has always promised. And the
+  // window is genuinely one trigger pull: `service.ts::tryFire` calls `fireShot` at most once per
+  // update, so `unscaledElapsed` (advanced once per frame, never mid-frame) cannot span two
+  // pulls even at 15 fps.
+  //
+  // `unscaledElapsed` is the right clock here: this whole file runs on the trigger's unscaled
+  // frame time (the service header states that rule), and gating on scaled time would mean the
+  // freeze slows down its own gate. `Time.reset()` zeroes the clock, so a `now` behind the stamp
+  // means the clock restarted — take the shot rather than sulk for 0.13 s into a new run.
   const stop = killed ? WEAPON.hitstopKill : isCrit ? WEAPON.hitstopCrit : WEAPON.hitstopBody;
-  ctx.time.hitstop(stop);
+  const now = ctx.time.unscaledElapsed;
+  const sameFrame = now === _lastHitstopAt;
+  if (killed || sameFrame || now - _lastHitstopAt >= WEAPON.hitstopMinGap || now < _lastHitstopAt) {
+    _lastHitstopAt = now;
+    ctx.time.hitstop(stop);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════

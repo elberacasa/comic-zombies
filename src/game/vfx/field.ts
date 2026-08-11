@@ -115,6 +115,27 @@ export interface FieldOptions {
   cut?: number;
   /** Depth bias in units — decals need it or they z-fight the surface they are printed on. */
   polygonOffset?: number;
+  /**
+   * WHEN THE POOL IS FULL, RETIRE THE OLDEST INSTANCE INSTEAD OF DROPPING THE NEW ONE.
+   *
+   * The old behaviour was "the pool is a hard cap; at the cap the effect is simply not drawn".
+   * That is the wrong failure mode for a 900 rpm weapon: the cards already on screen are the
+   * OLDEST ones, mid-fade, and the ones being refused are the ones printed at the point the
+   * player is currently shooting. The frame therefore went stale exactly when it should have
+   * been loudest — the effect stopped tracking the trigger. Retiring the oldest keeps the
+   * newest hit visible and the live count pinned at `capacity` instead of thrashing.
+   *
+   * NEVER GROWS AND NEVER ALLOCATES. There is no path in this class that constructs anything
+   * after the constructor: retiring is a `release` + a re-`alloc` of the id that just came
+   * free, so capacity is a genuine hard bound on memory and on the instance buffer.
+   *
+   * Only for families whose emitter owns its slots through this field's own live list and
+   * releases them purely on expiry (cards, flashes, tracers, shards). NOT for `digits` — the
+   * `NumberEmitter` holds slot ids in its own tables across frames, so a silent recycle would
+   * hand a live number's quad to somebody else. NOT for `decals` either: `DecalField` keeps its
+   * own FIFO because a decal's order is the record of the fight, not just a cache eviction.
+   */
+  recycleOldest?: boolean;
 }
 
 export class InstancedField {
@@ -134,10 +155,21 @@ export class InstancedField {
   private attrDirty = false;
   private _peak = 0;
   private _starved = 0;
+  private _recycled = 0;
+
+  private readonly recycleOldest: boolean;
+  /**
+   * Acquisition order per slot: a monotonic counter stamped at `acquire`. Only ever compared,
+   * so a f64 counter is good for 2^53 spawns — about 4700 years at the SMG's peak spawn rate.
+   */
+  private readonly stamp: Float64Array;
+  private stampSeq = 0;
 
   constructor(opts: FieldOptions) {
     this.capacity = Math.max(1, opts.capacity | 0);
     this.geometry = unitQuad();
+    this.recycleOldest = opts.recycleOldest === true;
+    this.stamp = new Float64Array(this.capacity);
 
     const solid = opts.solid === true;
     this.material = new ShaderMaterial({
@@ -192,19 +224,58 @@ export class InstancedField {
 
   get live(): number { return this.set.size; }
   get peak(): number { return this._peak; }
-  /** Non-zero means the pool ran dry and effects were dropped. Retune `VFX.pool`. */
+  /**
+   * How many times the pool was asked for a slot it did not have. On a `recycleOldest` family
+   * this is pressure, not loss — see `recycled`. On any other family it is dropped effects,
+   * and `VFX.pool` needs retuning.
+   */
   get starved(): number { return this._starved; }
+  /** Of those, how many were served by retiring the oldest live instance. */
+  get recycled(): number { return this._recycled; }
   /** Packed live slot ids. Valid for `[0, live)`. Order changes on release — never assume it. */
   get dense(): Int32Array { return this.set.dense; }
 
   /** Take a slot, or -1 at the cap. Never grows, never allocates. */
   acquire(): number {
-    const id = this.ids.alloc();
-    if (id < 0) { this._starved++; return -1; }
+    let id = this.ids.alloc();
+    if (id < 0) {
+      this._starved++;
+      if (!this.recycleOldest) return -1;
+      id = this.retireOldest();
+      if (id < 0) return -1;
+      this._recycled++;
+    }
     this.set.add(id);
+    this.stamp[id] = ++this.stampSeq;
     if (this.set.size > this._peak) this._peak = this.set.size;
     this.mesh.visible = true;
     return id;
+  }
+
+  /**
+   * Free the longest-lived instance and hand its slot straight back.
+   *
+   * A linear scan of the packed live list, which is at most `capacity` (640 for cards) machine
+   * ints — and it only runs on a call that found the pool ALREADY FULL, i.e. never on a healthy
+   * frame. Worst measured demand is the 900 rpm SMG at ~190 card spawns per second; if every
+   * one of those hit a full pool the scan would cost 190 × 640 ≈ 122k int compares per second,
+   * roughly 0.2 ms out of 1000. A ring of slot ids would be O(1) but needs a second parallel
+   * array plus stale-entry compaction to survive out-of-order expiry — more state and more
+   * failure modes than the cost it removes.
+   */
+  private retireOldest(): number {
+    const d = this.set.dense;
+    const n = this.set.size;
+    if (n === 0) return -1;
+    let best = d[0];
+    let bestStamp = this.stamp[best];
+    for (let i = 1; i < n; i++) {
+      const s = d[i];
+      const st = this.stamp[s];
+      if (st < bestStamp) { bestStamp = st; best = s; }
+    }
+    this.release(best);
+    return this.ids.alloc();
   }
 
   /** Give a slot back and collapse its instance. Releasing twice corrupts the allocator. */

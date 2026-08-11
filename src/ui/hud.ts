@@ -89,6 +89,139 @@ const DMG = {
   depth: 26,
 } as const;
 
+/**
+ * HIT DAMAGE NUMBERS — "how hard did that land".
+ *
+ * The world-space numbers (`vfx/emitters.ts::NumberEmitter`) print into the blood, at the wound,
+ * under the spray, and they merge for 0.18 s per target — which is the right *effect* and the
+ * wrong *reading*: by the time you have parsed one it is a running total of three bullets. The
+ * HUD copy is the readable one. It sits beside the crosshair, where the eye already is, on PAPER
+ * over ink so it survives a red screen.
+ *
+ * ONE TRIGGER PULL = ONE NUMBER. `mergeWindow` is 45 ms, deliberately *below* the fastest fire
+ * interval in the arsenal (ratatat, 900 rpm = 66.7 ms). So a shotgun's 8 pellets and a marksman
+ * round's 3 penetration hits — all resolved inside a single frame — add into one number, and two
+ * pulls of the trigger never do. That is the difference between reading your damage and reading
+ * an accumulator.
+ */
+const HITNUM = {
+  slots: 8,
+  /** Seconds on screen. Long enough to read at a glance, short enough not to queue up. */
+  life: 0.58,
+  /** See above: must stay under 60 ms or auto fire chains into one growing total. */
+  mergeWindow: 0.045,
+  /**
+   * Slot anchors: [x, y, tilt°] in CSS px from screen centre, applied ONCE at construction.
+   *
+   * Right and below the crosshair only — never above it, which is where the head you are
+   * shooting at is. Slots are handed out in order and recycled in order, so consecutive numbers
+   * are always at different anchors and a burst cascades down the fan instead of strobing in
+   * one spot. No randomness: the HUD is deterministic like everything else.
+   */
+  anchors: [
+    [52, 18, -5], [76, 44, 4], [46, 68, -3], [86, 92, 6],
+    [58, 116, -6], [92, 20, 3], [40, 44, -4], [70, 68, 5],
+  ],
+} as const;
+
+/**
+ * Damage → the string on screen, QUANTISED so the set of strings it can ever produce is finite.
+ *
+ * Why quantise at all: word and number art is cached by string (`art/letters.ts`), and damage is
+ * a float — range falloff alone makes 41.83 and 41.79 two different values, so printing raw
+ * `amount` mints a new cache entry per bullet and leaks textures for the life of the session.
+ * This HUD readout is DOM and does not touch that cache, but it feeds the same `damageLabel()`
+ * contract the world numbers should use, and the memo below is only bounded because the input is.
+ *
+ * The buckets are chosen so the rounding is always smaller than the thing it is describing:
+ *   ·   1‥99   → exact integer          →  99 strings   (every body shot in the game today)
+ *   · 100‥999  → nearest 5  (≤2.5% off) → 180 strings   (crits, shotgun broadsides)
+ *   · 1000‥9975→ nearest 25 (≤1.3% off) → 360 strings   (Pack-a-Punch / insta-kill territory)
+ *   · above    → the single string "9999+"               →   1 string
+ * TOTAL: **640 distinct strings, forever**, whatever the damage curve does later. Clamping, not
+ * truncating, at the top: taking 4 digits off 12345 shows "1234", which is wrong by 10× and
+ * silent — the same reasoning as `NumberEmitter.layout`.
+ */
+const HITNUM_MAX_LABELS = 640;
+const _labelMemo = new Map<number, string>();
+
+function damageLabel(amount: number): string {
+  // Floor at 1: a hit that connected must never print "0". A grazing pellet at maximum falloff
+  // rounds to nothing, and "0" reads as "your gun does not work" rather than "barely".
+  const a = Math.max(1, Math.round(amount));
+  let q: number;
+  if (a < 100) q = a;
+  else if (a < 1000) q = Math.round(a / 5) * 5;
+  else if (a <= 9975) q = Math.round(a / 25) * 25;
+  else q = -1;
+  // Memoised so a sustained burst writes textContent without allocating a string per bullet.
+  // The map can never exceed HITNUM_MAX_LABELS entries because `q` above is a bounded set.
+  let s = _labelMemo.get(q);
+  if (s === undefined) {
+    s = q < 0 ? '9999+' : String(q);
+    // The cap is unreachable by construction — it is here so that if someone widens a bucket
+    // later, the memo stops growing instead of quietly becoming a leak.
+    if (_labelMemo.size < HITNUM_MAX_LABELS) _labelMemo.set(q, s);
+  }
+  return s;
+}
+
+/**
+ * Pre-built keyframes. WAAPI copies the array it is given, so one frozen array per variant means
+ * a hit costs exactly one `Animation` object instead of an array plus four object literals — and
+ * at 900 rpm into a horde that is the difference between a flat heap and a sawtooth.
+ *
+ * The OUTER element carries the anchor and the tilt as static CSS; only the inner <i> is
+ * animated, so these four keyframes serve all eight slots.
+ */
+const HITNUM_KF_BODY: Keyframe[] = [
+  { transform: 'translateY(8px) scale(.55) rotate(-9deg)', opacity: 0, offset: 0 },
+  { transform: 'translateY(-2px) scale(1.2) rotate(3deg)', opacity: 1, offset: 0.15 },
+  { transform: 'translateY(-6px) scale(1) rotate(0deg)', opacity: 1, offset: 0.3 },
+  { transform: 'translateY(-38px) scale(.9) rotate(4deg)', opacity: 0, offset: 1 },
+];
+/** A crit hits harder on every channel at once: it is HOT, it is bigger, and it SLAMS. */
+const HITNUM_KF_CRIT: Keyframe[] = [
+  { transform: 'translateY(10px) scale(.5) rotate(-13deg)', opacity: 0, offset: 0 },
+  { transform: 'translateY(-4px) scale(1.5) rotate(5deg)', opacity: 1, offset: 0.13 },
+  { transform: 'translateY(-8px) scale(1.18) rotate(0deg)', opacity: 1, offset: 0.32 },
+  { transform: 'translateY(-52px) scale(1.02) rotate(6deg)', opacity: 0, offset: 1 },
+];
+const HITNUM_KF_KILL: Keyframe[] = [
+  { transform: 'translateY(12px) scale(.5) rotate(14deg)', opacity: 0, offset: 0 },
+  { transform: 'translateY(-6px) scale(1.62) rotate(-6deg)', opacity: 1, offset: 0.12 },
+  { transform: 'translateY(-10px) scale(1.24) rotate(0deg)', opacity: 1, offset: 0.34 },
+  { transform: 'translateY(-58px) scale(1.06) rotate(-7deg)', opacity: 0, offset: 1 },
+];
+const HITNUM_TIMING: KeyframeAnimationOptions = {
+  duration: HITNUM.life * 1000,
+  easing: 'cubic-bezier(.15,.9,.3,1)',
+  fill: 'forwards',
+};
+
+/**
+ * The hit marker's three poses, likewise frozen. This used to build a 3-entry array with three
+ * object literals — and call `getAnimations()`, which allocates an array of its own — on EVERY
+ * bullet that connected. It was the last per-hit allocation left in the HUD.
+ */
+const HITMARK_KF_BODY: Keyframe[] = [
+  { transform: 'scale(.55) rotate(0deg)', opacity: 1 },
+  { transform: 'scale(1) rotate(0deg)', opacity: 1, offset: 0.35 },
+  { transform: 'scale(1.12) rotate(0deg)', opacity: 0 },
+];
+const HITMARK_KF_CRIT: Keyframe[] = [
+  { transform: 'scale(.69) rotate(0deg)', opacity: 1 },
+  { transform: 'scale(1.25) rotate(0deg)', opacity: 1, offset: 0.35 },
+  { transform: 'scale(1.4) rotate(0deg)', opacity: 0 },
+];
+const HITMARK_KF_KILL: Keyframe[] = [
+  { transform: 'scale(.83) rotate(-14deg)', opacity: 1 },
+  { transform: 'scale(1.5) rotate(0deg)', opacity: 1, offset: 0.35 },
+  { transform: 'scale(1.68) rotate(0deg)', opacity: 0 },
+];
+const HITMARK_TIME_HIT: KeyframeAnimationOptions = { duration: 180, easing: 'cubic-bezier(.15,.9,.3,1)' };
+const HITMARK_TIME_KILL: KeyframeAnimationOptions = { duration: 300, easing: 'cubic-bezier(.15,.9,.3,1)' };
+
 /** Below this fraction of the largest magazine we have seen, the ammo readout goes HOT. */
 const LOW_AMMO_FRAC = 0.26;
 
@@ -478,6 +611,32 @@ function styleSheet(): string {
 .cz-hit .killmark { display: none; }
 .cz-hit[data-kill="1"] .killmark { display: inline; }
 
+/* ── HIT DAMAGE NUMBERS ──────────────────────────────────────────────────────
+   Pooled, eight slots, anchored beside the crosshair. Outer span = anchor + tilt, set once and
+   never touched again; inner <i> = the only thing WAAPI animates.
+
+   THE CRIT READ IS THREE CHANNELS, not a colour: HOT instead of PAPER, ~40% bigger type, and a
+   harder slam with more travel. Any one of those alone dies in peripheral vision or on a HOT
+   screen — together a crit is unmistakable at a glance. A KILL takes it further into GOLD, which
+   is the same promotion the hit marker's diamond makes, so the two can never disagree.
+
+   The ink stroke is drawn with four offset text-shadows rather than -webkit-text-stroke: a stroke
+   thins at the joins of Impact's heavy verticals, and a damage number that goes grey over a lit
+   street is a number you cannot read. */
+.cz-hitnums { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.cz-hitnum {
+  position: absolute; white-space: nowrap; line-height: 1;
+  font-size: 1.45rem; letter-spacing: .02em; color: ${paper};
+}
+.cz-hitnum > i {
+  display: inline-block; font-style: normal; opacity: 0; transform-origin: 50% 65%;
+  text-shadow:
+    3px 3px 0 ${ink}, -2px -2px 0 ${ink}, 2px -2px 0 ${ink}, -2px 2px 0 ${ink},
+    0 3px 0 ${ink}, 3px 0 0 ${ink}, 0 -3px 0 ${ink}, -3px 0 0 ${ink};
+}
+.cz-hitnum[data-kind="crit"] { color: ${hot}; font-size: 2.05rem; }
+.cz-hitnum[data-kind="kill"] { color: ${gold}; font-size: 2.05rem; }
+
 /* ── interact prompt ─────────────────────────────────────────────────────── */
 .cz-prompt {
   position: absolute; left: 50%; top: 60%;
@@ -628,6 +787,8 @@ export class HudSystem implements System, HudService {
 
   // widgets
   private readonly hitMark: SVGSVGElement;
+  /** The live hit-marker animation, held so it can be cancelled without `getAnimations()`. */
+  private hitMarkAnim: Animation | null = null;
   private readonly dmgSvg: SVGSVGElement;
   private readonly dmgSlots: SVGGElement[] = [];
   private dmgNext = 0;
@@ -664,6 +825,11 @@ export class HudSystem implements System, HudService {
   private readonly vRemain: HTMLSpanElement;
   private readonly floatLayer: HTMLDivElement;
   private readonly floats: HTMLSpanElement[] = [];
+  /** Hit damage numbers: outer = anchored shell, inner = the animated glyph run. */
+  private readonly hitNumLayer: HTMLDivElement;
+  private readonly hitNumShells: HTMLSpanElement[] = [];
+  private readonly hitNumGlyphs: HTMLElement[] = [];
+  private readonly hitNumAnims: (Animation | null)[] = [];
   private readonly buffLayer: HTMLDivElement;
   private readonly deckEl: HTMLDivElement;
   private readonly downEl: HTMLDivElement;
@@ -688,6 +854,15 @@ export class HudSystem implements System, HudService {
   private rounds: RoundExtras | null = null;
   /** A card layer owns the screen — suppress title cards so two panels never fight. */
   private modal = false;
+
+  // hit damage numbers. `hitNumAge` is seconds since the live number was last written; it starts
+  // above `mergeWindow` so the first hit of a session can never merge into slot 0.
+  private hitNumNext = 0;
+  private hitNumAge = 99;
+  private hitNumOwner = -1;
+  private hitNumValue = 0;
+  private hitNumSlot = -1;
+  private hitNumCrit = false;
 
   // rolling points
   private pointsTarget = 0;
@@ -871,6 +1046,25 @@ export class HudSystem implements System, HudService {
     }
     this.root.appendChild(this.floatLayer);
 
+    // Hit damage numbers. Anchors and tilts are baked into the shells here and never rewritten,
+    // so landing a hit only ever touches `textContent`, one dataset key and one animation.
+    this.hitNumLayer = div('cz-hitnums');
+    for (let i = 0; i < HITNUM.slots; i++) {
+      const shell = document.createElement('span');
+      shell.className = 'cz-hitnum';
+      const a = HITNUM.anchors[i % HITNUM.anchors.length]!;
+      shell.style.left = `${a[0]}px`;
+      shell.style.top = `${a[1]}px`;
+      shell.style.transform = `rotate(${a[2]}deg)`;
+      const glyphs = document.createElement('i');
+      shell.appendChild(glyphs);
+      this.hitNumLayer.appendChild(shell);
+      this.hitNumShells.push(shell);
+      this.hitNumGlyphs.push(glyphs);
+      this.hitNumAnims.push(null);
+    }
+    this.root.appendChild(this.hitNumLayer);
+
     this.buffLayer = div('cz-buffs');
     this.root.appendChild(this.buffLayer);
 
@@ -1047,7 +1241,13 @@ export class HudSystem implements System, HudService {
       on('weapon:reloadStart', (p) => this.startActiveReload(p.weapon, p.duration, ctx)),
       on('weapon:activeReloadWindow', (p) => this.setActiveReloadWindow(p.open, ctx)),
       on('weapon:reloadEnd', (p) => this.endActiveReload(p.active ? 'good' : 'done')),
-      on('hit:enemy', (p) => this.hitMarker(p.info.isCrit, p.killed)),
+      on('hit:enemy', (p) => {
+        // Both readouts take their crit from the SAME field. `info.isCrit` is set by
+        // `firing.ts` as `part === 'head'`, so the marker, the number and the audio cue can
+        // never disagree about what just happened.
+        this.hitMarker(p.info.isCrit, p.killed);
+        this.hitNumber(p.info.amount, p.info.isCrit, p.killed, p.target.id);
+      }),
       on('ui:prompt', (p) => this.prompt(p.text)),
       on('ui:titleCard', (p) => this.titleCard(p.text, p.subtitle, p.duration)),
     );
@@ -1087,6 +1287,10 @@ export class HudSystem implements System, HudService {
       this.hitTimer -= dt;
       if (this.hitTimer <= 0) this.hitMark.style.opacity = '0';
     }
+    // Unscaled frame time on purpose: the merge window has to close in REAL seconds, or a
+    // hitstop frame (which is exactly when a shotgun's pellets land) would stretch it past a
+    // trigger interval and start accumulating.
+    this.hitNumAge += dt;
     if (this.titleTimer > 0) {
       this.titleTimer -= dt;
       if (this.titleTimer <= 0) this.dismissTitle();
@@ -1194,15 +1398,56 @@ export class HudSystem implements System, HudService {
     this.hitMark.dataset.kill = killed ? '1' : '0';
     this.hitMark.style.opacity = '1';
     this.hitTimer = killed ? 0.3 : 0.18;
-    this.hitMark.getAnimations().forEach((a) => a.cancel());
-    const big = killed ? 1.5 : isCrit ? 1.25 : 1;
-    this.hitMark.animate(
-      [
-        { transform: `scale(${(big * 0.55).toFixed(2)}) rotate(${killed ? -14 : 0}deg)`, opacity: 1 },
-        { transform: `scale(${big.toFixed(2)}) rotate(0deg)`, opacity: 1, offset: 0.35 },
-        { transform: `scale(${(big * 1.12).toFixed(2)}) rotate(0deg)`, opacity: 0 },
-      ],
-      { duration: this.hitTimer * 1000, easing: 'cubic-bezier(.15,.9,.3,1)' },
+    // Cancel the one animation we know about instead of asking the element for its list —
+    // `getAnimations()` builds a fresh array on every call, and this runs per bullet.
+    this.hitMarkAnim?.cancel();
+    this.hitMarkAnim = this.hitMark.animate(
+      killed ? HITMARK_KF_KILL : isCrit ? HITMARK_KF_CRIT : HITMARK_KF_BODY,
+      killed ? HITMARK_TIME_KILL : HITMARK_TIME_HIT,
+    );
+  }
+
+  /**
+   * THE NUMBER. What that bullet was actually worth, next to the crosshair, in real units.
+   *
+   * This is the readout the player asked for: it is how you tell a 26 from a 42, how you see a
+   * head shot pay 2.5×, and — once Pack-a-Punch exists — how an upgrade proves itself in one
+   * shot instead of one round. `amount` comes straight off `DamageInfo`, post-falloff and
+   * post-multiplier, i.e. exactly what the zombie lost.
+   *
+   * Merging is per TARGET and only inside `HITNUM.mergeWindow` (45 ms — under the fastest fire
+   * interval in the game), so it can catch the pellets of one shotgun blast and never two pulls
+   * of a trigger. `killed` outranks `isCrit` for the styling: the last hit is the one you most
+   * need to read, and GOLD matches the kill diamond the marker draws in the same frame.
+   */
+  private hitNumber(amount: number, isCrit: boolean, killed: boolean, targetId: number): void {
+    if (!(amount > 0)) return;
+
+    const merging =
+      this.hitNumSlot >= 0 && this.hitNumOwner === targetId && this.hitNumAge < HITNUM.mergeWindow;
+
+    const slot = merging ? this.hitNumSlot : this.hitNumNext;
+    if (!merging) this.hitNumNext = (this.hitNumNext + 1) % HITNUM.slots;
+
+    this.hitNumValue = merging ? this.hitNumValue + amount : amount;
+    this.hitNumCrit = merging ? this.hitNumCrit || isCrit : isCrit;
+    this.hitNumOwner = targetId;
+    this.hitNumSlot = slot;
+    this.hitNumAge = 0;
+
+    const shell = this.hitNumShells[slot]!;
+    const kind = killed ? 'kill' : this.hitNumCrit ? 'crit' : 'body';
+    if (shell.dataset.kind !== kind) shell.dataset.kind = kind;
+    this.hitNumGlyphs[slot]!.textContent = damageLabel(this.hitNumValue);
+
+    // A merged pellet only rewrites the text — restarting the slam mid-blast would make one
+    // shot look like eight, which is the exact noise this readout exists to replace. A kill is
+    // the one exception: the pose changes, so it has to be re-played.
+    if (merging && !killed) return;
+    this.hitNumAnims[slot]?.cancel();
+    this.hitNumAnims[slot] = this.hitNumGlyphs[slot]!.animate(
+      killed ? HITNUM_KF_KILL : this.hitNumCrit ? HITNUM_KF_CRIT : HITNUM_KF_BODY,
+      HITNUM_TIMING,
     );
   }
 

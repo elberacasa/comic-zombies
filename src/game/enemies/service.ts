@@ -486,6 +486,18 @@ export class EnemySystem implements System, EnemyService {
     isCrit: false,
     knockback: 0,
   };
+  /**
+   * Set for exactly the duration of one `damage()` call made by `damageSphere`, so the hit path
+   * can tell a bullet from a blast. It is the only signal available: `DamageInfo.knockback` is a
+   * per-source SCALE that the firing path sets to 1 for every bullet, so it cannot distinguish
+   * them, and sniffing `weaponId` would put a weapon table inside the enemy system.
+   *
+   * Safe under re-entrancy: it is written immediately before the call and cleared immediately
+   * after, and `damage()` reads it before it emits anything, so a `hit:enemy` listener that
+   * re-enters (BOOM SHOT's chained `damageSphere`) cannot be observed by its own caller.
+   */
+  private splashHit = false;
+
   private readonly evPos = new Vector3();
   private readonly evPos2 = new Vector3();
 
@@ -1072,6 +1084,11 @@ export class EnemySystem implements System, EnemyService {
      * teleported its whole effect onto the body two seconds later, on plant. Both halves are
      * fixed here: enough impulse tears it off the wall, and anything short of that shifts the
      * whole mantle trajectory and then decays, so nothing is ever stored up.
+     *
+     * STILL TRUE AFTER BUILD 010, on purpose. Grounded knockback was cut to 8% so bullets stop
+     * shoving zombies backwards, but `damage()` exempts `state === 'climb'` and banks the full
+     * impulse, because `NAV.climbBreakImpulse` is calibrated in unscaled m/s. The ledge window is
+     * therefore unchanged: one 85-damage headshot, or three body hits inside the decay window.
      */
     const impulse = Math.hypot(e.push.x, e.push.z);
     if (impulse >= NAV.climbBreakImpulse) { this.breakClimb(e, ctx); return; }
@@ -1498,8 +1515,9 @@ export class EnemySystem implements System, EnemyService {
 
   /**
    * THE HIT. Every path into an enemy's health goes through here, so every path produces the
-   * same four things: a flinch, a stagger, a knockback and a `hit:enemy` event. There is no
-   * "quiet" damage.
+   * same four things: a flinch, a stagger, a reaction impulse and a `hit:enemy` event. There is
+   * no "quiet" damage — but since BUILD 010 the impulse is only a NUDGE unless the source is
+   * genuinely physical (see the knockback block below).
    */
   private readonly damage = (e: Enemy, info: DamageInfo): void => {
     const ctx = this.ctx;
@@ -1537,8 +1555,36 @@ export class EnemySystem implements System, EnemyService {
       amount, info.part, info.isCrit, leanX, leanZ, limb, e.def, info.knockback,
     );
     e.staggerT = e.reactions.staggerT;
-    e.push.x += info.direction.x * r.knockback;
-    e.push.z += info.direction.z * r.knockback;
+
+    /**
+     * KNOCKBACK, WHICH IS NOW A NUDGE (BUILD 010). The playtester: *"zombies should keep walking
+     * when u shoot them? they feel weird moving back when shot"*. A 42-damage body shot used to
+     * bank 1.47 m/s of `push` and travel 0.226 m backwards, against the 0.062 m a staggered
+     * shambler walks forward in the same window — so every bullet visibly reversed the body, and
+     * held fire reversed it permanently. The read now lives entirely in the flinch springs.
+     *
+     * Two cases keep the FULL impulse because they are honestly physical:
+     *   · `splashHit` — an explosion is allowed to throw a body.
+     *   · `state === 'climb'` — `stepClimb` compares accumulated `push` against
+     *     `NAV.climbBreakImpulse` (2.6), a threshold whose "one 85-damage headshot, or three body
+     *     hits" calibration is written against the unscaled figure. Scaling here would silently
+     *     turn shooting a zombie off a ledge into a 12-hit job.
+     * Everything else gets `knockbackTranslation` of it, capped, so it can never out-run the
+     * body's own walk. See `ENEMY.knockbackPerDamage` for the full table.
+     */
+    const physical = this.splashHit || e.state === 'climb';
+    const impulse = physical ? r.knockback : r.knockback * ENEMY.knockbackTranslation;
+    e.push.x += info.direction.x * impulse;
+    e.push.z += info.direction.z * impulse;
+    if (!physical) {
+      const banked = Math.hypot(e.push.x, e.push.z);
+      if (banked > ENEMY.knockbackTranslationMax) {
+        const k = ENEMY.knockbackTranslationMax / banked;
+        e.push.x *= k;
+        e.push.z *= k;
+      }
+    }
+
     if (r.interrupted && e.state === 'attack') {
       e.attackT = 0;
       e.cooldownT = ENEMY.meleeCooldown * 0.5;
@@ -1856,7 +1902,11 @@ export class EnemySystem implements System, EnemyService {
       info.knockback = source.knockback > 0 ? source.knockback * falloff : falloff;
       info.weaponId = source.weaponId;
       info.affix = source.affix;
+      // Blasts keep their full shove — see the knockback note in `damage()`. Set per call, not
+      // per loop, so a listener that re-enters this method cannot leave the flag raised.
+      this.splashHit = true;
       this.damage(e, info);
+      this.splashHit = false;
       n++;
     }
     return n;

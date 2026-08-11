@@ -45,7 +45,19 @@
  *
  * The delta used is `ctx.time.dt` — the SCALED frame delta — so hitstop freezes the ink with
  * the world. A 4-frame freeze in which the blood keeps flying is a 4-frame freeze that reads
- * as a stutter instead of an impact.
+ * as a stutter instead of an impact. It is FLOORED at `MIN_AGE_SCALE` of the real delta,
+ * because effects spawn on the unscaled trigger clock and a *sustained* freeze would otherwise
+ * multiply every card's real-world lifetime, and the pool's occupancy with it.
+ *
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * BUDGET
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * Two independent guards keep a 900 rpm stream from stacking effects without bound, and they
+ * answer different questions: `headroomOf` is an OCCUPANCY guard ("is the pool full now"), and
+ * `takeCards` is a RATE guard ("has this been going on too long"). Under either one, blood is
+ * the priority channel and the spray/dust/debris yield first — see `CARD_NOISE_FLOOR`. Under
+ * both, a pool at its cap RECYCLES ITS OLDEST INSTANCE and never allocates
+ * (`FieldOptions.recycleOldest`).
  */
 
 import { Color, Group, Quaternion, SRGBColorSpace, Vector3 } from 'three';
@@ -100,6 +112,69 @@ const PREWARM_SETS: readonly WordSetName[] = ['gun', 'crit', 'kill'];
 const BURST_SITES = 12;
 /** Metres. Roughly one shambler torso, so "the same target" resolves spatially. */
 const BURST_RADIUS = 0.55;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// THE CARD BUDGET — a token bucket, and the arithmetic it is fitted to.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//
+// Every pool guard in this file used to be an OCCUPANCY guard (`headroom`): thin out once the
+// pool is already half full. That is a reaction, and it arrives one lifetime late. `ratatat`
+// fires at 900 rpm (`WEAPON_DEFS`) and `boomstick` throws 8 pellets on ONE trigger pull, so the
+// card pool can be asked for a hundred cards inside a single frame and for a couple of hundred
+// a second indefinitely. What was missing is a RATE guard.
+//
+// The refill rate is derived, not guessed:
+//   • mean card lifetime ≈ 0.45 s (impact spikes 0.5 × U(0.4,1) → 0.35 s; ink droplets
+//     0.55 × U(0.7,1.25) → 0.54 s, minus the 55% that land early and become decals; dust 0.5 s)
+//   • `headroomOf` starts tapering at 50% of `VFX.pool.cards`, i.e. 320 live
+//   • a sustained spawn rate R gives R × 0.45 live, so R ≤ 320 / 0.45 ≈ 710 cards/s keeps the
+//     pool permanently below the taper knee — the point being that on a NORMAL fight neither
+//     guard ever fires and the ink is exactly as dense as it is authored to be.
+//
+// Sustained demand against that: the SMG at 15 hits/s × ~13 cards per hit ≈ 190 cards/s, the
+// shotgun at 90 rpm × 8 pellets ≈ 150 cards/s. Both are a quarter of the budget, so a single
+// stream of fire is NEVER clipped. The bucket only bites on genuine pile-ups.
+const CARD_REFILL = 700;
+//
+// Bucket depth is the burst allowance: one full shotgun blast (8 pellets × ~13 = 104 cards)
+// that kills two zombies (2 × 20 droplets) ≈ 145, rounded up for the panel-shatter beat. It is
+// also ~⅓ of the card capacity, which is the real reason for this number: a bucket dumped
+// entirely into one frame still cannot on its own push the pool past the 320-card taper knee.
+// A 25-kill NUKE asks for ~500 cards and now gets 220 — better than the old behaviour, which
+// was to spawn until the pool starved 838 times and let arrival order decide the winners.
+const CARD_BUCKET = 220;
+/**
+ * Tokens the NOISE families (impact spray, dust, explosion debris) may not spend below, so that
+ * blood — which draws from the whole bucket — is the last thing to thin out under pressure.
+ * "Mostly the blood" is the playtester's ask; this is that ask expressed as a priority, not as
+ * a count, so it holds at any fire rate.
+ */
+const CARD_NOISE_FLOOR = Math.round(CARD_BUCKET * 0.35);
+
+/**
+ * FLOOR ON THE AGEING DELTA, as a fraction of the real frame delta.
+ *
+ * VFX age on `ctx.time.dt` (SCALED) so ink freezes with the world — see the header. But effects
+ * SPAWN off `weapon:fired` / `hit:enemy`, which arrive on the unscaled trigger clock, so a
+ * sustained freeze pulls the two rates apart: at 900 rpm the world was running at ~23% during a
+ * headshot stream, which multiplied every card's real-world lifetime by 4× and the pool's
+ * occupancy with it. A 2–4 frame freeze at 0.35 still visibly holds the ink (that is the length
+ * ART §8's hold frame is authored for); a permanent one can no longer stretch lifetimes without
+ * bound. Applied only when `dt > 0`, so PAUSE (`effectiveScale` 0) still stops the ink dead.
+ */
+const MIN_AGE_SCALE = 0.35;
+
+/**
+ * Impact spike cards thrown by a bullet landing on FLESH. Cut 7 → 3.
+ *
+ * `VFX.impactParticles` is 7, and on a crit the 1.35 scale took it to 10 — every bullet, on top
+ * of 9–15 blood droplets, in the same HOT tint, occupying the same patch of screen. It was not
+ * blood; it was a second, worse blood drawn over the real one, and it was the single biggest
+ * per-hit card count in the game. Three still reads as a contact-point spike ring because the
+ * burst card underneath it carries the shape. World hits keep the full 7 (`VFX.impactParticles`)
+ * — there is no splatter there, so the spray IS the effect.
+ */
+const FLESH_SPIKES = 3;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -167,6 +242,9 @@ export class VfxSystem implements System, VfxService {
   /** Resolved word styles, one per set, built on first use — see `wordTexture`. */
   private readonly wordStyles = new Map<WordSetName, WordStyleOptions>();
 
+  /** Card spawn tokens. Refilled in `lateUpdate` on the REAL clock — see `takeCards`. */
+  private cardTokens = CARD_BUCKET;
+
   /** Remaining seconds of the HOT speed-line pulse a big hit asks for. */
   private lineTimer = 0;
   /** Anonymous damage numbers (no enemy behind them) never merge with each other. */
@@ -197,10 +275,14 @@ export class VfxSystem implements System, VfxService {
     this.sheet = sheet;
     const P = VFX.pool;
 
-    this.cardField = new InstancedField({ name: 'cards', capacity: P.cards, sheet: sheet.texture, renderOrder: 4 });
-    this.flashField = new InstancedField({ name: 'flash', capacity: P.flashes, sheet: sheet.texture, renderOrder: 10, bloom: true });
-    this.tracerField = new InstancedField({ name: 'tracers', capacity: P.tracers, sheet: sheet.texture, renderOrder: 6 });
-    this.shardField = new InstancedField({ name: 'shards', capacity: P.shards, sheet: sheet.texture, solid: true });
+    // `recycleOldest` on the four throw-away families: at the cap they retire their oldest live
+    // instance rather than dropping the new one, so the newest hit is always the one you see and
+    // the pool is a genuine hard bound that never allocates (see `FieldOptions.recycleOldest`).
+    // `digits` and `decals` are deliberately NOT recycled — both keep slot ids of their own.
+    this.cardField = new InstancedField({ name: 'cards', capacity: P.cards, sheet: sheet.texture, renderOrder: 4, recycleOldest: true });
+    this.flashField = new InstancedField({ name: 'flash', capacity: P.flashes, sheet: sheet.texture, renderOrder: 10, bloom: true, recycleOldest: true });
+    this.tracerField = new InstancedField({ name: 'tracers', capacity: P.tracers, sheet: sheet.texture, renderOrder: 6, recycleOldest: true });
+    this.shardField = new InstancedField({ name: 'shards', capacity: P.shards, sheet: sheet.texture, solid: true, recycleOldest: true });
     this.decalFieldI = new InstancedField({
       name: 'decals', capacity: VFX.maxDecals, sheet: sheet.texture, renderOrder: 1, polygonOffset: 4,
     });
@@ -257,7 +339,17 @@ export class VfxSystem implements System, VfxService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   lateUpdate(_alpha: number, ctx: GameCtx): void {
-    const dt = ctx.time.dt;
+    // THE SPAWN BUDGET REFILLS ON THE REAL CLOCK, not the scaled one. Effects are requested from
+    // the trigger, which runs unscaled; refilling on scaled time would mean a hitstop both
+    // stretched every card's lifetime AND stopped the budget recovering, which is the same bug
+    // twice. `frameDt` is already clamped to MAX_FRAME_DT, so a stalled tab cannot mint a bucket.
+    this.cardTokens = Math.min(CARD_BUCKET, this.cardTokens + CARD_REFILL * ctx.time.frameDt);
+
+    // The ageing delta is the SCALED one, floored — see `MIN_AGE_SCALE`. `raw > 0` keeps pause
+    // and hard time-stops (`effectiveScale` exactly 0) freezing the ink completely, which is
+    // what the floor must never break.
+    const raw = ctx.time.dt;
+    const dt = raw > 0 ? Math.max(raw, ctx.time.frameDt * MIN_AGE_SCALE) : 0;
 
     // The camera is final by now — every other system's lateUpdate has run.
     ctx.camera.updateMatrixWorld();
@@ -344,7 +436,11 @@ export class VfxSystem implements System, VfxService {
     }
 
     // ── the spray ────────────────────────────────────────────────────────────
-    const n = Math.max(1, Math.round(VFX.impactParticles * VFX.density * s * this.headroom()));
+    // Flesh gets `FLESH_SPIKES` (3), the world keeps `VFX.impactParticles` (7). Budgeted as
+    // NOISE: at 900 rpm into a crowd the spray is the first thing that should thin, and the
+    // blood behind it the last.
+    const base = kind === 'blood' ? FLESH_SPIKES : VFX.impactParticles;
+    const n = this.takeCards(Math.round(base * VFX.density * s * this.headroom()), CARD_NOISE_FLOOR);
     for (let i = 0; i < n; i++) {
       this.hemisphere(_dir, _n, rng, 0.78);
       const speed = rng.range(2.2, 7.5) * s;
@@ -418,11 +514,19 @@ export class VfxSystem implements System, VfxService {
     if (_dir.lengthSq() < 1e-6) _dir.copy(UP);
     _dir.normalize();
 
+    // BLOOD IS THE PRIORITY CHANNEL — `reserve` 0, so it may drain the whole bucket while the
+    // spray and the dust are already held back at `CARD_NOISE_FLOOR`. Taken BEFORE the ground
+    // probe below: if there is no budget there is no splatter, and an octree raycast we are not
+    // going to use is the most expensive thing in this method.
+    const n = this.takeCards(
+      Math.round(VFX.bloodParticles * VFX.density * Math.max(0.1, amount) * this.headroom()), 0,
+    );
+    if (n <= 0) return;
+
     // One ground probe per splatter, not one per droplet — this is an octree raycast.
     const gy = ctx.world.groundAt(position);
     const landY = gy === null ? -Infinity : gy + 0.012;
 
-    const n = Math.max(1, Math.round(VFX.bloodParticles * VFX.density * Math.max(0.1, amount) * this.headroom()));
     const d = this.cards.desc;
     for (let i = 0; i < n; i++) {
       this.hemisphere(_v2, _dir, rng, 0.55);
@@ -524,7 +628,7 @@ export class VfxSystem implements System, VfxService {
 
     // RUST spikes blown outward, plus shards of whatever it went off next to.
     const d = this.cards.desc;
-    const n = Math.max(1, Math.round(VFX.explosionCards * VFX.density * this.headroom()));
+    const n = this.takeCards(Math.round(VFX.explosionCards * VFX.density * this.headroom()), CARD_NOISE_FLOOR);
     for (let i = 0; i < n; i++) {
       rng.unitSphere(_v2);
       _v2.y = Math.abs(_v2.y) * 0.7 + 0.15;
@@ -570,7 +674,9 @@ export class VfxSystem implements System, VfxService {
     const rng = this.rng;
     const sheet = this.sheet;
     if (!rng || !sheet) return;
-    const n = Math.max(1, Math.round(amount * VFX.density * this.headroom()));
+    // Budgeted as NOISE. Footsteps and landings fire constantly and are the cheapest thing in
+    // the frame to lose while a fight is at full volume.
+    const n = this.takeCards(Math.round(amount * VFX.density * this.headroom()), CARD_NOISE_FLOOR);
     const d = this.cards.desc;
     for (let i = 0; i < n; i++) {
       const a = rng.range(0, Math.PI * 2);
@@ -636,19 +742,32 @@ export class VfxSystem implements System, VfxService {
       this.impact(_v, _n, 'blood', crit ? 1.35 : 1);
       // Ink sprays BACK toward the shooter as well as through — a bullet exit and an entry
       // spray at once, which is the comic read even though it is not the physical one.
+      //
+      // AMOUNT RAISED 0.8 → 1.0 body, 1.5 → 1.7 crit (`VFX.bloodParticles` 9 → 9 and 15
+      // droplets). The per-hit card stack still went DOWN — 1 burst + 7 spikes + 7 droplets = 15
+      // before, 1 + 3 + 9 = 13 now — but blood went from 47% of it to 69%, and on a crit from
+      // 56% to 75%. That ratio is the playtester's note ("too much effects, we want mostly the
+      // blood") turned into a number: fewer marks on screen, and more of them are blood.
       _v2.copy(_n).multiplyScalar(0.65).add(_dir).normalize();
-      this.inkSplatter(_v, _v2, crit ? 1.5 : 0.8);
+      this.inkSplatter(_v, _v2, crit ? 1.7 : 1);
 
       _v3.copy(_v);
       _v3.y += 0.24;
       this.numbers.emit(_v3, info.amount, crit, p.target.id, rng.range(0, Math.PI * 2), rng.next());
 
-      // NOTE: no full-screen flash on a crit — see `VFX.flashCrit`. At 400 rpm that is a 7 Hz
-      // strobe. The crit already reads through four other channels.
-      if (crit && !p.killed) {
-        this.flash(VFX.flashCrit, PALETTE.PAPER);
-        this.emitWord('crit', _v3, 1.05, 0);
-      }
+      // NO WORD POP ON A NON-LETHAL CRIT, and no flash either.
+      //
+      // The word was gated at `VFX.wordCooldown.crit` 0.42 s, which at 900 rpm with any headshot
+      // discipline meant a full-screen billboard roughly twice a second — and words are the ONE
+      // family here that is not instanced (`words.ts`: a draw call each, renderOrder 12, printed
+      // directly over the zombie the player is aiming at). It was the loudest non-blood thing in
+      // the per-hit stack. A crit word is now a KILL beat: `enemy:killed` with `byCrit` still
+      // prints CRACK! / SKULLSHOT!, which is where it was always worth reading.
+      //
+      // The non-lethal crit still reads through four channels and loses nothing: the 1.35× spike
+      // burst, the 1.45× HOT damage number, 15 droplets instead of 9, and the weapon's crit
+      // hitstop. The flash was already dead (`VFX.flashCrit` is 0) and must stay dead — at
+      // 900 rpm a per-crit flash is a 15 Hz full-screen strobe, an ART §10 violation.
     }));
 
     // ── it comes apart ───────────────────────────────────────────────────────
@@ -994,6 +1113,30 @@ export class VfxSystem implements System, VfxService {
   }
 
   /**
+   * THE RATE GUARD. Spend up to `want` card tokens, never below `reserve`, and return what was
+   * actually granted. See the `CARD_REFILL` / `CARD_BUCKET` block at the top of the file for
+   * where those numbers come from.
+   *
+   * This is the second of two independent guards and they answer different questions:
+   *   • `headroom()` asks "is the pool full RIGHT NOW" — an occupancy guard, and it reacts one
+   *     card lifetime after the pressure started.
+   *   • `takeCards` asks "has this been going on too long" — a rate guard, and it clamps a
+   *     shotgun blast or a nuke in the frame it happens.
+   *
+   * `reserve` is the priority channel: blood passes 0 and may drain the bucket, noise passes
+   * `CARD_NOISE_FLOOR` and yields first. Because `impact()`'s spray runs BEFORE `inkSplatter()`
+   * on every enemy hit, without the reserve the spray would eat the budget the blood needs and
+   * a sustained stream would go dry of exactly the thing the player asked to keep.
+   */
+  private takeCards(want: number, reserve: number): number {
+    if (want <= 0) return 0;
+    const n = Math.min(want, Math.floor(Math.max(0, this.cardTokens - reserve)));
+    if (n <= 0) return 0;
+    this.cardTokens -= n;
+    return n;
+  }
+
+  /**
    * A unit vector in the hemisphere around `axis`, biased toward it by `tightness`
    * (0 = full hemisphere, 1 = straight along the axis). Allocation-free.
    */
@@ -1012,9 +1155,18 @@ export class VfxSystem implements System, VfxService {
     ctx.debug.watch('vfx digits', () => `${this.digitField.live}/${this.digitField.capacity}`);
     ctx.debug.watch('vfx words', () => `${this.words.live}/${VFX.pool.words}`);
     ctx.debug.watch('vfx draws', () => this.drawCalls());
+    // Card tokens left in the budget. Parked at `CARD_BUCKET` on any normal fight; only a
+    // shotgun blast, a nuke or a genuine pile-up should ever drag it down.
+    ctx.debug.watch('vfx budget', () => `${Math.round(this.cardTokens)}/${CARD_BUCKET}`);
     ctx.debug.watch('vfx starved', () =>
       this.cardField.starved + this.shardField.starved + this.tracerField.starved +
       this.flashField.starved + this.digitField.starved + this.words.starved);
+    // Of those, the ones that were served anyway by retiring the oldest live instance. This is
+    // the number that says the pool is at its cap; `starved` on a recycling family is no longer
+    // lost work. `digits` and `decals` do not recycle, so they never appear here.
+    ctx.debug.watch('vfx recycled', () =>
+      this.cardField.recycled + this.shardField.recycled +
+      this.tracerField.recycled + this.flashField.recycled);
   }
 
   /**
@@ -1035,6 +1187,9 @@ export class VfxSystem implements System, VfxService {
 
   /** Recycle everything — round reset, game over, teardown. */
   clear(): void {
+    // The budget comes back full: a round that ended on a nuke must not start the next one
+    // rationing its blood.
+    this.cardTokens = CARD_BUCKET;
     this.cardField.releaseAll();
     this.flashField.releaseAll();
     this.tracerField.releaseAll();

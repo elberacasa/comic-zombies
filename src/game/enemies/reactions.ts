@@ -15,8 +15,15 @@
  *      Shooting a zombie in the back and watching it lurch *forward* is worth a lot.
  *   3. **A shudder** — a high-frequency ring on a separate, much stiffer spring. ART §9 reserves
  *      high-frequency motion to enemies; this is the one place in the game that spends it.
- *   4. **Knockback** — a real velocity impulse, divided by `def.mass`, so the horde physically
- *      opens up when you shoot into it and kiting has a pressure-relief valve.
+ *   4. **A reaction impulse** — a scalar in m/s, divided by `def.mass`, handed back to the
+ *      service. It is NOT, since BUILD 010, a shove: the service spends only
+ *      `ENEMY.knockbackTranslation` (8%) of it on actually moving a body that is on its feet.
+ *      A bullet that pushes a zombie backwards breaks the one thing the mode runs on — see the
+ *      long note on `ENEMY.knockbackPerDamage`. The full impulse survives for the two cases that
+ *      are honestly physical: splash, and tearing a body off a mantle.
+ *
+ * So a hit is carried by the ANIMATION, not by translation. That is why 1–3 above are worth more
+ * than they look: with the shove gone they are the entire read, and they are unchanged.
  *
  * Both springs are the exact-solution `Spring` from `core/mathx`: an approximated spring bleeds
  * amplitude as a function of the timestep, so the same flinch would feel different on a 60 Hz
@@ -42,7 +49,11 @@ export interface ReactionResult {
   severed: number;
   /** True when the hit was heavy enough to cancel a melee wind-up. */
   interrupted: boolean;
-  /** Knockback speed to add along the bullet's direction, m/s. */
+  /**
+   * What the hit is WORTH along the bullet's direction, m/s. The service decides how much of it
+   * becomes movement — 8% for a body on its feet, all of it for splash and for a body mid-mantle
+   * (`NAV.climbBreakImpulse` is calibrated against the full figure). Never apply this raw.
+   */
   knockback: number;
 }
 
@@ -165,7 +176,9 @@ export class HitReactions {
       stagger,
       severed,
       interrupted: peak >= ANIM.flinchInterrupt,
-      // `knockbackPerDamage` is the shared feel constant; mass is the per-kind resistance.
+      // `knockbackPerDamage` is the shared feel constant; mass is the per-kind resistance. This
+      // is the FULL impulse — `EnemyService.damage` scales it down to a nudge for a body that is
+      // standing, and passes it through untouched for splash and for the climb break.
       knockback: (amount * ENEMY.knockbackPerDamage * Math.max(0, knockbackScale)) / Math.max(0.35, def.mass),
     };
   }

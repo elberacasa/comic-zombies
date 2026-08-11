@@ -40,6 +40,35 @@ const _aim = new Vector3();
 const _dir = new Vector3();
 const _prevPos = new Vector3();
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// REUSED EVENT PAYLOADS (BUILD 009).
+//
+// Three object literals used to be built on every single shot: `weapon:fired`, `fx:shake` and
+// `weapon:ammoChanged`. At `ratatat`'s 900 rpm that is 15 shots/s × 3 = 45 objects a second from
+// the trigger alone, plus a fourth on any shot that kills — pure garbage, generated in the
+// hottest path in the game and collected during a firefight.
+//
+// Sharing them is safe on exactly the terms `firing.ts` already documents for its vectors: the
+// bus is synchronous (`Emitter.emit` calls every handler inline and returns), so a payload is
+// dead the moment the emit returns. Every consumer reads scalars out on entry — the camera does
+// `shake(p.amount, p.duration)`, the HUD `setAmmo(p.ammo, p.reserve)`, the VFX copies
+// `p.direction` into its own vector. NOBODY MAY RETAIN ONE; if you write a handler that wants to,
+// copy the fields.
+//
+// The two `fx:shake` emits in a shot (shot trauma, then kill trauma) are sequential, not nested,
+// so one object serves both. `_fired.origin` / `.direction` are permanently aliased to the
+// scratch vectors the shot already fills.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+const _fired = {
+  weapon: null as unknown as WeaponInstance,
+  origin: _origin,
+  direction: _aim,
+  shotIndex: 0,
+};
+const _shake = { amount: 0, duration: 0 };
+const _ammo = { ammo: 0, reserve: 0 };
+
 const SLOT_COUNT = 2;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -460,10 +489,9 @@ export class WeaponSystem implements System, WeaponService {
 
     // The camera's trauma channel — a separate layer from the recoil spring, and the reason a
     // shot reads as a bang rather than only as a climb.
-    ctx.events.emit('fx:shake', {
-      amount: WEAPON.shotTrauma * def.cameraKick,
-      duration: WEAPON.shotTraumaTime,
-    });
+    _shake.amount = WEAPON.shotTrauma * def.cameraKick;
+    _shake.duration = WEAPON.shotTraumaTime;
+    ctx.events.emit('fx:shake', _shake);
 
     // ── 3. the ray ────────────────────────────────────────────────────────────────────────
     _origin.copy(ctx.player.eye);
@@ -477,12 +505,10 @@ export class WeaponSystem implements System, WeaponService {
     // Announced BEFORE the impacts, per M2 §1's chain. Consumers may rely on the order:
     // weapon:fired → hit:enemy (near→far) → hit:world. `shotIndex` is the recoil pattern index,
     // so it is also a free 0..N-1 variation seed for the muzzle flash and the shell eject.
-    ctx.events.emit('weapon:fired', {
-      weapon: w,
-      origin: _origin,
-      direction: _aim,
-      shotIndex: kick.index,
-    });
+    // `_fired.origin` / `.direction` ARE `_origin` / `_aim`, filled just above.
+    _fired.weapon = w;
+    _fired.shotIndex = kick.index;
+    ctx.events.emit('weapon:fired', _fired);
 
     // ── 4. trace ──────────────────────────────────────────────────────────────────────────
     const buff = this.buffRemaining > 0 ? WEAPON.activeReloadBuff : 1;
@@ -518,10 +544,10 @@ export class WeaponSystem implements System, WeaponService {
 
     // ── 5. aftermath ──────────────────────────────────────────────────────────────────────
     if (kills > 0) {
-      ctx.events.emit('fx:shake', {
-        amount: WEAPON.killTrauma * Math.min(kills, 3),
-        duration: WEAPON.killTraumaTime,
-      });
+      // Same object as the shot trauma above — the emit for that one has already returned.
+      _shake.amount = WEAPON.killTrauma * Math.min(kills, 3);
+      _shake.duration = WEAPON.killTraumaTime;
+      ctx.events.emit('fx:shake', _shake);
     }
     // Headshots refund to the magazine (`PlayerStats.headshotRefund`, GAME_BIBLE §5 rare boon).
     if (crits > 0 && stats.headshotRefund > 0) {
@@ -587,10 +613,9 @@ export class WeaponSystem implements System, WeaponService {
 
   private emitAmmo(ctx: GameCtx, w: Weapon): void {
     // `-1` is the HUD's sentinel for an infinite reserve — it prints `∞`.
-    ctx.events.emit('weapon:ammoChanged', {
-      ammo: w.ammo,
-      reserve: w.def.infiniteReserve ? -1 : w.reserve,
-    });
+    _ammo.ammo = w.ammo;
+    _ammo.reserve = w.def.infiniteReserve ? -1 : w.reserve;
+    ctx.events.emit('weapon:ammoChanged', _ammo);
   }
 
   private resetTransient(): void {
