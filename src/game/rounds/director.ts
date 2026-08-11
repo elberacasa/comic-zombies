@@ -143,6 +143,13 @@ export class RoundSystem implements System, RoundService {
   // ── round bookkeeping ─────────────────────────────────────────────────────
   private toSpawn = 0;
   private spawned = 0;
+  /**
+   * A special's *first* round is a scripted beat, not a dice roll. Its share on the intro round
+   * is one `specialSharePerRound` step — 1.2% — so left to chance the player meets the Screamer
+   * many rounds after it was "introduced", or never. BO2 makes a debut an event you remember.
+   * Each entry pins one guaranteed spawn of `kind` to wave index `at`.
+   */
+  private debuts: Array<{ kind: EnemyKind; at: number }> = [];
   private spawnTimer = 0;
   private phaseTimer = 0;
   private boonOffered = false;
@@ -333,6 +340,7 @@ export class RoundSystem implements System, RoundService {
 
     this.toSpawn = this.spawnCountFor(this._round);
     this.spawned = 0;
+    this.planDebuts();
     this._remaining = this.toSpawn;
     this.hpScale = this.hpScaleFor(this._round);
     this.speedScale = this.speedScaleFor(this._round);
@@ -488,7 +496,7 @@ export class RoundSystem implements System, RoundService {
     const spawner = this.spawner;
     if (!spawner) return false;
     if (!spawner.pick(_spawnAt)) return false;
-    const kind = this.composition(this._round);
+    const kind = this.takeDebut() ?? this.composition(this._round);
     const enemy = ctx.enemies.spawn(kind, _spawnAt, this.hpScale, this.speedScale);
     if (!enemy) return false;
     this.spawned++;
@@ -540,14 +548,42 @@ export class RoundSystem implements System, RoundService {
   }
 
   /**
-   * COMPOSITION — the third axis, and the M4 SEAM.
+   * COMPOSITION — the third axis of escalation, and it is LIVE.
    *
-   * Everything needed is already here: `ROUND.specialIntroRound` says when each special is
-   * allowed, `ROUND.specialSharePerRound` / `specialShareMax` say how much of a round it takes,
-   * and `EnemyService.spawn` accepts every `EnemyKind` today. What is missing is BEHAVIOUR — a
-   * spitter that does not spit is a pink shambler, and ART §9 reserves that hue for a threat
-   * the player must read differently. So this returns 'shambler' until `specialsEnabled`.
+   * HP first, then speed, then composition (GAME_BIBLE §6). Sprinters from round 4, brutes from
+   * 7, screamers from 8, each taking a share that grows per round and is capped so the mass
+   * stays the mass — a round that is all specials is a different game, not a harder one.
+   *
+   * The spitter is parked at round 9999 in `ROUND.specialIntroRound` until it has a projectile;
+   * see the reasoning in `tuning.ts`. Shamblers always take the remainder.
    */
+  /**
+   * Pin a guaranteed spawn for every special whose intro round is exactly this one. It lands a
+   * third of the way into the wave, never on the opening zombie — the round should read as normal
+   * for a beat, so the new silhouette arriving is a change the player notices.
+   */
+  private planDebuts(): void {
+    this.debuts.length = 0;
+    if (!ROUND.specialsEnabled) return;
+    const intro = ROUND.specialIntroRound as Record<string, number>;
+    const at = Math.min(Math.max(2, Math.floor(this.toSpawn * 0.34)), Math.max(0, this.toSpawn - 1));
+    for (const key of Object.keys(intro)) {
+      if (intro[key] === this._round) this.debuts.push({ kind: key as EnemyKind, at });
+    }
+  }
+
+  /** The pinned kind for the current wave index, if one is due. */
+  private takeDebut(): EnemyKind | null {
+    for (let i = 0; i < this.debuts.length; i++) {
+      if (this.spawned >= this.debuts[i].at) {
+        const kind = this.debuts[i].kind;
+        this.debuts.splice(i, 1);
+        return kind;
+      }
+    }
+    return null;
+  }
+
   private composition(n: number): EnemyKind {
     if (!ROUND.specialsEnabled) return 'shambler';
     const rng = this.rng;

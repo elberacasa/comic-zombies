@@ -1904,18 +1904,32 @@ export const ROUND = {
   surgeSpeedMult: 1.06,
   surgeRewardMult: 2,
 
-  // ── COMPOSITION — M4 SEAM, deliberately OFF ─────────────────────────────────────────────
+  // ── COMPOSITION — LIVE ──────────────────────────────────────────────────────────────────
   //
-  // `EnemyService.spawn` accepts every `EnemyKind` today and `enemies/defs.ts` carries stat
-  // variants for all five — but Sprinter/Brute/Spitter/Screamer have no unique BEHAVIOUR yet
-  // (a spitter that does not spit is just a pink shambler, which breaks the ART §9 read). So
-  // the director asks `composition()` for a kind on every spawn and `composition()` returns
-  // 'shambler' until this flips. When M4 lands, set it true and tune the table.
+  // A kind earns a place in the mix when it changes what the player DOES, not when it has a stat
+  // block. Three qualify:
+  //
+  //   sprinter  a genuine speed threat with its own lean silhouette (bodyScale 0.92)
+  //   brute     a wall you cannot push (mass 3) and cannot miss (bodyScale 1.28)
+  //   screamer  a DECISION: it never swings, it calls four more bodies, and staggering it
+  //             cancels the call. The first thing in the game that punishes tunnel vision.
+  //
+  // THE SPITTER IS STILL GATED, on the reasoning this comment block has carried since M3: a
+  // spitter that does not spit is just a pink shambler, and `HOT` is reserved by ART §9 for a
+  // threat the player must read *differently*. Spending the reserved hue on something that
+  // behaves identically to the mass is worse than not shipping it. It joins the mix the day it
+  // gets a projectile — set `spitter` below to its intro round then, and nothing else changes.
 
-  /** Flip to true when the specials have real AI. Nothing else needs to change. */
-  specialsEnabled: false,
-  /** First round each special may appear in. */
-  specialIntroRound: { sprinter: 4, brute: 7, spitter: 9, screamer: 12 },
+  specialsEnabled: true,
+  /**
+   * First round each special may appear in. `spitter` is parked past any reachable round rather
+   * than deleted, so the table still documents the intent and the gate is one number.
+   *
+   * The screamer comes in at 8 rather than 12: it is the most interesting thing in the set and
+   * the one that teaches priority-targeting, and a mechanic the player meets for the first time
+   * at round 12 has already had eleven rounds to learn the wrong habit.
+   */
+  specialIntroRound: { sprinter: 4, brute: 7, spitter: 9999, screamer: 8 },
   /**
    * Share of a round's spawns each special takes once introduced, growing per round after its
    * intro, capped. Shamblers always take the remainder — the mass is never not the mass.
