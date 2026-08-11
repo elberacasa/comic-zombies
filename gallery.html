@@ -134,21 +134,22 @@
   </p>
   <p class="lede">
     Every mesh is built from code, every texture is painted to a canvas at boot, every sound is
-    synthesised from oscillators and noise. The entire game is <strong>43,645 lines of
+    synthesised from oscillators and noise. The entire game is <strong>55,344 lines of
     TypeScript and a single dependency</strong>, written with Claude Code in about a day.
   </p>
 
   <div class="stats">
     <div class="stat zero"><b>0</b><span>downloaded assets</span></div>
     <div class="stat"><b>1</b><span>runtime dependency</span></div>
-    <div class="stat"><b>43.6k</b><span>lines of typescript</span></div>
-    <div class="stat"><b>77</b><span>source files</span></div>
+    <div class="stat"><b>55.3k</b><span>lines of typescript</span></div>
+    <div class="stat"><b>85</b><span>source files</span></div>
     <div class="stat"><b>~326kB</b><span>gzipped, total</span></div>
   </div>
 
   <div class="cta">
     <a href="/index.html">▶ PLAY IT</a>
     <a class="alt" href="#assets">SEE EVERY ASSET</a>
+    <a class="alt" href="#weapons">SEE THE GUNS</a>
   </div>
 </div></div>
 
@@ -378,6 +379,46 @@
 
 <div class="rule"></div>
 
+<!-- ── THE WEAPON RULE ──────────────────────────────────────────────── -->
+<section>
+  <h2>Why the guns are drawn with a fat crayon</h2>
+  <p class="blurb">
+    The weapon is the single most-looked-at object in the game — it is on screen 100% of the
+    session, about 30&nbsp;cm from the eye. It is also the thing the ink line is hardest on. The
+    outline is an <em>inverted hull</em> inflated by a <strong>screen-space 7 pixels</strong>, so
+    a part thinner than roughly twice that band has no colour left between its two inflated faces
+    and prints as a solid black blob. This is not a theory: a trigger guard, a trigger, four
+    muzzle fins and a front sight were all modelled, all under the band, and all being erased
+    every frame.
+  </p>
+  <p class="blurb">
+    So "more detail" cannot mean more small parts. It means <strong>fewer, bigger, harder
+    marks</strong> — and the playtester picked that over fine realism deliberately. Every
+    generated weapon surface obeys the same rule: two values, hard edges, countable.
+  </p>
+  <div class="diagram" style="padding:1.2rem 1.5rem">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;min-width:600px">
+      <tr style="border-bottom:2px solid #445270">
+        <th style="text-align:left;padding:.5rem;color:#ffc531">What a realistic renderer would draw</th>
+        <th style="text-align:left;padding:.5rem;color:#ffc531">What survives the line</th>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem;color:#ded5c4">40 fine wood grain lines</td><td style="padding:.5rem">3–4 broad bands and one knot</td></tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem;color:#ded5c4">8 thin barrel vents</td><td style="padding:.5rem">3 big slots with a lit lip and a dark one</td></tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem;color:#ded5c4">A fine knurl texture</td><td style="padding:.5rem">5 diamonds you could count, every one inked</td></tr>
+      <tr style="border-bottom:1px solid #262e4c"><td style="padding:.5rem;color:#ded5c4">Soft noise-based paint wear</td><td style="padding:.5rem">7 blocky chips, inked on one side only</td></tr>
+      <tr><td style="padding:.5rem;color:#ded5c4">A baked halftone in the texture</td><td style="padding:.5rem">None — the print is fixed in screen space, only the drawing moves</td></tr>
+    </table>
+    <p class="caption" style="text-align:left;margin-top:1rem">
+      The other half is <strong>material separation</strong>: four flat value fields — polymer
+      0.29, frame 0.44, steel 0.57, wood 0.43 — instead of one grey. Under a cel shader a hard
+      value break between two adjacent masses reads as detail at zero geometric cost, and it is
+      the one kind of interior detail a 7-pixel line cannot erase.
+    </p>
+  </div>
+</section>
+
+<div class="rule"></div>
+
 <!-- ── LIVE ASSETS ──────────────────────────────────────────────────── -->
 <section id="assets">
   <h2>Every asset, generated live</h2>
@@ -385,7 +426,9 @@
     Everything below is produced <em>right now, in your browser</em>, by the same functions the
     game calls. This page imports the game's own modules — it is not a mock-up, and if a
     generator ever changed, this page would change with it. Each tile prints the exact call
-    that made it.
+    that made it. That includes <a href="#weapon-surfaces">the weapon surfaces</a> and
+    <a href="#weapons">the four guns</a>, which are asked for by name and shaded with the
+    game's own ink material.
   </p>
   <div id="gallery"></div>
 </section>

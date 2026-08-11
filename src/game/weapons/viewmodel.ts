@@ -47,7 +47,7 @@
  */
 
 import {
-  Euler, Group, Matrix4, Mesh, Quaternion, Vector3,
+  Euler, Float32BufferAttribute, Group, Matrix4, Mesh, Quaternion, Vector3,
   type BufferGeometry, type Object3D, type PerspectiveCamera,
 } from 'three';
 import { PALETTE, READABILITY, hexMix } from '@/art/palette';
@@ -55,7 +55,12 @@ import {
   bevelBox, inkCylinder, mergeForStatic, place,
 } from '@/art/shapes';
 import {
-  buildOutlineHull, makeInkMaterial, markBloom, type InkMaterial,
+  WEAPON_FIELD, WEAPON_SURFACE_MAP,
+  makeChippedPaint, makeKnurled, makeParkerised, makeTapeWrap, makeVentedSteel, makeWoodGrain,
+} from '@/art/surfaces';
+import {
+  buildOutlineHull, makeInkMaterial, markBloom,
+  type InkMaterial, type InkMaterialOptions,
 } from '@/render/materials/index';
 import { DEG2RAD, Spring, SpringVec3, TAU, clamp, clamp01, damp, lambdaFromHalfLife, lerp } from '@/core/mathx';
 import { CAMERA, MOVE, WEAPON } from '@/game/tuning';
@@ -477,6 +482,125 @@ const INK_FLOOR = 0.010;
  * the magazine that slides through it cannot be authored at two different angles.
  */
 const MAG_RAKE = 0.30;
+
+/**
+ * Everything that makes a material read as its family — minus the colour it wears, minus the map
+ * printed on it, minus its name. A surfaced variant of a field spreads one of these, so a
+ * patterned receiver and a plain one differ in exactly one thing: the marks.
+ */
+type FieldLook = Omit<InkMaterialOptions, 'color' | 'name' | 'map'>;
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE FOUR FLAT FIELDS, AS NUMBERS, IN ONE PLACE.
+ *
+ * These used to be written inline in the `makeInkMaterial` calls. They moved here because
+ * `art/surfaces` authors its maps as an EXACT modulation of a *named* base colour: the generator
+ * is handed the field it will sit on, works out how much headroom that base has under
+ * `READABILITY.ENV_VALUE_CEIL`, and encodes each mark as the texel that produces the target
+ * output. Hand it a different colour from the one the material actually wears and the encoding is
+ * silently wrong — marks clip, or vanish. So the material and its map now read the same constant.
+ *
+ *   polymer  ~0.29   grip · heel · fore-end · stock · trigger · selector · mag well · panels
+ *   frame    ~0.44   receiver · slide · barrel · guard
+ *   steel    ~0.57   port frame · charging handle · rail teeth · magazine
+ *   wood     ~0.43   the shotgun's furniture ONLY — a HUE break at the frame's value
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const FIELD = {
+  frame: hexMix(PALETTE.SLATE, PALETTE.BONE, 0.30),
+  polymer: hexMix(PALETTE.SLATE, PALETTE.INK_SOFT, 0.28),
+  steel: hexMix(PALETTE.SLATE, PALETTE.PAPER, 0.42),
+  /** From `art/surfaces` — walnut, dropped toward INK so it lands at the frame's value. */
+  wood: WEAPON_FIELD.wood,
+} as const;
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * WHY THE VIEWMODEL RE-PROJECTS ITS OWN UVs, AND WHY IT DOES NOT USE `uMapScale`.
+ *
+ * `art/shapes` gives every primitive `applyBoxUV(geo, 1)`, whose UVs are **metres of local
+ * position**, not a 0..1 unwrap per face — and they are baked BEFORE `place()` moves the part, so
+ * they are centred on each primitive's own origin. Two consequences, both fatal to a bold pattern:
+ *
+ *  1. A gun part is 2–5 cm across, so at one tile per metre a whole part samples 2–5 % of the
+ *     tile. Every mark in `art/surfaces` is 5–50 % of a tile wide. You get one flat colour.
+ *  2. Because the UVs are centred on zero, that 3 % window lands on the tile's CORNER — and the
+ *     patterns put their marks in the middle (the vent slots live at v 0.26–0.88). A shroud would
+ *     have sampled nothing but the light-catch band at the top of the tile. Not "a bit subtle" —
+ *     literally none of the pattern.
+ *
+ * `uMapScale` fixes (1) and cannot fix (2): it multiplies the UV, so it scales the window about
+ * the same corner. The phase has to be baked, so the scale is baked with it and `mapScale` stays
+ * at the 1 that `WEAPON_SURFACE_MAP` asks for.
+ *
+ * What this does instead, on the MERGED part geometry (so the pattern is continuous across every
+ * box in the group, in gun space — a fore-end and the stock behind it read as one piece of
+ * timber, which is exactly the tell that says "material" rather than "texture"):
+ *
+ *  · project from the dominant axis of each vertex's normal — the geometry is faceted, so the
+ *    vertex normal IS the face normal and no triangle grouping is needed;
+ *  · **U is world −z wherever z is not the projection axis**. That is the one deviation from
+ *    `applyBoxUV`, and it is the whole reason the directional patterns work: box mapping runs u
+ *    along x on a top face, so wood grain and vent slots ran ALONG the barrel on the sides of the
+ *    gun and ACROSS it on top of the same part. Now they run down the barrel on both;
+ *  · offset so the geometry's centre lands on the tile's centre, which is where the marks are.
+ *
+ * The only surviving compromise is the end caps (z-dominant faces): the muzzle face of a barrel
+ * and the butt of a stock get u = x, because there is no z to run along. They are a few hundred
+ * triangles pointing away from the eye and they take a slice of the pattern, not a stretch of it.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+function projectSurfaceUV(geo: BufferGeometry, tilesPerMetre: number): BufferGeometry {
+  const pos = geo.getAttribute('position');
+  const nrm = geo.getAttribute('normal');
+  if (!pos || !nrm) return geo;
+
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const cx = bb ? (bb.min.x + bb.max.x) * 0.5 : 0;
+  const cy = bb ? (bb.min.y + bb.max.y) * 0.5 : 0;
+  const cz = bb ? (bb.min.z + bb.max.z) * 0.5 : 0;
+  const s = tilesPerMetre;
+  // Phase: the part's centre sits at the middle of the tile, where the marks live.
+  //
+  // `oz` is PLUS cz because the z axis is used NEGATED below (u runs along world −z, muzzle
+  // forward). With the same minus the other two use, the along-the-barrel phase came out at
+  // `0.5 - 2 * cz * s` — several whole tiles off on a part sitting 20 cm down the barrel, which
+  // silently picks a different slice of every pattern than the one the comment promises.
+  const ox = 0.5 - cx * s;
+  const oy = 0.5 - cy * s;
+  const oz = 0.5 + cz * s;
+
+  const uv = new Float32Array(pos.count * 2);
+  for (let i = 0; i < pos.count; i++) {
+    const nx = Math.abs(nrm.getX(i));
+    const ny = Math.abs(nrm.getY(i));
+    const nz = Math.abs(nrm.getZ(i));
+    const px = pos.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+    let u: number;
+    let v: number;
+    if (nz >= nx && nz >= ny) {
+      // End cap. No z to run along; fall back to box mapping.
+      u = px * s + ox;
+      v = py * s + oy;
+    } else if (ny >= nx) {
+      // Top / bottom. Box mapping would put u on x; the pattern runs down the barrel instead.
+      u = -pz * s + oz;
+      v = px * s + ox;
+    } else {
+      // Side.
+      u = -pz * s + oz;
+      v = py * s + oy;
+    }
+    uv[i * 2] = u;
+    uv[i * 2 + 1] = v;
+  }
+  geo.setAttribute('uv', new Float32BufferAttribute(uv, 2));
+  return geo;
+}
 
 /** A bevelled box that cannot be thinner than the ink line can survive. */
 function inkChunk(
@@ -2537,9 +2661,13 @@ export class Viewmodel {
      * material already does — the shader multiplies it by ~0.6, so the cel break is real.
      * ═══════════════════════════════════════════════════════════════════════════════════════
      */
-    const bodyMat = makeInkMaterial({
-      name: 'Ink:viewmodel',
-      color: hexMix(PALETTE.SLATE, PALETTE.BONE, 0.30),
+    /**
+     * The LOOK of a field, minus its colour and minus its map — everything that makes the frame
+     * read as the frame under the cel shader. A surfaced variant of a field spreads this, so a
+     * patterned receiver and a plain one are the same material in every respect except the marks
+     * printed on it. That is what keeps the value ladder below from drifting per weapon.
+     */
+    const FRAME_LOOK: FieldLook = {
       shadowColor: PALETTE.TEAL,
       rimColor: PALETTE.ELECTRIC,
       rimStrength: 0.26,
@@ -2551,6 +2679,9 @@ export class Viewmodel {
       // The gun is 30 cm from the eye and `FOG_NEAR` is tens of metres away; participating in
       // distance fog can only ever be a rounding error, so it is switched off outright.
       fog: 0,
+    };
+    const bodyMat = makeInkMaterial({
+      ...FRAME_LOOK, name: 'Ink:viewmodel', color: FIELD.frame,
     });
     /**
      * ═══════════════════════════════════════════════════════════════════════════════════════
@@ -2585,9 +2716,7 @@ export class Viewmodel {
      * and would not make it safe for the body.
      * ═══════════════════════════════════════════════════════════════════════════════════════
      */
-    const polymerMat = makeInkMaterial({
-      name: 'Ink:viewmodel-polymer',
-      color: hexMix(PALETTE.SLATE, PALETTE.INK_SOFT, 0.28),
+    const POLYMER_LOOK: FieldLook = {
       shadowColor: PALETTE.INK_SOFT,
       rimColor: PALETTE.ELECTRIC,
       rimStrength: 0.30,
@@ -2597,10 +2726,11 @@ export class Viewmodel {
       gleam: 0.08,
       gleamSize: 0.45,
       fog: 0,
+    };
+    const polymerMat = makeInkMaterial({
+      ...POLYMER_LOOK, name: 'Ink:viewmodel-polymer', color: FIELD.polymer,
     });
-    const steelMat = makeInkMaterial({
-      name: 'Ink:viewmodel-steel',
-      color: hexMix(PALETTE.SLATE, PALETTE.PAPER, 0.42),
+    const STEEL_LOOK: FieldLook = {
       shadowColor: PALETTE.TEAL,
       rimColor: PALETTE.ELECTRIC,
       rimStrength: 0.28,
@@ -2610,6 +2740,9 @@ export class Viewmodel {
       gleam: 0.75,
       gleamSize: 0.20,
       fog: 0,
+    };
+    const steelMat = makeInkMaterial({
+      ...STEEL_LOOK, name: 'Ink:viewmodel-steel', color: FIELD.steel,
     });
     /** The ONE warm mark on the weapon, and it lives on the silhouette. Never GOLD: GOLD means
      *  "you can interact with this" (ART §6) and the gun is not a pickup. */
@@ -2695,9 +2828,177 @@ export class Viewmodel {
       halftone: 0,
       fog: 0,
     });
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * SURFACE, THE OTHER HALF OF "FOUR DIFFERENT GUNS".
+     *
+     * The silhouettes were spread apart (small/compact, boxy, fat+stubby, long+thin). That is
+     * one half. This is the other: the four guns are now made of visibly different STUFF, so
+     * they are told apart by material as well as by outline — which is the read that survives
+     * being seen for a tenth of a second in a corridor.
+     *
+     * WHY THIS IS NOT "ADDING TEXTURE". Every mark comes from `art/surfaces`, which authors in
+     * MULTIPLIER space against a named base: a map cannot invent a colour or a value the field
+     * does not have, it can only modulate the field within `READABILITY`'s band. So the value
+     * ladder (polymer 0.29 · frame 0.44 · steel 0.57 · BONE 0.73) is untouched, ART §9 is
+     * untouched, and no surface is allowed near `ACID`, `HOT` or `GOLD`. `RUST` stays what it
+     * already was — the single warm accent — and appears inside a map only where a generator
+     * spends it, at chip size, on one gun.
+     *
+     * AND THE MARKS ARE BOLD BY CONSTRUCTION (`WEAPON_ART` §0): 3–4 wood bands, not 40 lines;
+     * 3 vent slots, not 8; 5 diamonds you can count. Under a 7 px hull at 0.30 m, fine detail
+     * is grey mush — this project has already lost four parts to exactly that. `mapStrength` is
+     * 1 because these maps are an exact modulation and anything less compresses every mark
+     * toward flat by `1 + s * (m - 1)`; `mapHalftone` is `WEAPON_SURFACE_MAP`'s 0.22, below the
+     * environment's 0.35, because this object already carries the heaviest ink line in the game.
+     *
+     * WHAT EACH GUN IS MADE OF:
+     *
+     *   inkslinger  parkerised frame AND slide · taped grip          workmanlike, issued
+     *   ratatat     chipped lower · vented upper · knurled grip      used, scrappy, fast
+     *   boomstick   WALNUT furniture · knurled pump · plain steel    the wood gun, and only it
+     *   longshot    parkerised receiver and stock · knurled bolt     precise, cared-for
+     *
+     * Boomstick owns wood outright. It is the strongest single identity move available and
+     * spending it twice would spend it to nothing, which is why the marksman takes a dark
+     * polymer stock in a uniform phosphate finish instead — "one careful finish everywhere" is
+     * its own identity, and it is the opposite of the SMG's.
+     *
+     * COST. Textures are built ONCE, at boot, into the module-level cache in `art/surfaces` and
+     * keyed by every argument that can change a pixel — nothing here allocates per frame, and
+     * two materials asking for the same map get the same instance. Eight sets at 256 px (the
+     * bolt/pump knurl at 128, it is a 4 cm part) is ~2.5 MB. Materials go 8 → 16, but they are
+     * shared BY FIELD AND SURFACE, not per gun and never per part: the pistol's parkerised
+     * frame material is the same object as the marksman's parkerised receiver. Draw calls do
+     * not move at all — same meshes, same count, one gun visible.
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     */
+    const WOOD_LOOK: FieldLook = {
+      // Walnut is warm, so it takes a cool shadow (ART §1). Oiled, not lacquered: a little more
+      // specular than polymer, nowhere near the machined steel.
+      shadowColor: PALETTE.TEAL,
+      rimColor: PALETTE.ELECTRIC,
+      rimStrength: 0.26,
+      halftoneAngle: 60,
+      toneFloor: 0.28,
+      specular: 0.22,
+      gleam: 0.18,
+      gleamSize: 0.40,
+      fog: 0,
+    };
+
+    const frameParkMat = makeInkMaterial({
+      ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-frame-parkerised',
+      color: FIELD.frame, map: makeParkerised({ base: FIELD.frame, seed: 8 }).map,
+    });
+    const frameChipMat = makeInkMaterial({
+      ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-frame-chipped',
+      color: FIELD.frame,
+      map: makeChippedPaint({ base: FIELD.frame, seed: 12, chips: 7, accent: true }).map,
+    });
+    const frameVentMat = makeInkMaterial({
+      ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-frame-vented',
+      color: FIELD.frame,
+      map: makeVentedSteel({ base: FIELD.frame, seed: 4, slots: 3, axis: 'u', rivets: true }).map,
+    });
+    const polyTapeMat = makeInkMaterial({
+      ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-polymer-taped',
+      color: FIELD.polymer,
+      map: makeTapeWrap({ base: FIELD.polymer, seed: 6, wraps: 4, slope: 2 }).map,
+    });
+    const polyKnurlMat = makeInkMaterial({
+      ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-polymer-knurled',
+      color: FIELD.polymer, map: makeKnurled({ base: FIELD.polymer, seed: 5, cells: 5 }).map,
+    });
+    const polyParkMat = makeInkMaterial({
+      ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-polymer-parkerised',
+      color: FIELD.polymer,
+      map: makeParkerised({ base: FIELD.polymer, seed: 21, patches: 9, specks: 36 }).map,
+    });
+    const woodMat = makeInkMaterial({
+      ...WOOD_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-wood',
+      color: FIELD.wood,
+      map: makeWoodGrain({ base: FIELD.wood, seed: 3, bands: 4, axis: 'u', knot: true }).map,
+    });
+    const steelKnurlMat = makeInkMaterial({
+      ...STEEL_LOOK, ...WEAPON_SURFACE_MAP, name: 'Ink:viewmodel-steel-knurled',
+      color: FIELD.steel,
+      map: makeKnurled({ base: FIELD.steel, seed: 14, cells: 5, size: 128 }).map,
+    });
+
     this.materials.push(
       bodyMat, polymerMat, steelMat, accentMat, gloveMat, trimMat, sightMat, coreMat,
+      frameParkMat, frameChipMat, frameVentMat,
+      polyTapeMat, polyKnurlMat, polyParkMat, woodMat, steelKnurlMat,
     );
+
+    /**
+     * A material plus the tile density its pattern wants, in TILES PER METRE of gun.
+     *
+     * The number is not a taste dial — it is what decides whether a mark clears the ink line.
+     * A pattern puts its marks at a fixed fraction of the tile, so tile size sets mark size:
+     * `frameVent` at 13 tiles/m is a 7.7 cm tile whose slots are 13 % of it, i.e. 1.0 cm of real
+     * gun ≈ 16 screen px at 0.30 m. `polyKnurl` at 20 is a 5 cm tile with 5 diamonds across it,
+     * so each diamond is 1 cm — the "coarse diamond you could count" the spec asks for, and
+     * roughly ten times coarser than real knurling, which would vanish entirely.
+     *
+     * `uv: 0` means the part keeps `applyBoxUV`'s metres-of-position UVs and wears no map.
+     */
+    interface Skin { readonly mat: InkMaterial; readonly uv: number }
+    const plainFrame: Skin = { mat: bodyMat, uv: 0 };
+    const plainPolymer: Skin = { mat: polymerMat, uv: 0 };
+    const plainSteel: Skin = { mat: steelMat, uv: 0 };
+
+    interface WeaponSkin {
+      readonly frame: Skin; readonly slide: Skin; readonly polymer: Skin;
+      readonly steel: Skin; readonly magazine: Skin;
+    }
+    const DEFAULT_SKIN: WeaponSkin = {
+      frame: plainFrame, slide: plainFrame, polymer: plainPolymer,
+      steel: plainSteel, magazine: plainSteel,
+    };
+    const SKINS: Record<string, WeaponSkin> = {
+      // Issued and maintained: one phosphate finish over the whole gun, and a grip somebody
+      // wrapped themselves. The tape is the only thing on it that a person did.
+      inkslinger: {
+        frame: { mat: frameParkMat, uv: 16 },
+        slide: { mat: frameParkMat, uv: 16 },
+        polymer: { mat: polyTapeMat, uv: 18 },
+        steel: plainSteel,
+        magazine: plainSteel,
+      },
+      // Scrappy: paint knocked off the lower in blocks, a vented upper, a knurled grip. Three
+      // different marks on three adjacent masses is what makes it read as fast and used.
+      ratatat: {
+        frame: { mat: frameChipMat, uv: 12 },
+        slide: { mat: frameVentMat, uv: 13 },
+        polymer: { mat: polyKnurlMat, uv: 20 },
+        steel: plainSteel,
+        magazine: plainSteel,
+      },
+      // THE WOOD GUN. Furniture in walnut against a plain steel receiver — the one hue break on
+      // any of the four, and the reason this gun is recognisable at a glance. The pump is the
+      // part the hand rides, so it is knurled steel, not timber.
+      boomstick: {
+        frame: plainFrame,
+        slide: plainFrame,
+        polymer: { mat: woodMat, uv: 14 },
+        steel: plainSteel,
+        magazine: { mat: steelKnurlMat, uv: 22 },
+      },
+      // Cared-for: the receiver and the stock wear the same even phosphate, and the only mark
+      // anywhere else is the bolt knob you actually grab.
+      longshot: {
+        frame: plainFrame,
+        slide: { mat: frameParkMat, uv: 16 },
+        polymer: { mat: polyParkMat, uv: 16 },
+        steel: { mat: steelKnurlMat, uv: 22 },
+        magazine: plainSteel,
+      },
+    };
+    /** Re-project only what is actually going to be sampled; a plain part keeps its own UVs. */
+    const skinned = (geo: BufferGeometry, s: Skin): BufferGeometry =>
+      (s.uv > 0 ? projectSurfaceUV(geo, s.uv) : geo);
 
     // ── one Group per weapon, all built now, all but one hidden ──────────────────────────
     // The six materials above are SHARED by all four guns: they are the art direction, not the
@@ -2713,15 +3014,20 @@ export class Viewmodel {
 
       // The hand is added FIRST so it sorts behind the frame in the (identical) depth order and
       // reads as the thing being held rather than as a mitten laid over the gun.
+      // Which stuff THIS gun is made of. Same meshes, same count — the four differ by field and
+      // by surface, never by an extra draw call.
+      const sk = SKINS[p.id] ?? DEFAULT_SKIN;
+
       this.addMesh(gp.hand, gloveMat, 'vm-hand', true, group);
-      this.addMesh(gp.frame, bodyMat, 'vm-frame', true, group);
+      this.addMesh(skinned(gp.frame, sk.frame), sk.frame.mat, 'vm-frame', true, group);
       // THE DARK FIELD, static: grip, heel, fore-end, stock, trigger, selector, well, panels.
-      this.addMesh(gp.polymer, polymerMat, 'vm-polymer', true, group);
-      const slide = this.addMesh(gp.slide, bodyMat, 'vm-slide', true, group);
+      // On the shotgun this whole field is walnut instead — same mesh, one material swap.
+      this.addMesh(skinned(gp.polymer, sk.polymer), sk.polymer.mat, 'vm-polymer', true, group);
+      const slide = this.addMesh(skinned(gp.slide, sk.slide), sk.slide.mat, 'vm-slide', true, group);
       // THE LIGHT FIELD, parented to the SLIDE so every machined detail reciprocates with it.
       // Empty until a profile opts into the vocabulary; `addMesh` skips the ink hull in that case
       // rather than welding an attribute that is not there.
-      this.addMesh(gp.steel, steelMat, 'vm-steel', true, slide);
+      this.addMesh(skinned(gp.steel, sk.steel), sk.steel.mat, 'vm-steel', true, slide);
       // THE SIGHTS GET THEIR OWN MESH AND THEIR OWN, LIGHTER LINE. They ride the slide (so they
       // cycle with it) but they are not the silhouette — they are the one piece of INTERIOR
       // detail on this gun that the player is asked to read precisely, and at the silhouette's
@@ -2736,7 +3042,7 @@ export class Viewmodel {
       // below the frame where it competed with the sights for the eye. At the steel value it
       // still reads as a separate inserted object against the 0.44 frame and the dark mag well,
       // which is the read `magWell` exists to sell.
-      const mag = this.addMesh(gp.magazine, steelMat, 'vm-mag', true, group);
+      const mag = this.addMesh(skinned(gp.magazine, sk.magazine), sk.magazine.mat, 'vm-mag', true, group);
       // The muzzle core is the one emissive thing on the gun. It joins LAYER.BLOOM (keeping
       // LAYER.DEFAULT, which `markBloom` does not clear) so the selective bloom halos it.
       const core = this.addMesh(gp.core, coreMat, 'vm-core', false, group);
@@ -2805,6 +3111,9 @@ export class Viewmodel {
     this.meshes.length = 0;
     for (const m of this.materials) m.dispose();
     this.materials.length = 0;
+    // The surface TEXTURES are deliberately not disposed: they live in `art/surfaces`' module
+    // cache, keyed by their arguments, and the gallery samples the same instances. Freeing them
+    // from here would free them out from under another owner to reclaim ~2 MB at teardown.
     this.geo = null;
   }
 
@@ -3121,4 +3430,60 @@ export class Viewmodel {
   get kickMagnitude(): number {
     return this.kickPos.value.length();
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// THE GALLERY'S DOOR INTO THIS FILE
+//
+// `src/gallery` documents the art direction by showing the REAL object, never a reconstruction
+// of it. For the guns that is not a cosmetic preference: the per-weapon skin table, the tile
+// densities and `projectSurfaceUV` all live inside `Viewmodel.build()`, so anything assembled
+// out in the gallery would be a second, silently diverging copy of the four guns — the exact
+// failure the "one generator, one owner" rule exists to prevent.
+//
+// So the gallery gets the finished, skinned, ink-hulled Group instead, and this file stays the
+// only place a gun is made. Two rules kept the door small:
+//
+//  · ONE Viewmodel, built lazily on the first call and then shared. Four calls would mean four
+//    copies of every geometry and 64 materials for four bitmaps. Nothing is built unless a page
+//    actually asks — the game imports this module and never touches this function, so it costs
+//    the player nothing but a few dead bytes.
+//  · The GLOVE IS HIDDEN. It is a third of the viewmodel's mass and it is not the gun; the
+//    section is about what the weapon is made of. It is still built, so what the gallery shows
+//    is a subtree of the real thing rather than a differently-assembled thing.
+//
+// The caller may re-parent what it gets back (the gallery does, to frame it) — each id is handed
+// out as its own Group and the map below holds the reference regardless of who owns the node.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** The four guns, in equip order. The gallery iterates this; the game equips by def id. */
+export const GUN_IDS: readonly string[] = PROFILES.map((p) => p.id);
+
+let showpieceVm: Viewmodel | null = null;
+const showpieces = new Map<string, Object3D>();
+
+/**
+ * The finished model for one gun id — skinned, outlined, glove hidden, in gun space.
+ *
+ * Documentation only. Nothing in the game calls this, and it must stay that way: the object it
+ * returns is a live subtree of a `Viewmodel` this function owns, not a copy.
+ */
+export function buildGunShowpiece(id: string): Object3D {
+  if (!showpieceVm) {
+    showpieceVm = new Viewmodel();
+    // A detached root: `build()` wants somewhere to put the rig, and this one is never rendered.
+    showpieceVm.build(new Group());
+    for (const p of PROFILES) {
+      const g = showpieceVm.root.getObjectByName(`vm-${p.id}`);
+      if (!g) continue;
+      g.visible = true;
+      // The gun, not the hand holding it.
+      const hand = g.getObjectByName('vm-hand');
+      if (hand) hand.visible = false;
+      showpieces.set(p.id, g);
+    }
+  }
+  const found = showpieces.get(id);
+  if (!found) throw new Error(`[weapons/viewmodel] no such gun: ${id}`);
+  return found;
 }
