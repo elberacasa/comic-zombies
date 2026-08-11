@@ -56,6 +56,50 @@ just moves the bug.
 
 ---
 
+## 2.5 FIRST FINDINGS — read these before starting, they change where you look
+
+A read-only pass has already narrowed this considerably. Three facts:
+
+**(a) It is not a harness artifact.** `tools/stairs.ts::overlapAt` does not implement its own
+geometry test — it calls the game's own `world.collideCapsule()` and reports the depth that
+solver returns. So a 1.42 m reading means **the collision solver itself knows the body is 1.42 m
+inside a solid, and the mover — using that same solver — is failing to push it out.** The engine
+is not confused about where the wall is.
+
+**(b) Someone has already been here, and treated the symptom.** `src/game/motion/mover.ts` has a
+`maxCorrection` cap, and the horde ships at 1.5 m against the player's 0.5 m. The comment says
+why, verbatim:
+
+> *"The horde ships at the 1.5 default because clamping bodies to 0.5 stops them ever escaping a
+> wall they are genuinely inside: roof-camp inside-geometry samples went 426 → 4394 and the worst
+> stall 2.7 s → 10.1 s. A stuck zombie is worse than a fast one."*
+
+That is an **escape-rate** fix. It makes bodies claw out of walls faster; it never asked how they
+get in. The phrase "a wall they are genuinely inside" is the admission. **Do not tune
+`maxCorrection` again — that road has been walked. Find the entry mechanism.**
+
+**(c) The roof-camp case is more than twice as bad** (13 bodies / 138 samples, vs 6 / 16 at
+spawn). That asymmetry is the strongest clue available, because the difference between the two
+scenarios is not the geometry — it is the CROWD. When the player camps somewhere the horde cannot
+reach, bodies pile up against walls, still pushing. So the leading hypothesis is:
+
+> **Bodies are being forced into geometry by the horde's own separation/crowding forces, faster
+> than depenetration can push them back out.** The mover resolves penetration with 4 iterations
+> per substep; if the neighbour-separation push is reapplied every step, a body in a crowd against
+> a wall is in a fight between two forces and can lose.
+
+If that is right, the fix is NOT in the collision mesh at all — it is that **depenetration must
+win over crowd pressure**, e.g. by resolving penetration last, by damping separation for a body
+already in contact with a wall, or by clamping the crowd push along the contact normal.
+
+Test it cheaply before building anything: log, for the worst offenders, whether the body's
+pre-resolution position was pushed inward by neighbour separation that step. If yes, this is a
+horde-steering bug wearing a collision bug's clothes.
+
+The other two candidates remain open and should be ruled out with the same evidence-first
+approach: **tunnelling** at speed (a sprinter at 4.13 m/s against `maxSubsteps`), and **spawn
+placement** putting a body inside a prop.
+
 ## 3. WHERE TO LOOK
 
 - `src/world/arena.ts` — ~2,500 lines of procedural construction. The likely source of (1): a prop
