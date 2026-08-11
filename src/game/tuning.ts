@@ -1033,6 +1033,97 @@ export const WEAPON = {
     maxEyeDistance: 0.4,
 
     /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE HERO LENS — HOW THE GUN GOT 2.2× BIGGER ON SCREEN FOR ZERO CLEARANCE.
+     *
+     * The problem, measured against the reference (Skopje '83, whose viewmodel owns ~25% of the
+     * frame): ours owned **12.0% of the frame width × 41.7% of its height — a 5.0% bounding box,
+     * 3.0% of pixels actually covered.** A corner prop. And that is *why* three consecutive
+     * passes of per-gun colour work were invisible: at 12% of the width, a 7 px ink hull is a
+     * huge fraction of the object, and **57.6% of the gun's pixels measured under 0.10 luma**.
+     * You cannot see a palette through that.
+     *
+     * THE TRAP, AND THE THING TO UNDERSTAND BEFORE TOUCHING ANY OF THESE NUMBERS.
+     * The obvious lever is `MODEL_SCALE`, and it is the wrong one. `assertClearance` measures
+     * `hypot(x, z)` against `maxEyeDistance` — a HORIZONTAL EYE DISTANCE — and the gun already
+     * spans 0.073 m to 0.39 m of a 0.40 m window. It is not "small on screen because it is
+     * small"; it is small on screen because it is *pointing away from you*, so most of its
+     * length is spent on depth, which is exactly the axis both budgets are measured along.
+     * Scaling the model, pulling the pose in, or pushing it out all spend clearance ~1:1 for
+     * apparent size, and there is no clearance left to spend.
+     *
+     * THE SECOND TRAP, WHICH IS SUBTLER AND WHICH THIS NEARLY SHIPPED. Screen position is
+     * `(x/−z, y/−z)`, so magnifying the gun's image by `k` about a screen point `(cx, cy)` is a
+     * plain camera-space matrix, `xʹ = k·x + (k−1)·cx·z`. Put `cx` on the gun's own screen
+     * column and the two terms cancel: the rest pose's reach measures 0.376 at k = 1 and 0.370
+     * at k = 2.8 — flat. It looks free. **It is not free**, because the contract bounds |x| for
+     * EVERY vertex in EVERY pose, and that matrix scales |x| by k while compensating only in
+     * proportion to depth. Vertices that are wide and NEAR — the outer edge of the glove, the
+     * magazine at the bottom of a rolled reload — get almost no compensation. Measured over the
+     * real pose table at k = 2.6: rest 0.403 (swayed 0.441), sprint 0.446 (0.477), **reload
+     * 0.636 (0.674)** against budgets of 0.40 and 0.42. A hand through the wall you are hugging.
+     *
+     * THE LEVER THAT IS ACTUALLY FREE: DO IT IN CLIP SPACE. The gun's image is magnified in the
+     * vertex shader, after the projection — `gl_Position.xy = gl_Position.xy·k + nc·(1−k)·w` —
+     * so **no vertex moves at all**. See `HERO_LENS` in `weapons/viewmodel.ts`. Three properties:
+     *
+     *  1. **The clearance table is bit-identical to the build before this existed**, on every
+     *     gun and every pose, reach and near alike. Not "within budget": unchanged. Nothing this
+     *     number does can ever appear in `assertClearance`, which is why the warning there now
+     *     says so out loud.
+     *  2. **It is still safe with ordinary depth testing**, and for exactly the reason the
+     *     clearance contract was written: nothing static can be within `MOVE.radius` of the eye,
+     *     so the weapon is nearer than the world at every pixel it could possibly land on — the
+     *     same guarantee that let it be drawn without a depth clear where it was before.
+     *  3. **The silhouette is scaled exactly, with no distortion.** `w` is untouched, so depth,
+     *     perspective and the internal parallax of the model are all preserved: a magnifying
+     *     glass over the drawing, not a re-pose and not a wider lens.
+     *
+     * WHERE THE CENTRE IS, AND WHY IT IS NOT NEGOTIABLE. `(0.530, −0.310)` is the screen
+     * position of `VFX.muzzleLocal` — the muzzle, in the pose it is in on the three frames the
+     * flash is actually alive. Magnifying about that ray makes the muzzle the FIXED POINT of the
+     * transform, which buys two things at once: the sight stays exactly where the player reads
+     * it while the gun's mass grows *away* from it, down and right into the empty corner of the
+     * frame; and the muzzle flash, the tracer origin and the shell ejection stay welded to the
+     * barrel with **`VFX.muzzleLocal` unchanged**. Move this centre and the flash detaches from
+     * the gun — the note on `VFX.muzzleLocal` is the other half of this contract.
+     *
+     * WHY IT BLENDS OUT AT ADS. At full ADS the aim socket sits at exactly `(0, 0, −d)` and the
+     * lens would move it to `nc·(1−k)` — off the camera axis, i.e. sights that no longer agree
+     * with the bullet. Worse, a line parallel to the view axis maps to a slanted one, so no
+     * translation could bring the rear notch and the front blade back together; only a ~10° tilt
+     * would, and that is a sight picture that lies. So the magnification is scaled by
+     * `(1 − adsPose)`: this is a HIP-FIRE presentation, and ADS keeps the solved pose exactly.
+     *
+     * MEASURED, inkslinger, 1703×820, by rendering the frame twice (viewmodel on / off) and
+     * differencing — the on-screen silhouette, with the parts that run off the frame excluded:
+     *
+     *                    width    height    bbox    pixels covered    gun mean luma
+     *   before            12.9%    40.3%    5.19%       3.74%             0.137
+     *   after  (k 2.6)    25.8%    56.1%   14.47%       9.07%             0.297
+     *
+     * WHY 2.6 AND NOT MORE, which is the one number in this block with a hard stop under it:
+     * the lens grows the gun AWAY from the muzzle, so past 2.6 the front sight and the brake
+     * start climbing back across the aim point. Measured coverage of the centre 10% × 10% of
+     * the frame: **0.04% at k 2.6, 7.4% at 3.0, 32.6% at 3.4.** The gun may own the lower right
+     * of the frame; it may not own the thing the player is aiming with.
+     */
+    heroScale: 2.6,
+    /**
+     * The magnification centre, in screen `x/−z, y/−z` units. This is `VFX.muzzleLocal`:
+     * `0.152/0.287 = 0.5296` and `−0.089/0.287 = −0.3101`. Keep them equal.
+     *
+     * **OPEN, AND NOT THIS FILE'S TO CLOSE:** the flash is ANCHORED correctly (its ray is the
+     * fixed point of the lens, so `VFX.muzzleLocal` needed no change) but it is not MAGNIFIED —
+     * it is world geometry drawn with world materials, so a 0.14 m `VFX.muzzleFlashSize` now
+     * fires out of a gun that is 2.6× bigger on screen than it was. Whoever owns `game/vfx`
+     * should scale the flash (and the shell/smoke that ride the same anchor) by `heroScale`, or
+     * the muzzle effects will read undersized against the weapon they belong to.
+     */
+    heroCentreX: 0.53,
+    heroCentreY: -0.31,
+
+    /**
      * THE NEAR-PLANE CONTRACT. No vertex of the viewmodel, in ANY pose, may sit closer to the eye
      * than this along the camera's forward axis. `CAMERA.near` is 0.05 m, so this is 2.4× the
      * clip distance — headroom for the three things the pose table cannot see:
@@ -1245,8 +1336,19 @@ export const WEAPON = {
     // the mouse: the gun lags the view, then settles to EXACTLY the rest pose and stops. There
     // is no free-running oscillator anywhere in this block.
 
-    /** Metres of positional lag per radian/second of view rotation. */
-    swayPos: 0.012,
+    /**
+     * Metres of positional lag per radian/second of view rotation.
+     *
+     * **DIVIDED BY `heroScale`.** This layer is applied INSIDE the hero lens, so every metre of
+     * it is magnified 2.2× on screen. 0.012 was tuned as an on-screen amplitude, and left alone
+     * it would have become a gun swimming across a quarter of the frame on every mouse flick —
+     * and a gun swimming a quarter of the way across the frame on every mouse flick is not the
+     * sway the human last felt. 0.0046 = 0.012/2.6 holds the MEASURED ON-SCREEN SWING exactly
+     * where it was. (It is NOT a clearance fix — the lens is clip-space and spends no reach;
+     * this is purely about keeping a tuned amplitude tuned. Put `heroScale` back to 1 and this
+     * should go back to 0.012 with it.)
+     */
+    swayPos: 0.0046,
     /** Degrees of rotational lag per radian/second of view rotation. */
     swayRotDeg: 3.4,
     /** Sway spring — soft and slow, so the gun trails the view like weight on a wrist. */
@@ -1256,8 +1358,11 @@ export const WEAPON = {
      * Hard ceiling on the sway offset, metres / degrees. Stops a fast flick throwing the gun —
      * and, less obviously, keeps the model inside the `maxEyeDistance` clipping budget, since
      * sway is the one layer that can push it AWAY from the eye.
+     *
+     * **DIVIDED BY `heroScale`**, for the same reason as `swayPos`: 0.04/2.6. On screen this is
+     * still the same swing the pose table and the playtests were written against.
      */
-    swayPosMax: 0.04,
+    swayPosMax: 0.0154,
     swayRotMaxDeg: 6,
 
     /**
@@ -1282,9 +1387,14 @@ export const WEAPON = {
     // Flipping `bobPhaseSign` to -1 is the A/B if the human ever says the bob compounds.
 
     bobPhaseSign: 1,
-    /** Metres of horizontal / vertical gun bob at walk speed. */
-    bobAmpX: 0.009,
-    bobAmpY: 0.007,
+    /**
+     * Metres of horizontal / vertical gun bob at walk speed.
+     * **DIVIDED BY `heroScale`** (0.009/2.6, 0.007/2.6) — same argument as `swayPos`: the bob
+     * rides inside the hero lens, so these are pre-magnification metres and the on-screen
+     * amplitude is bit-for-bit what the human last walked around with.
+     */
+    bobAmpX: 0.0035,
+    bobAmpY: 0.0027,
     /** Degrees of roll the bob adds. Tiny — the camera already owns the roll budget. */
     bobRollDeg: 0.55,
     /** Bob amplitude scales with speed/walkSpeed and is clamped here (same shape as CAMERA). */
@@ -1349,6 +1459,48 @@ export const WEAPON = {
     landDipMax: 0.07,
 
     // ── PRESENTATION ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE WEAPON'S OWN KEY LIGHT, IN CAMERA SPACE. +x right, +y up, +z TOWARD the viewer.
+     *
+     * This is the direction pointing FROM the surface TOWARD the lamp, rotated into world space
+     * once per frame by `Viewmodel.compose()` and handed to every material on the gun through
+     * the one shared `VIEW_SPACE_INK.uKeyDir` uniform. It is a camera-space direction so that
+     * turning the player cannot change how the weapon is lit (BUILD 009: *"they change colour
+     * depending on where i move very wierd"*).
+     *
+     * IT LIVES HERE, NOT IN `render/materials`, BECAUSE IT IS ART DIRECTION, NOT PLUMBING.
+     * The materials module owns the rig — one uniform, one transform per frame — and the object
+     * being lit owns where the lamp is standing. The constant still in `materials/index.ts` is
+     * the module's initial value, which is what the gallery (no `compose()`) renders with.
+     *
+     * WHY IT MOVED, WITH THE MEASUREMENT THAT FORCED IT. The old lamp was
+     * `(-0.45, 0.80, 0.40)` — chosen to put horizontal faces in the top band and let the sides
+     * fall into tone. Under `bandify()`'s three bands (0.16 / 0.52 / 1.00 at edges 0.30 / 0.66)
+     * that is a gun whose two largest visible surfaces both multiply their albedo by **0.52**:
+     *
+     *     surface (camera-space normal, rest pose)      old key      band
+     *     top planes            ( 0.00,  1.00,  0.00)    0.80        1.00  ← lit
+     *     left flank            (-0.97,  0.00, -0.24)    0.45        0.52  ← half
+     *     rear / near faces     (-0.24,  0.00,  0.97)    0.50        0.52  ← half
+     *
+     * Measured on the shipped frame: **gun mean luma 0.137 against a frame mean of 0.270** —
+     * the object the player looks at 100% of the time was rendering at HALF the brightness of
+     * the average pixel around it, with 57.6% of its own pixels under 0.10. That is the
+     * "dark unreadable blob", as a number.
+     *
+     * The lamp now rakes from the upper LEFT and slightly BEHIND the gun, which is the one
+     * direction that puts the flank *and* the tops over the 0.66 edge together; the rear faces
+     * are what pay for it, and they should — a dark near end against a lit body is depth, and
+     * it keeps a real terminator instead of flattening the whole model into one band.
+     *
+     * ART §9 IS INTACT. This changes no hue: `ACID`/`HOT` are still enemies-only and `GOLD` is
+     * still interactables-only. It moves the gun's own flats from the middle band to the top
+     * band — value, not channel — and the whole field ladder still sits under
+     * `READABILITY.ENV_VALUE_CEIL`.
+     */
+    keyDir: [-0.71, 0.68, -0.18] as [number, number, number],
 
     /**
      * Silhouette weight, screen px. `READABILITY.PROP_OUTLINE_MAX_PX` is the cap for anything
@@ -2491,16 +2643,27 @@ export const VISUAL_ESCALATION = {
   // ── THE GRADE ────────────────────────────────────────────────────────────────────────────
   // All existing `passes/grade.ts` uniforms — no new shader code, so this composes with
   // everything instead of being a separate overlay laid on top of the picture.
+  //
+  // ⚠ THESE FOUR `*Start` VALUES ARE NOT INDEPENDENT OF `passes/grade.ts`.
+  // `render/pipeline.ts::applyEscalation` writes `uGradeContrast/Saturation/Exposure/Levels`
+  // absolutely, from here, on the first round — so whatever the pass was constructed with is
+  // discarded the moment round 1 begins. A `*Start` that disagrees with the pass default is not
+  // a mismatch you find in review, it is a frame that silently changes a few seconds into play.
+  // They were moved together in the BUILD 011 grade pass; keep them together.
 
-  /** `uGradeContrast`. A harder page as the night gets worse. */
-  contrastStart: 1.12,
-  contrastPeak: 1.14,
-  /** `uGradeSaturation`. The ink gets louder, never muddier. */
-  saturationStart: 1.28,
-  saturationPeak: 1.46,
-  /** `uGradeExposure`. Small — this is the one knob that can eat the midtone band wholesale. */
-  exposureStart: 1.22,
-  exposurePeak: 1.20,
+  /** `uGradeContrast`. A harder page as the night gets worse. Matches `grade.ts` default 1.32. */
+  contrastStart: 1.32,
+  contrastPeak: 1.38,
+  /** `uGradeSaturation`. The ink gets louder, never muddier. Matches `grade.ts` default 1.55. */
+  saturationStart: 1.55,
+  saturationPeak: 1.74,
+  /**
+   * `uGradeExposure`. Small — this is the one knob that can eat the midtone band wholesale, and
+   * it is now the one that comes DOWN: the bottom of the frame is the brightest, emptiest area
+   * in the picture and a louder contrast curve only pushes it further up. Matches `grade.ts` 1.16.
+   */
+  exposureStart: 1.16,
+  exposurePeak: 1.14,
   /**
    * `uGradeLevels` — posterize steps per channel. 24 → 17 is a CHEAPER PRESS: fewer inks, a
    * coarser separation, the look of a book printed in a hurry. The Bayer dither is still on, so
@@ -2515,11 +2678,15 @@ export const VISUAL_ESCALATION = {
 
   // ── FRAME FURNITURE ──────────────────────────────────────────────────────────────────────
 
-  /** `uVigAmount` / `uVigInner`. The panel closes in on you. */
-  vignetteStart: 0.62,
-  vignettePeak: 0.68,
-  vignetteInnerStart: 0.42,
-  vignetteInnerPeak: 0.39,
+  /**
+   * `uVigAmount` / `uVigInner`. The panel closes in on you. Same lockstep rule as the grade
+   * above — these are written absolutely by `pipeline.ts::applyEscalation` and must agree with
+   * `passes/vignette.ts`'s own defaults (0.72 / 0.34) or round 1 quietly reopens the panel.
+   */
+  vignetteStart: 0.72,
+  vignettePeak: 0.80,
+  vignetteInnerStart: 0.34,
+  vignetteInnerPeak: 0.30,
   /**
    * `uOvSoot` — static ink build-up on the plate, drawn on the frame's own dot lattice at a free
    * plate angle. NOT a particle, NOT a clock: a pure function of `gl_FragCoord`, so it is

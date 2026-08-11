@@ -189,7 +189,29 @@ const AMBIENT_LIGHT_INTENSITY = 0.55;
  * warm and cool. Above ~0.8 the fully-saturated palette lights start annihilating channels
  * and the arena goes monochrome the other way.
  */
-const LIGHT_SATURATION = 0.7;
+const LIGHT_SATURATION = 0.76;
+
+/**
+ * GOD-RAY GAIN, cones only. `isPool` selects between this and 1.0 in `GLOW_FRAG`.
+ *
+ * The shafts in the air are what make a lamp read as a light SOURCE; the ground pool is what
+ * makes it read as light LANDING. They want opposite pushes right now: the pools are already
+ * the brightest large shapes on a floor this pass is otherwise trying to bring DOWN (see
+ * `passes/vignette.ts::czFloorWash`), while the shafts were so faint that a street of seventeen
+ * practicals had no visible light in the air at all. So the gain is split — cones up, pools
+ * untouched — rather than applied to `uStrength`, which drives both.
+ */
+const CONE_GAIN = 1.55;
+/**
+ * THE NUCLEUS. A drawn light needs a core that is genuinely hot at the emitter or the lamp is a
+ * cone with nothing at the top of it. Applied only where `t → 0` (the lens end of a shaft) and
+ * only to cones, it rides the same `tubeLevel` and lamp-failure terms as everything else, so a
+ * guttering lamp gets a dim nucleus and a dead one gets none.
+ *
+ * See the note in `buildPracticals` for why this is the ceiling of what this file can do for
+ * "practicals should glow", and where the rest of that fix actually lives.
+ */
+const CONE_CORE = 1.9;
 
 /**
  * BANDED FOG RANGE, metres. Aerial perspective is a VALUE tool before it is an atmosphere
@@ -206,9 +228,84 @@ const LIGHT_SATURATION = 0.7;
  *   stopgap by the space-scale agent with a request to take the decision here; taking it here
  *   turns the override into the no-op it was designed to become. It can now be deleted by
  *   whoever owns `world/index.ts` (not this agent) without changing a single pixel.
+ *
+ * ── 56 / 230 WAS TOO WIDE, MEASURED ──────────────────────────────────────────────────────
+ * Probed on the shipped arena at runtime: bounds 138.8 × 138.8 m, diagonal 196.3 m. The
+ * `InkMaterial` quantises the wash into FIVE hard bands across the range, so [56, 230] put the
+ * band edges at 56 / 90 / 125 / 159 / 194 / 228 m — and the first band is always 0%. In a
+ * 138 m arena that means **everything closer than 90 m takes no aerial perspective at all**,
+ * which is most of every sightline a player ever has. The wash only ever reached the backdrop
+ * masses, and the backdrop is the one place it was least needed.
+ *
+ * [34, 200] puts the edges at 34 / 67 / 100 / 133 / 166 / 200: 20% by the far side of the
+ * plaza, 40% on the building ring, 60% down a full radial street, 80% at the 196 m diagonal.
+ * Nothing inside 67 m is solidly hazed — the near half of the arena is still drawn at full
+ * saturation, which is the *point* of aerial perspective — and the far perimeter never reaches
+ * 100%, so the backdrop is still legible as architecture rather than dissolved. 34 m also
+ * matches `passes/halftone.ts`'s own fog near plane, so the material wash and the post-stack
+ * wash now step together instead of at two unrelated distances.
+ *
+ * ── ⚠ THE SEAM WITH `world/index.ts`, READ THIS BEFORE CHANGING EITHER FILE ───────────────
+ * `world/index.ts::fitFogToArena` derives `[max(FOG_NEAR, w*0.4), max(FOG_FAR, diag*1.15)]` =
+ * `[55.5, 225.7]` on this arena and writes it over `INK_GLOBALS.uFogRange` *after*
+ * `applyToScene`. It only ever WIDENS, so it cannot see a narrower decision taken here — and
+ * its own comment says why it exists and asks for exactly this: *"lighting.ts is not mine to
+ * edit. Colour/lighting agent: please take the decision properly over there and delete this.
+ * The numbers below are geometry, not art."* Taking it here is that request being answered.
+ *
+ * Until that function is deleted, this file re-asserts its range at the two points that run
+ * after it — `applyFogRange()` from `applyTier()` (which `WorldSystem.init` calls last) and
+ * `applyEscalation()` (which `director.ts` re-fires on every `quality:changed`). The honest
+ * cost of the stopgap is that the *boot* frame, before `setQuality` lands, briefly carries the
+ * widened range. Deleting `fitFogToArena` removes the re-assert and the wart together.
+ *
+ * ── AND THE RANGE WAS STILL NOT THE PRIMARY FAULT ────────────────────────────────────────
+ * Even at 40% the old wash was invisible, because of what it washed TOWARD. See `HAZE_NEAR` /
+ * `HAZE_FAR` below — that is the change that actually moves the picture.
  */
-export const FOG_NEAR = 56;
-export const FOG_FAR = 230;
+export const FOG_NEAR = 34;
+export const FOG_FAR = 200;
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════
+ * THE ATMOSPHERE COLOUR — the single biggest thing separating this frame from the reference.
+ *
+ * The fault, in one line: **the fog was washing distance toward a colour darker than, and
+ * almost identical to, the thing it was washing.** `uFogColorFar` was `NIGHT_A` (0x1d2747,
+ * sRGB luma 0.15) and the building mass it lands on is `SLATE` (0x445270, ~0.32 lit). A 40%
+ * lerp between two dark blue-violets an eighth of a stop apart is not aerial perspective, it
+ * is a rounding error — arithmetic, not taste:
+ *
+ *     BEFORE, a facade at 140 m:  linear 0.083 → 0.6·0.083 + 0.4·0.019 = 0.057  → sRGB 0.265
+ *     AFTER,  the same facade:    linear 0.083 → 0.6·0.083 + 0.4·0.220 = 0.138  → sRGB 0.406
+ *
+ * The sign flips. The old fog made distance *darker* than the foreground, which is why a 140 m
+ * street read as flat as a 10 m one — everything was collapsing onto the same dark value from
+ * both directions. Real aerial perspective does the opposite: it LIFTS distance, desaturates
+ * it, and drags it toward the sky, so a near silhouette has something bright to be a silhouette
+ * against. That is the entire Skopje '83 look and it is one colour pair.
+ *
+ * Both are authored with `hexMix` (sRGB byte blend — ARCHITECTURE §1.7's sanctioned way to
+ * state an in-between value without minting a token) along ONE two-token journey, `NIGHT_B` →
+ * `BONE`: the connective violet nearby, the environment's warm neutral at the horizon. So the
+ * haze is cool in the mid-ground and warms as it recedes, which is what a sodium-lit city does
+ * to its own air, and it never leaves the palette.
+ *
+ * VALUE CHECK (ART §9, env band 0.12–0.78): near 0.41, far 0.51. Neither is a reserved hue —
+ * `ACID` and `HOT` carry no weight in either mix, so the squint probe's `g - max(r,b)` is
+ * unmoved and the enemy channel is untouched.
+ *
+ * READABILITY CHECK: enemies are authored `fog: 0` (see `makeEnemyMaterial` at the foot of this
+ * file) and take NONE of this at any distance. Lifting the atmosphere therefore *improves* the
+ * §9 contract rather than threatening it — an unfogged `ACID` body at 40 m now stands against a
+ * washed-out, desaturated street instead of against a dark one that was creeping toward its own
+ * value. The haze can only ever raise the separation, never close it.
+ * ═════════════════════════════════════════════════════════════════════════════════════════
+ */
+/** Mid-distance haze — the colour that does the work across the whole playable field. */
+const HAZE_NEAR = hexMix(PALETTE.NIGHT_B, PALETTE.BONE, 0.36);
+/** Horizon haze — the value the far perimeter and the backdrop masses resolve into. */
+const HAZE_FAR = hexMix(PALETTE.NIGHT_B, PALETTE.BONE, 0.56);
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────────────────
@@ -325,6 +422,10 @@ const GLOW_FRAG = /* glsl */ `
    */
   uniform float uLampFail;
   uniform float uLampDim;
+  /** Multiplier on god-ray SHAFTS only. Ground pools are deliberately left at 1.0. */
+  uniform float uConeGain;
+  /** Hot nucleus at the lens end of a shaft. 0 = the pre-BUILD-011 look. */
+  uniform float uConeCore;
   varying vec4 vParam;
   varying vec3 vN;
   varying vec3 vV;
@@ -378,7 +479,16 @@ const GLOW_FRAG = /* glsl */ `
      * colourist paints one: nearly flat across its area, then a hard halftoned rim.
      */
     float pool = pow(1.0 - t, 0.85) * 1.45;
-    float a = mix(cone, pool, isPool);
+    // Shafts up, pools untouched. See CONE_GAIN — they are the same feature pulling opposite ways.
+    float a = mix(cone * uConeGain, pool, isPool);
+
+    /**
+     * THE NUCLEUS. Added BEFORE the quantiser so it lands on the same flat comic steps as the
+     * rest of the shaft — a light source in this style is a hard bright shape with a banded
+     * halo, never an airbrushed hotspot. It keeps the facing term so the core stays
+     * volumetric: a shaft seen edge-on has a thin nucleus, seen end-on a fat one.
+     */
+    a += smoothstep(0.26, 0.0, t) * (0.35 + 0.65 * pow(facing, 1.3)) * (1.0 - isPool) * uConeCore;
 
     // Quantise into flat comic steps — light is a shape, not a gradient.
     a = floor(a * 5.0 + 0.35) / 5.0;
@@ -726,12 +836,27 @@ export class ArenaLighting implements EscalationSink {
     INK_GLOBALS.uRimDir.value.copy(RIM_DIR);
     INK_GLOBALS.uAccent.value.copy(color(PALETTE.TEAL)).lerp(color(PALETTE.ELECTRIC), 0.35);
     INK_GLOBALS.uLightSat.value = LIGHT_SATURATION;
-    // Fog near is the connective violet, fog far is the sky. A surface 200 m away and the
-    // sky behind it are then the SAME value, which is what makes the backdrop read as
-    // distance instead of as a second, closer wall.
-    INK_GLOBALS.uFogColorNear.value.copy(color(PALETTE.NIGHT_B));
-    INK_GLOBALS.uFogColorFar.value.copy(color(PALETTE.NIGHT_A));
+    // AERIAL PERSPECTIVE. The old contract here was "a surface 200 m away and the sky behind
+    // it are the SAME value" — which is why the backdrop disappeared into the sky instead of
+    // separating from it, and why nothing between 60 m and the wall read as further away than
+    // anything else. Distance now resolves onto a LIFTED haze that is brighter than both the
+    // city and the sky. See the `HAZE_NEAR` / `HAZE_FAR` block for the measurement.
+    INK_GLOBALS.uFogColorNear.value.copy(color(HAZE_NEAR));
+    INK_GLOBALS.uFogColorFar.value.copy(color(HAZE_FAR));
+    this.applyFogRange();
+  }
+
+  /**
+   * The authoritative fog range, in the file that owns it. Written from `writeInkGlobals` and
+   * re-asserted from `applyTier` — see the ⚠ seam note on `FOG_NEAR` for why the second call
+   * exists and what deletes it. Deliberately writes BOTH consumers, because `InkMaterial` (the
+   * whole city) reads `uFogRange` while `scene.fog` covers standard materials and they must
+   * never disagree about where the horizon is.
+   */
+  private applyFogRange(): void {
     INK_GLOBALS.uFogRange.value.set(FOG_NEAR, FOG_FAR);
+    const fog = this.scene?.fog;
+    if (fog instanceof Fog) { fog.near = FOG_NEAR; fog.far = FOG_FAR; }
   }
 
   /**
@@ -755,6 +880,42 @@ export class ArenaLighting implements EscalationSink {
 
   /**
    * One merged mesh per practical *colour*, so eight lamps cost one draw call, not eight.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────────────────
+   * "MAKE LIT WINDOWS AND PRACTICALS GLOW" — WHAT WAS MEASURED, AND WHERE THE FIX ACTUALLY IS.
+   *
+   * Bloom is not missing and it is not misconfigured: it is wired end to end and deliberately
+   * turned almost off. Probed on the running build:
+   *
+   *     LAYER.BLOOM census      26 meshes — `arena_emissive` (the ~200 lit windows),
+   *                             `arena_neon`, `arena_words`, `practicalGlow` ×4, machines,
+   *                             power-ups, the viewmodel core
+   *     emissive prepass        LIVE (`uHasEmissive` = 1)
+   *     bloom pass              enabled, 2 levels
+   *     threshold               0.92        (pass default 0.62)
+   *     emissiveBoost           0.55        (pass default 1.6)
+   *     strength                0.34        (pass default 0.85)
+   *
+   * A 0.92 LINEAR luminance threshold is above almost everything in a night scene — `SODIUM`
+   * is 0.24 linear luma at full intensity — so the selective bloom is selecting essentially
+   * nothing, and what does survive is composited at 0.34. Those four numbers are
+   * `main.ts::BLOOM_CALIBRATION`, and the comment there records exactly why: at the pass
+   * defaults the bloom "was selecting nearly a third of the screen and smearing the ink
+   * borders off the window grid". That was a real problem and the answer taken was to choke
+   * the pass rather than to narrow what feeds it.
+   *
+   * **The fix for the windows is four numbers in `main.ts`, which this agent does not own.**
+   * The right shape for it is threshold DOWN (~0.72) with emissiveBoost DOWN further and
+   * `steps` kept hard, so the halo is a small banded ring around a hot core instead of a wash
+   * over a whole facade — the ink-smearing failure came from a broad, soft, low-threshold
+   * bloom, not from a bright one.
+   *
+   * What this file can do without touching that seam is give the practicals a core that would
+   * be worth blooming and that reads as a light source even while the bloom stays choked:
+   * `CONE_GAIN` on the shafts and `CONE_CORE` at the lens. Both are in the drawn light, which
+   * is what the player actually sees (`InkMaterial` ignores scene lights entirely), and both
+   * are on LAYER.BLOOM already — so the day the calibration is reopened they bloom for free.
+   * ─────────────────────────────────────────────────────────────────────────────────────────
    */
   private buildPracticals(specs: readonly PracticalSpec[], seed: number): void {
     const byColor = new Map<number, GlowPart>();
@@ -799,6 +960,8 @@ export class ArenaLighting implements EscalationSink {
           uHalftonePitch: INK_GLOBALS.uHalftonePitch,
           uLampFail: { value: 0 },
           uLampDim: { value: 1 },
+          uConeGain: { value: CONE_GAIN },
+          uConeCore: { value: CONE_CORE },
         },
       });
       mat.name = 'GodRayMaterial';
@@ -817,9 +980,15 @@ export class ArenaLighting implements EscalationSink {
     }
   }
 
-  /** Fog is a *colour gradient in steps* — set it on the scene too, for non-ink materials. */
+  /**
+   * Fog is a *colour gradient in steps* — set it on the scene too, for non-ink materials.
+   * The colour must be `HAZE_FAR`, the same value `INK_GLOBALS.uFogColorFar` carries, or a
+   * `MeshStandardMaterial` prop resolves into a different distance than the `InkMaterial`
+   * building beside it. (`world/index.ts::applyFog` overwrites near/far right after this call
+   * and deliberately does not touch the colour — the range is geometry, the colour is art.)
+   */
   applyToScene(scene: Scene): void {
-    scene.fog = new Fog(PALETTE.NIGHT_A, FOG_NEAR, FOG_FAR);
+    scene.fog = new Fog(HAZE_FAR, FOG_NEAR, FOG_FAR);
     this.scene = scene;
     this.captureSky(scene);
   }
@@ -900,6 +1069,11 @@ export class ArenaLighting implements EscalationSink {
     // The drawn light is the art direction, so it survives everywhere but LOW.
     const glow = t !== 'low';
     for (const m of this.glowMeshes) m.visible = glow;
+
+    // Re-assert the atmosphere. `WorldSystem.init` calls `setQuality` AFTER its own `applyFog`,
+    // so this is where the range decision taken in this file actually lands at boot. See the
+    // ⚠ seam note on `FOG_NEAR`; this line goes away with `fitFogToArena`.
+    this.applyFogRange();
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1019,9 +1193,17 @@ export class ArenaLighting implements EscalationSink {
       inkAmbient: INK_GLOBALS.uAmbient.value.clone(),
       fogNear: INK_GLOBALS.uFogColorNear.value.clone(),
       fogFar: INK_GLOBALS.uFogColorFar.value.clone(),
-      // The arena's own derived range, not this file's constants — `world/index.ts` widens it to
-      // fit the shipped 140 m block and writes it after `applyToScene`.
-      fogRange: [INK_GLOBALS.uFogRange.value.x, INK_GLOBALS.uFogRange.value.y],
+      /**
+       * THIS FILE'S CONSTANTS, not a read-back of the uniform.
+       *
+       * It used to snapshot `INK_GLOBALS.uFogRange` on the grounds that `world/index.ts` widens
+       * the range to fit the arena and writes it after `applyToScene`. That made the ESCALATION
+       * inherit the widened range too, so a decision taken here could never survive a round
+       * boundary either. Reading the constants means the range is authored in exactly one place
+       * and every consumer — boot, round 1, round 20, a quality change — agrees. See the ⚠ seam
+       * note on `FOG_NEAR`.
+       */
+      fogRange: [FOG_NEAR, FOG_FAR],
       skyZenith: sky ? sky.zenith.value.clone() : null,
       skyHorizon: sky ? sky.horizon.value.clone() : null,
       skyGlow: sky ? sky.glow.value.clone() : null,

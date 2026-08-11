@@ -302,18 +302,35 @@ const PROFILE: GunProfile = {
  * `HOT` and `GOLD` do not appear: the one warm mark is `RUST`, on the rib and the brass, and
  * `GOLD` shows only as the muzzle core, which is the reserved use.
  *
- * The hue *family* is shared with ACID and always was — there is one green in a fifteen-token
- * palette. What separates them is what separates olive drab from a highlighter in real life:
- * half the value and half the chroma.
+ * ═══ THE OLIVE IS GONE, AND WHY ═══
+ *
+ * This block used to argue that sharing ACID's hue family was safe because "what separates them
+ * is what separates olive drab from a highlighter: half the value and half the chroma". That was
+ * TRUE WHEN IT WAS WRITTEN and false about an hour later, because a different agent — working in
+ * a different file, correctly, to its own brief — raised the grade's saturation 1.28 → 1.55 and
+ * its contrast 1.12 → 1.32 as part of the "be louder" pivot. Half the chroma times 1.55 is not
+ * half the chroma. Measured on the frame afterwards, the SMG and the zombies read as the same
+ * lime, and the gun sat 14° off ACID's 96° hue.
+ *
+ * Two individually-correct decisions, broken only in combination — the same failure shape as the
+ * depth-prepass-versus-skinned-material bug in this project's history. The lesson recorded here
+ * for whoever tunes next: A WEAPON MAY NOT DEFEND A RESERVED HUE WITH CHROMA ALONE, because
+ * chroma is a global the grade owns and the weapon does not.
+ *
+ * So the SMG leaves green entirely. It is now the ARSENAL'S NEUTRAL: worn gunmetal, near-hueless,
+ * and it differentiates by being the only DESATURATED gun against three saturated ones — a
+ * separation the grade cannot collapse, because multiplying a near-zero chroma keeps it near
+ * zero. Its identity now rides its chipped paint, its vented shroud and its RUST accent, which
+ * is a better fit for "scrappy and used" than a colour ever was.
  * ═════════════════════════════════════════════════════════════════════════════════════════
  */
 const FIELDS: FieldSet = {
-  /** Olive drab. The receiver, the slide, the barrel and the guard — the largest mass. */
-  frame: 0x5e7a2c,
-  /** Near-black olive. Grip, fore-end, stock, magwell, stamped cuts, trigger, hinge. */
-  polymer: 0x35461c,
-  /** Pale sage — painted metal, not bare. The magazine, the charging handle, the port frame. */
-  steel: 0x8b9a63,
+  /** Worn gunmetal. The receiver, the slide, the barrel and the guard — the largest mass. */
+  frame: 0x5a5c60,
+  /** Near-black graphite. Grip, fore-end, stock, magwell, stamped cuts, trigger, hinge. */
+  polymer: 0x2e3033,
+  /** Pale scuffed steel — painted metal, not bare. Magazine, charging handle, port frame. */
+  steel: 0x8e9095,
   wood: FIELD.wood,
 };
 

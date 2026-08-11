@@ -48,7 +48,7 @@
 
 import {
   Euler, Float32BufferAttribute, Group, Matrix4, Mesh, Quaternion, Vector3,
-  type BufferGeometry, type Object3D, type PerspectiveCamera,
+  type BufferGeometry, type Object3D, type PerspectiveCamera, type ShaderMaterial,
 } from 'three';
 import { PALETTE, READABILITY, hexMix } from '@/art/palette';
 import {
@@ -59,7 +59,7 @@ import {
   makeChippedPaint, makeKnurled, makeParkerised, makeTapeWrap, makeVentedSteel, makeWoodGrain,
 } from '@/art/surfaces';
 import {
-  buildOutlineHull, makeInkMaterial, markBloom, updateViewSpaceInk,
+  VIEW_SPACE_INK, buildOutlineHull, makeInkMaterial, markBloom,
   type InkMaterial, type InkMaterialOptions,
 } from '@/render/materials/index';
 import { DEG2RAD, Spring, SpringVec3, TAU, clamp, clamp01, damp, lambdaFromHalfLife, lerp } from '@/core/mathx';
@@ -87,6 +87,99 @@ const _euler = new Euler(0, 0, 0, 'YXZ');
 const _local = new Matrix4();
 const _one = new Vector3(1, 1, 1);
 const _probe = new Vector3();
+/** Camera-space key direction, copied from `WEAPON.view.keyDir` and rotated to world per frame. */
+const _key = new Vector3();
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════════════════
+ * THE HERO LENS — AND IT IS IN CLIP SPACE, WHICH IS THE ENTIRE POINT.
+ *
+ * `(k, ncx, ncy)`: the magnification, and its centre in NDC. Every vertex shader in this engine
+ * ends with `gl_Position = projectionMatrix * mvPos;`, and `attachHeroLens` appends one line to
+ * the copies this object uses:
+ *
+ *     gl_Position.xy = gl_Position.xy * k + nc * (1 - k) * gl_Position.w;
+ *
+ * which is `s → k·(s − nc) + nc` after the perspective divide: a 2D magnification of the gun's
+ * IMAGE about a fixed point on the screen, with `w` — and therefore depth, and therefore depth
+ * testing — untouched.
+ *
+ * WHY NOT IN WORLD SPACE, WHICH IS WHERE THIS WENT FIRST AND WHERE IT WAS WRONG.
+ * The camera-space matrix `xʹ = k·x + (k−1)·cx·z` produces the identical image and costs nothing
+ * for a vertex sitting on the `cx` column — which is why it looks like the free lever, and why
+ * the rest pose measured 0.376 → 0.370 and it nearly shipped. But the clearance contract is a
+ * bound on |x| for **every** vertex in **every** pose, and that transform multiplies |x| by k
+ * while compensating only in proportion to DEPTH. The vertices with large x and small depth —
+ * the outer edge of the glove, the magazine at the bottom of a rolled reload — get almost no
+ * compensation at all. Measured, at k = 2.6, over the real pose table:
+ *
+ *     pose        reach (budget 0.40)     swayed (budget 0.42)
+ *     rest              0.403                    0.441
+ *     sprint            0.446                    0.477
+ *     reload            0.636                    0.674     ← inkslinger; the ratatat hit 0.714
+ *
+ * i.e. a hand through the wall you are hugging. No `(k, cx)` fixes it: the contract bounds |x|
+ * and the transform scales |x|.
+ *
+ * IN CLIP SPACE THE GEOMETRY DOES NOT MOVE AT ALL. Every number in `assertClearance`'s table is
+ * bit-for-bit what it was before this lens existed, on every gun and every pose, because the
+ * thing being measured is untouched. And it is the contract's own guarantee that makes drawing
+ * the image anywhere on the screen safe: nothing static can be within `MOVE.radius`, so the gun
+ * is nearer than the world at every pixel it can possibly land on, and it wins the depth test
+ * there for the same reason it won it where it used to be drawn.
+ *
+ * Identity by default, so anything that renders these materials without running `compose()` —
+ * `buildGunShowpiece`, i.e. the gallery — gets the plain, unmagnified gun.
+ */
+const HERO_LENS = { uHeroLens: { value: new Vector3(1, 0, 0) } };
+
+/** The one line in every vertex shader here that hands a clip-space position to the GPU. */
+const CLIP_ANCHOR = 'gl_Position = projectionMatrix * mvPos;';
+
+/**
+ * AND THE LINE THE INK HULL SIZES ITSELF WITH — because a clip-space magnification scales the
+ * SILHOUETTE INFLATION TOO, and that is not what an ink line is.
+ *
+ * `READABILITY.VIEWMODEL_OUTLINE_PX` is a contract in SCREEN PIXELS (enemy 8 > viewmodel 7 >
+ * heaviest prop 6). The hull inflates in view space by whatever projects to that many pixels,
+ * so magnifying its clip position magnifies the line with it: measured, the weapon's share of
+ * near-black pixels went the WRONG WAY, 32% → 48.7%, because a 7 px contour had quietly become
+ * an 18 px one. Dividing the inflation by the same magnification restores the contract exactly
+ * — and because the divide is by the live uniform, the line is still 7 px at every point of the
+ * ADS blend, where the magnification is on its way to 1.
+ */
+const HULL_ANCHOR = 'float scale = max(uThickness, uMinThickness) * px * 2.2;';
+
+/**
+ * Patch one material's vertex shader with the lens and point it at the shared uniform.
+ *
+ * The source string is rewritten directly rather than through `onBeforeCompile`, because these
+ * are `ShaderMaterial`s: three keys its program cache on the SOURCE of a custom shader, so a
+ * rewritten string gets its own program by construction and cannot collide with the identical
+ * unpatched shader every wall in the arena is drawn with.
+ */
+function attachHeroLens(mat: ShaderMaterial): void {
+  if (!mat.vertexShader.includes(CLIP_ANCHOR)) {
+    if (import.meta.env?.DEV) {
+      console.warn(
+        `[weapons/viewmodel] hero lens: the clip anchor is gone from ${mat.name || 'a material'}`
+        + "'s vertex shader, so the viewmodel will render un-magnified. Re-anchor the patch.",
+      );
+    }
+    return;
+  }
+  mat.uniforms.uHeroLens = HERO_LENS.uHeroLens;
+  mat.vertexShader = `uniform vec3 uHeroLens;\n${mat.vertexShader}`
+    .replace(
+      CLIP_ANCHOR,
+      `${CLIP_ANCHOR}\n    gl_Position.xy = gl_Position.xy * uHeroLens.x`
+      + ' + uHeroLens.yz * (1.0 - uHeroLens.x) * gl_Position.w;',
+    )
+    .replace(
+      HULL_ANCHOR,
+      'float scale = max(uThickness, uMinThickness) * px * 2.2 / max(uHeroLens.x, 0.001);',
+    );
+}
 
 /**
  * Peak displacement of a spring kicked from rest, as `peak = v · gain(ζ) / ω`.
@@ -227,6 +320,161 @@ const INK_FLOOR = 0.010;
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
 const VIEW_RIM = hexMix(PALETTE.CONCRETE, PALETTE.RUST, 0.22);
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE HERO LIGHTING POLICY — one place, applied to every material on this object.
+ *
+ * MEASURED, on the shipped frame, by rendering it twice (viewmodel on / off) and differencing:
+ * the weapon's own pixels averaged **0.137 luma against a frame mean of 0.270, with 57.6% of
+ * them under 0.10** — i.e. the object the player looks at 100% of the time was rendering at
+ * half the brightness of the average pixel around it, and more than half of it was effectively
+ * ink. That is the "dark unreadable blob", as a number rather than as an impression.
+ *
+ * WHAT THE MEASUREMENT SAID WAS *NOT* THE CAUSE, because three passes had already guessed wrong:
+ *   · the key DIRECTION is worth ±0.02 luma. Swept over eight directions, best to worst, it
+ *     never moved the number more than that. It is worth getting right (`WEAPON.view.keyDir`
+ *     does) but it was never going to be the fix on its own.
+ *   · the ink hull is worth 0.06 — real, and it is *already* paid back by the hero lens, which
+ *     made the gun 2.2× wider on screen while its 7 px line stayed 7 px.
+ *   · `toneFloor` and `halftone` are worth 0.01 between them. Not the problem.
+ *   · **the SHADOW BAND is worth 0.15**, and that is where the mass of the object lives. Under
+ *     `bandify()` the unlit band multiplies to 0.16 and the flats are then dropped into a
+ *     near-black `TEAL`/`INK_SOFT`, so the largest surfaces of the gun printed as void.
+ *
+ * So the policy lifts the SHADOW BAND and leaves the FLATS alone. That split is deliberate and
+ * it is also an ownership boundary: the four field colours are authored per weapon, next to
+ * each weapon's shape, in `models/<id>.ts` — three passes of per-gun colour work live in those
+ * numbers and this file does not get to overwrite them. What this file owns is how the object
+ * is LIT, and a shadow that is a midtone rather than a hole is a lighting decision. It is also
+ * the house rule already stated in the ink shader: *"A graphic novel is built on MIDTONES;
+ * black is reserved for the linework."*
+ *
+ * `valueLift` raises HSV **value** and leaves hue and HSV saturation exactly alone, so a lifted
+ * shadow is the same colour it always was, brighter — never a wash toward white, which would
+ * desaturate the whole gun at the moment the pivot asked for LOUDER. No hue moves, so ART §9's
+ * reserved channels cannot be touched by any of this: `ACID`/`HOT` stay with enemies, `GOLD`
+ * with interactables, and the muzzle core keeps its own emissive because it sets one.
+ *
+ * RESULT, same measurement, same frame, and split so it is honest about which half did what:
+ *
+ *                                   gun mean luma   under 0.10 luma   non-ink surfaces
+ *   before                              0.137            57.6%             0.288
+ *   lighting policy only (lens off)     0.207            32.4%             0.300
+ *   shipped (policy + hero lens)        0.297            ~25%              0.369
+ *
+ * against an unchanged frame mean of **0.270**. Two separate wins and they are not the same
+ * win: the policy lifts the SURFACES (0.288 → 0.369 on everything that is not linework), and
+ * the lens halves the share of the object that is linework at all, because a 7 px hull on a
+ * 2.6× wider silhouette is 2.6× less of it. The weapon now reads above the frame's own mean —
+ * it is the brightest thing in its own picture, which is what it is.
+ */
+const HERO_LIGHT = {
+  /**
+   * ONE STOP ON THE FLATS, as a MULTIPLIER and never as a lerp.
+   *
+   * `×1.70`, hard-capped at `READABILITY.ENV_VALUE_CEIL`. A multiplier is the whole point:
+   * every field keeps its ratio to every other field, so WEAPON_ART §2's value ladder — the
+   * one interior read a 7 px ink line cannot erase — comes through the lift with its spacing
+   * intact, and so does every per-gun difference authored in `models/<id>.ts`. A lerp toward
+   * a light colour would have crushed a 0.19 → 0.81 ladder into 0.48 → 0.86 and thrown away
+   * three passes of somebody else's work in one line.
+   *
+   * ART §9 IS WHAT SETS THE CAP. `ENV_VALUE_CEIL` is 0.78 and `ACID` is 0.79, so the enemy
+   * still owns the top of the value ladder by construction: no surface on this weapon can be
+   * lifted past the ceiling, and the one flat that was already sitting above it (the BONE trim
+   * at 0.81) is brought DOWN to it. Hue and saturation are untouched, so no reserved channel
+   * can move: `ACID`/`HOT` stay enemy, `GOLD` stays interactable.
+   */
+  flatLift: 1.70,
+  flatCap: 0.78,
+  /** How far the shadow band is lifted toward full value, and the ceiling it may not pass. */
+  shadowLift: 0.75,
+  shadowCap: 0.78,
+  /**
+   * AND THE CEILING THAT ACTUALLY BINDS: a shadow band may never come within this fraction of
+   * its own FLAT's value.
+   *
+   * The first cut of this policy did not have it, and it inverted three materials outright —
+   * the sights are deliberately dark iron (flat value 0.30, the playtester asked for it three
+   * times) over a near-black shadow, so a flat 0.78 ceiling lifted their *shadow* to 0.78 and
+   * printed the unlit side of the post brighter than the lit side. A cel shader with the bands
+   * the wrong way round is not a bright gun, it is a broken one. Every lift is now relative to
+   * the surface it belongs to, which is also why the glove and the sights keep the values two
+   * playtest passes put on them while the receiver, the slide and the steel get the whole lift.
+   */
+  shadowVsFlat: 0.85,
+  /** Multipliers on each look's own numbers, so the material families keep their spacing. */
+  rim: 2.2,
+  gleam: 1.6,
+  specular: 1.35,
+  /**
+   * A self-lit floor, in the surface's OWN flat colour — the one object in the frame a comic
+   * colourist would keep in full colour on every page, whatever the light is doing around it.
+   * Worth 0.03 of mean luma at 0.50 and it is the only lever left that does not either crush
+   * the value ladder or touch a hue; past ~0.7 it starts flattening the cel break itself.
+   */
+  emissive: 0.50,
+} as const;
+
+/**
+ * Raise a colour's HSV **value** toward `cap`, preserving hue and saturation exactly.
+ *
+ * Not `hexMix(c, WHITE, t)`: that is a lerp toward white, which raises value AND destroys
+ * saturation — the exact opposite of what §1.5 asked for. Scaling all three channels by one
+ * factor moves the colour straight out along its own hue ray.
+ */
+function hsvValue(hex: number): number {
+  return Math.max((hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff) / 255;
+}
+
+function scaleValue(hex: number, k: number): number {
+  const ch = (x: number): number => Math.min(255, Math.round(x * k));
+  return (ch((hex >> 16) & 0xff) << 16) | (ch((hex >> 8) & 0xff) << 8) | ch(hex & 0xff);
+}
+
+/** Multiply a colour's value by `mul`, clamped to `cap`. Ratios between colours survive. */
+function valueScale(hex: number, mul: number, cap: number): number {
+  const v = hsvValue(hex);
+  if (v <= 0) return hex;
+  return scaleValue(hex, Math.min(cap, v * mul) / v);
+}
+
+/** Raise a colour's value toward `cap` by `amount` of the remaining headroom. Never darkens. */
+function valueLift(hex: number, amount: number, cap: number): number {
+  const v = hsvValue(hex);
+  // Pure black has no hue ray to travel along; leave it, or the lift invents a grey.
+  if (v <= 0) return hex;
+  return scaleValue(hex, Math.max(1, Math.min(cap, v + amount * (1 - v)) / v));
+}
+
+/**
+ * Every material on the viewmodel is built through here, so the policy above cannot be applied
+ * to fifteen of the sixteen and then quietly diverge. Anything a call site states explicitly for
+ * `emissive` (the muzzle core does) is left exactly as it asked.
+ */
+function heroInk(opts: InkMaterialOptions): InkMaterial {
+  const flat = valueScale(opts.color, HERO_LIGHT.flatLift, HERO_LIGHT.flatCap);
+  const mat = makeInkMaterial({
+    ...opts,
+    color: flat,
+    // The shadow chases its OWN flat, never the ceiling — see `shadowVsFlat`.
+    shadowColor: opts.shadowColor === undefined
+      ? undefined
+      : valueLift(
+        opts.shadowColor,
+        HERO_LIGHT.shadowLift,
+        Math.min(HERO_LIGHT.shadowCap, hsvValue(flat) * HERO_LIGHT.shadowVsFlat),
+      ),
+    rimStrength: Math.min(1, (opts.rimStrength ?? 0.22) * HERO_LIGHT.rim),
+    gleam: Math.min(1, (opts.gleam ?? 0) * HERO_LIGHT.gleam),
+    specular: Math.min(1, (opts.specular ?? 0.35) * HERO_LIGHT.specular),
+    emissive: opts.emissive ?? flat,
+    emissiveIntensity: opts.emissiveIntensity ?? HERO_LIGHT.emissive,
+  });
+  attachHeroLens(mat);
+  return mat;
+}
 
 
 /**
@@ -1052,6 +1300,16 @@ interface Pose {
 }
 
 /**
+ * AND THE HERO LENS IS DELIBERATELY ABSENT FROM THIS WHOLE FUNCTION.
+ *
+ * `WEAPON.view.heroScale` makes the weapon 2.6× bigger on screen and contributes exactly zero
+ * to every number below, because it is a CLIP-SPACE magnification (see `HERO_LENS`): it scales
+ * `gl_Position.xy` and never touches a vertex. If a future edit moves it back into the model or
+ * camera matrix "because that is simpler", this table stops being true — the first attempt did
+ * exactly that and took the reload pose to 0.636 m against a 0.40 m budget.
+ */
+
+/**
  * THE SUMMED ROTATION LAYERS — the hole this whole block was rewritten to close (BUILD 006).
  *
  * `assertClearance` claimed it walked "EVERY VERTEX of EVERY MESH through the composed matrix of
@@ -1248,7 +1506,8 @@ function assertClearance(g: GunGeometry, P: GunProfile = PROFILES[0] as GunProfi
       console.warn(
         `[weapons/viewmodel] pose "${p.name}": horizontal reach ${reach.toFixed(3)} m exceeds ` +
         `WEAPON.view.maxEyeDistance ${V.maxEyeDistance}. ` +
-        'Pull the pose in (less +x, less +z) or shrink MODEL_SCALE.',
+        'Pull the pose in (less +x, less +z) or shrink MODEL_SCALE. Raising ' +
+        'WEAPON.view.heroScale cannot cause this: the hero lens never moves a vertex.',
       );
     }
     // 2 · the PHYSICAL contract, which is the one that actually stops a muzzle coming through a
@@ -1273,7 +1532,8 @@ function assertClearance(g: GunGeometry, P: GunProfile = PROFILES[0] as GunProfi
 
   console.debug(
     `[weapons/viewmodel] ${P.id} pose clearance (budgets: reach ${V.maxEyeDistance}, ` +
-    `MOVE.radius ${MOVE.radius}, near ${V.nearClearance}, CAMERA.near ${CAMERA.near})\n  ` +
+    `MOVE.radius ${MOVE.radius}, near ${V.nearClearance}, CAMERA.near ${CAMERA.near}; ` +
+    `hero lens ×${V.heroScale} is clip-space and contributes nothing here)\n  ` +
     report.join('\n  '),
   );
 }
@@ -1369,7 +1629,7 @@ export class Viewmodel {
    * not shooting, not reloading, hand off the mouse ⇒ it must say `yes`.
    */
   frozen = false;
-  private readonly prev = new Float64Array(6);
+  private readonly prev = new Float64Array(7);
   private hasPrev = false;
 
   // ═══════════════════════════════════════════════════════════════════════════════════════
@@ -1501,7 +1761,7 @@ export class Viewmodel {
     };
     /** The ONE warm mark on the weapon, and it lives on the silhouette. Never GOLD: GOLD means
      *  "you can interact with this" (ART §6) and the gun is not a pickup. */
-    const accentMat = makeInkMaterial({
+    const accentMat = heroInk({
       name: 'Ink:viewmodel-accent',
       color: PALETTE.RUST,
       shadowColor: PALETTE.TEAL,
@@ -1538,7 +1798,7 @@ export class Viewmodel {
      * Keeping it above the ink floor matters as much as darkening it: too dark and a 7 px hull
      * closes the fingers into one black mitten, which is the failure this file has hit before.
      */
-    const gloveMat = makeInkMaterial({
+    const gloveMat = heroInk({
       name: 'Ink:viewmodel-glove',
       color: hexMix(PALETTE.INK, PALETTE.CONCRETE, 0.36),
       shadowColor: PALETTE.INK_SOFT,
@@ -1552,7 +1812,7 @@ export class Viewmodel {
       fog: 0,
       viewSpaceKey: true,
     });
-    const trimMat = makeInkMaterial({
+    const trimMat = heroInk({
       name: 'Ink:viewmodel-trim',
       color: PALETTE.BONE,
       shadowColor: PALETTE.TEAL,
@@ -1584,7 +1844,7 @@ export class Viewmodel {
      * glinting front sight would be a moving highlight on the one object the player stares at,
      * i.e. an ART §4.1 leak dressed up as polish.
      */
-    const sightMat = makeInkMaterial({
+    const sightMat = heroInk({
       name: 'Ink:viewmodel-sights',
       /**
        * DARK IRON, NOT BONE. This was `PALETTE.BONE` (0.73) — the brightest value anywhere on the
@@ -1613,7 +1873,7 @@ export class Viewmodel {
       fog: 0,
       viewSpaceKey: true,
     });
-    const coreMat = makeInkMaterial({
+    const coreMat = heroInk({
       name: 'Ink:viewmodel-core',
       color: PALETTE.GOLD,
       shadowColor: PALETTE.RUST,
@@ -1724,59 +1984,59 @@ export class Viewmodel {
       const f = fieldFor(id);
       switch (key) {
         case 'frame':
-          return makeInkMaterial({
+          return heroInk({
             ...FRAME_LOOK, name: `Ink:viewmodel-${id}`, color: f.frame,
           });
         case 'polymer':
-          return makeInkMaterial({
+          return heroInk({
             ...POLYMER_LOOK, name: `Ink:viewmodel-${id}-polymer`, color: f.polymer,
           });
         case 'steel':
-          return makeInkMaterial({
+          return heroInk({
             ...STEEL_LOOK, name: `Ink:viewmodel-${id}-steel`, color: f.steel,
           });
         case 'framePark':
-          return makeInkMaterial({
+          return heroInk({
             ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-frame-parkerised`,
             color: f.frame, map: makeParkerised({ base: f.frame, seed: 8 }).map,
           });
         case 'frameChip':
-          return makeInkMaterial({
+          return heroInk({
             ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-frame-chipped`,
             color: f.frame,
             map: makeChippedPaint({ base: f.frame, seed: 12, chips: 7, accent: true }).map,
           });
         case 'frameVent':
-          return makeInkMaterial({
+          return heroInk({
             ...FRAME_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-frame-vented`,
             color: f.frame,
             map: makeVentedSteel({ base: f.frame, seed: 4, slots: 3, axis: 'u', rivets: true }).map,
           });
         case 'polyTape':
-          return makeInkMaterial({
+          return heroInk({
             ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-polymer-taped`,
             color: f.polymer,
             map: makeTapeWrap({ base: f.polymer, seed: 6, wraps: 4, slope: 2 }).map,
           });
         case 'polyKnurl':
-          return makeInkMaterial({
+          return heroInk({
             ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-polymer-knurled`,
             color: f.polymer, map: makeKnurled({ base: f.polymer, seed: 5, cells: 5 }).map,
           });
         case 'polyPark':
-          return makeInkMaterial({
+          return heroInk({
             ...POLYMER_LOOK, ...WEAPON_SURFACE_MAP,
             name: `Ink:viewmodel-${id}-polymer-parkerised`, color: f.polymer,
             map: makeParkerised({ base: f.polymer, seed: 21, patches: 9, specks: 36 }).map,
           });
         case 'wood':
-          return makeInkMaterial({
+          return heroInk({
             ...WOOD_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-wood`,
             color: f.wood,
             map: makeWoodGrain({ base: f.wood, seed: 3, bands: 4, axis: 'u', knot: true }).map,
           });
         case 'steelKnurl':
-          return makeInkMaterial({
+          return heroInk({
             ...STEEL_LOOK, ...WEAPON_SURFACE_MAP, name: `Ink:viewmodel-${id}-steel-knurled`,
             color: f.steel,
             map: makeKnurled({ base: f.steel, seed: 14, cells: 5, size: 128 }).map,
@@ -1902,6 +2162,13 @@ export class Viewmodel {
         ink: PALETTE.INK,
       });
       hull.frustumCulled = false;
+      // The ink hull is a second draw of the same silhouette and it must be magnified with it,
+      // or the line detaches from the object it is drawing. Its own line WEIGHT is unaffected —
+      // the hull inflates in VIEW space by a screen-pixel amount, and the lens runs after that,
+      // so a 2.6× bigger gun still carries exactly a 7 px contour. That is most of why the
+      // weapon stopped reading as ink: measured, its share of near-black pixels fell from
+      // 57.6% to ~25% without the line getting one pixel thinner.
+      attachHeroLens(hull.material as ShaderMaterial);
       mesh.add(hull);
       this.hulls.push(hull);
     }
@@ -2113,7 +2380,16 @@ export class Viewmodel {
     //
     // It does not touch `INK_GLOBALS.uKeyDir`, so the arena, the enemies and the sky are lit
     // exactly as they were.
-    updateViewSpaceInk(camera.matrixWorld);
+    //
+    // THE LAMP ITSELF LIVES IN `WEAPON.view.keyDir`, not in `render/materials`. The materials
+    // module owns the RIG — one shared uniform, one transform a frame, the guarantee that no
+    // world surface may opt in — and the object being lit owns where the lamp stands, because
+    // that is art direction and it is tuned against this specific gun in this specific corner
+    // of the frame. Reading it here per frame also means it is live-tunable from the console
+    // (`CZ.tuning.WEAPON.view.keyDir`) for the cost of one normalise.
+    const kd = V.keyDir;
+    _key.set(kd[0], kd[1], kd[2]).normalize().transformDirection(camera.matrixWorld);
+    VIEW_SPACE_INK.uKeyDir.value.copy(_key);
 
     // ── 1. base pose: hip → ADS → sprint ──────────────────────────────────────────────────
     //
@@ -2231,6 +2507,29 @@ export class Viewmodel {
     this.root.matrix.multiplyMatrices(camera.matrixWorld, _local);
     this.root.matrixWorldNeedsUpdate = true;
 
+    // ── 10. THE HERO LENS ─────────────────────────────────────────────────────────────────
+    //
+    // The last thing written, and it is written to a UNIFORM, not to the matrix above: it is a
+    // clip-space magnification of the gun's image about a fixed screen point, so no vertex
+    // moves and `assertClearance`'s whole table is untouched by it. See `HERO_LENS` for why
+    // that distinction is the difference between shipping this and shipping a hand that goes
+    // through walls, and `WEAPON.view.heroScale` for the composition it buys.
+    //
+    // IT BLENDS OUT AT ADS. At `a = 1` the magnification is exactly 1 and the centre term is
+    // exactly 0, so the solved sight picture reaches the screen untouched — the aim socket is
+    // on the camera axis and the lens is not allowed to move it off. Any magnification at ADS
+    // would displace the sights off the axis the bullet is traced along, and no translation
+    // could bring both blades back (a line parallel to the view axis maps to a slanted line),
+    // which is the same class of bug as BUILD 004's "you aim like inside the pistol".
+    //
+    // The centre is stated in the tuning file in screen `x/-z` units, so it is FOV-independent
+    // and has to be re-projected each frame — the ADS zoom changes `projectionMatrix` under it.
+    const heroK = 1 + (V.heroScale - 1) * (1 - a);
+    const pm = camera.projectionMatrix.elements;
+    HERO_LENS.uHeroLens.value.set(
+      heroK, V.heroCentreX * (pm[0] ?? 1), V.heroCentreY * (pm[5] ?? 1),
+    );
+
     // ── §4.1 stillness telemetry ──────────────────────────────────────────────────────────
     // Compare the composed transform against the previous frame's, exactly. If it is identical,
     // this object's contribution to the frame is identical too — so with a parked camera the
@@ -2240,10 +2539,14 @@ export class Viewmodel {
     this.frozen = this.hasPrev
       && p[0] === px && p[1] === py && p[2] === pz
       && p[3] === pitch && p[4] === yaw && p[5] === roll
+      // The lens is the seventh channel of the composed transform. It is a pure function of
+      // `adsPose`, which the other six already depend on — but "already implied" is exactly the
+      // reasoning that let three animation layers slip past the previous version of this check.
+      && p[6] === heroK
       && (!this.slideMesh || this.slideMesh.position.z === 0)
       && (!this.magMesh || this.magMesh.position.y === 0);
     p[0] = px; p[1] = py; p[2] = pz;
-    p[3] = pitch; p[4] = yaw; p[5] = roll;
+    p[3] = pitch; p[4] = yaw; p[5] = roll; p[6] = heroK;
     this.hasPrev = true;
   }
 
