@@ -188,3 +188,35 @@ CZ.renderer.renderScale        // dynamic resolution, 0.55–1.0
 CZ.renderer.autoQuality=false  // pin it before measuring anything
 CZ.stats()                     // true whole-frame draw calls / triangles
 ```
+
+---
+
+## BUILD 009 — per-weapon models, and the REAL quality bug
+
+### The quality governor was mathematically incapable of being satisfied ✅
+`TARGET_MS` was **13.5 ms** and `RELAX_MS` **10.5 ms**. A vsynced 60 Hz frame is **16.67 ms**.
+So `ms > TARGET_MS` was permanently true and recovery needed 95 fps. The console said it outright:
+`[render] 60 fps sustained — render scale 1.00 → 0.90 … → 0.55`, then tier drops. Every session
+degraded to minimum after ~40 s **on every machine**. Now 19.5 / 17.2 ms (~51 / ~58 fps), both
+reachable at a locked 60. Also: step 0.1 → 0.04, MIN 0.55 → 0.74, and no automatic tier drops.
+
+### Four weapons, four models ✅
+`GunProfile` drives one builder; each gun carries its own receiver, barrel, muzzle, fore-end,
+stock, magazine and — critically — its **own sight, so the ADS socket is re-solved per weapon**.
+Shared sockets would have put the sight off the bullet on three of four guns. All four models are
+built at boot into hidden Groups (`ARCHITECTURE §4`); `equip(defId)` toggles visibility and
+rebinds the solve. Materials are shared.
+
+**The binding constraint is REACH, not taste.** `hypot(|x| + sway, z)` ≤ 0.40, and the pistol was
+already at 0.386. First pass measured ratatat 0.403, boomstick 0.418, longshot 0.426 — the last
+past `MOVE.radius` (0.42), i.e. it would have punched through walls. Length is therefore bought
+with per-profile `depthCompress` (comic foreshortening) plus shorter forward parts.
+
+**And the reload pose is MAGAZINE-driven, not depth-driven.** ratatat's reload sat at exactly
+0.402 through three separate compression changes while every other pose fell — the SMG's 0.128 m
+stick mag swings out on the reload arc. Shrinking the mag fixed it; compressing never would have.
+Final: all four ≤0.393 reach, ≤0.418 swayed, ≥0.072 near.
+
+### NEXT
+Wall-buys + spend UI (still no `spend()` on `PlayerService`), then production menus with
+sensitivity/graphics/audio. `thumper` still needs projectile code.

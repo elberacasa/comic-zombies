@@ -175,6 +175,77 @@ const MODEL_SCALE = 1;
  * the ink-band floor documented above `buildGunGeometry` and it is not negotiable.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * FOUR GUNS, ONE BUILDER — and why the differences are NOT just "make it longer".
+ *
+ * Every weapon shares the hand, the grip, the trigger and the guard, because it is the same
+ * player holding it. What changes is the RECEIVER, the BARREL, the MUZZLE, what hangs under the
+ * fore-end, what sits behind the grip, and the sight line. That is what a real silhouette
+ * difference is made of, and it is all data below.
+ *
+ * ─── THE CONSTRAINT THAT SHAPES ALL OF THIS ─────────────────────────────────────────────────
+ * `assertClearance` measures reach as `hypot(|x| + sway, z)` against `view.maxEyeDistance`
+ * (0.40 m), and the PISTOL already measures 0.386 — fourteen millimetres of headroom. A rifle
+ * authored at its real length would blow straight through that and clip into walls, and pulling
+ * the pose back to compensate would drive it through `CAMERA.near` instead. Both directions are
+ * walls; there is no room to simply make a longer gun.
+ *
+ * So length is bought with `depthCompress`, which this file ALREADY applies to the pistol at
+ * 0.72 — the model is foreshortened along z on the way out of the builder. Making it per-profile
+ * means a rifle can be authored at its true proportions, read long in silhouette, and still
+ * occupy less depth than the pistol does. That is exactly the exaggeration a comic panel uses on
+ * a gun pointed at the reader, so it is style and budget agreeing for once rather than fighting.
+ *
+ * ─── AND WHY EACH GUN CARRIES ITS OWN SIGHT ─────────────────────────────────────────────────
+ * `AIM_SOCKET` and the ADS translation are SOLVED from the sight line, not tuned (see the SIGHT
+ * block). One shared socket across four guns with four different receiver heights would put the
+ * sight picture off the bullet on three of them — which is the precise bug the playtester
+ * already reported once as "you aim like inside the pistol". Every profile therefore carries its
+ * own `sight`, and the socket and ADS offsets are re-solved per model.
+ *
+ * The marksman gets a raised BLADE rail rather than a scope tube, deliberately: a solid optic
+ * would need the camera to see through its own geometry at ADS, and an open ghost-ring reads as
+ * precision in this style without asking the renderer for a hole in a solid object.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+interface SightSpec {
+  lineY: number;
+  rearZ: number;
+  frontZ: number;
+  bladeW: number;
+  rearH: number;
+  frontH: number;
+  bladeD: number;
+  notchHalfGap: number;
+}
+
+interface GunProfile {
+  /** Matches `WeaponDef.id`. */
+  id: string;
+  /** Per-gun foreshortening along z. Longer gun → stronger compression. See the note above. */
+  depthCompress: number;
+  sight: SightSpec;
+  /** The upper mass: half-width, half-height, length, and where it sits. */
+  receiver: { w: number; h: number; d: number; y: number; z: number };
+  /** Cocking serrations cut into the rear of the receiver. */
+  serrations: number;
+  /** The round mass under the receiver's nose — the "that is a gun" read in silhouette. */
+  barrel: { r: number; len: number; y: number; z: number };
+  /** Muzzle device: a can plus fins, sized per gun. `fins: 0` for the shotgun's plain choke. */
+  muzzle: { r: number; len: number; z: number; fins: number; finW: number };
+  /** Box magazine. The shotgun sets `none` and uses a tube instead. */
+  magazine: { w: number; h: number; d: number; y: number; z: number } | null;
+  /** Tube magazine slung under the barrel (shotgun). */
+  tube: { r: number; len: number; y: number; z: number } | null;
+  /** What the support hand holds: a vertical grip, a pump, or nothing. */
+  foreEnd: { w: number; h: number; d: number; y: number; z: number; ribs: number } | null;
+  /** Behind the grip: a skeleton brace or a full stock. */
+  stock: { w: number; h: number; d: number; y: number; z: number; skeleton: boolean } | null;
+  /** Warm-accent rib along the top of the receiver, between the sights. */
+  rib: { w: number; h: number; d: number; y: number; z: number };
+}
+
 const SIGHT = {
   /**
    * THE sight line: the top edge of the front blade and of both rear blades. Gun space, metres.
@@ -196,22 +267,154 @@ const SIGHT = {
 } as const;
 
 /**
+ * THE FOUR PROFILES.
+ *
+ * The pistol's numbers are BUILD 007's, unchanged to the millimetre — it is the reference the
+ * other three are read against and the one whose clearance is already measured at 0.386 m.
+ */
+const PROFILES: readonly GunProfile[] = [
+  {
+    id: 'inkslinger',
+    depthCompress: V.depthCompress,
+    sight: SIGHT,
+    receiver: { w: 0.032, h: 0.040, d: 0.150, y: 0.030, z: -0.052 },
+    serrations: 4,
+    barrel: { r: 0.014, len: 0.056, y: 0.010, z: -0.112 },
+    muzzle: { r: 0.017, len: 0.030, z: -0.140, fins: 3, finW: 0.036 },
+    magazine: { w: 0.024, h: 0.086, d: 0.036, y: -0.060, z: 0.016 },
+    tube: null,
+    foreEnd: null,
+    stock: null,
+    rib: { w: 0.014, h: 0.011, d: 0.104, y: 0.0465, z: -0.052 },
+  },
+  /**
+   * RATATAT — long, low and skeletal. Reads as *fast* before it fires: a slim receiver, a
+   * vented shroud, a vertical grip the support hand is obviously clamped onto, and a wire stock
+   * that says "this is braced against a shoulder" without adding a solid mass.
+   */
+  {
+    id: 'ratatat',
+    /** Longest-but-one gun, so the strongest foreshortening after the marksman. */
+    /**
+     * 0.52, not 0.60 — MEASURED, twice. At 0.60 rest/reload/equip all read 0.402–0.403 m, and at
+     * 0.56 the RELOAD pose alone still did. The budget is 0.40. See the header note.
+     */
+    depthCompress: 0.56,
+    sight: {
+      lineY: 0.074, rearZ: 0.014, frontZ: -0.138,
+      bladeW: 0.011, rearH: 0.020, frontH: 0.024, bladeD: 0.012, notchHalfGap: 0.010,
+    },
+    receiver: { w: 0.030, h: 0.044, d: 0.184, y: 0.032, z: -0.066 },
+    serrations: 5,
+    barrel: { r: 0.012, len: 0.078, y: 0.012, z: -0.140 },
+    muzzle: { r: 0.015, len: 0.026, z: -0.176, fins: 2, finW: 0.032 },
+    /** The long curved stick mag — the single most recognisable thing about an SMG. */
+    magazine: { w: 0.022, h: 0.100, d: 0.032, y: -0.072, z: 0.020 },
+    tube: null,
+    /** Vertical foregrip. The support hand read. */
+    foreEnd: { w: 0.026, h: 0.056, d: 0.030, y: -0.020, z: -0.132, ribs: 3 },
+    stock: { w: 0.024, h: 0.040, d: 0.086, y: 0.020, z: 0.074, skeleton: true },
+    rib: { w: 0.013, h: 0.011, d: 0.130, y: 0.0505, z: -0.066 },
+  },
+  /**
+   * BOOMSTICK — short, fat and top-heavy. Everything about it is BORE: the widest muzzle in the
+   * game sitting on a stubby receiver, with a tube slung underneath and a ribbed pump the hand
+   * is wrapped around. It should look like it hurts to fire, which is what the 2.6 weaponKick
+   * is telling you in the def.
+   */
+  {
+    id: 'boomstick',
+    /** 0.58 — the RELOAD pose was the offender at 0.418 m, worst of any gun, then 0.403 at 0.64. */
+    depthCompress: 0.58,
+    sight: {
+      /** A single bead on a low rear notch — a shotgun is pointed, not aimed. */
+      lineY: 0.070, rearZ: 0.006, frontZ: -0.110,
+      bladeW: 0.012, rearH: 0.018, frontH: 0.022, bladeD: 0.013, notchHalfGap: 0.012,
+    },
+    receiver: { w: 0.042, h: 0.048, d: 0.128, y: 0.030, z: -0.044 },
+    serrations: 3,
+    barrel: { r: 0.020, len: 0.058, y: 0.014, z: -0.100 },
+    /** The bore. `fins: 0` — a plain flared choke, because the diameter IS the detail. */
+    muzzle: { r: 0.028, len: 0.030, z: -0.130, fins: 0, finW: 0 },
+    magazine: null,
+    tube: { r: 0.014, len: 0.088, y: -0.012, z: -0.090 },
+    /** The pump. It rides the `magazine` slot so the reload animation racks it — see build(). */
+    foreEnd: null,
+    stock: null,
+    rib: { w: 0.016, h: 0.011, d: 0.090, y: 0.0525, z: -0.044 },
+  },
+  /**
+   * LONGSHOT — the longest thing in the game, and the only one with a full stock. A raised
+   * ghost-ring rail rather than a scope tube (see the header note): the rear aperture sits
+   * 30 mm above the pistol's line, which is what makes the ADS picture read as precision.
+   */
+  {
+    id: 'longshot',
+    /**
+     * The most compressed, because it is authored the longest. 0.46 is MEASURED: at 0.52 this
+     * gun reached 0.426 m — past the 0.40 budget AND past `MOVE.radius` (0.42), i.e. it would
+     * genuinely have punched the muzzle through walls. Its forward parts were shortened too;
+     * compression alone would have squashed it into looking short rather than long.
+     */
+    depthCompress: 0.46,
+    sight: {
+      lineY: 0.098, rearZ: 0.020, frontZ: -0.156,
+      bladeW: 0.012, rearH: 0.030, frontH: 0.034, bladeD: 0.013, notchHalfGap: 0.013,
+    },
+    receiver: { w: 0.028, h: 0.042, d: 0.200, y: 0.034, z: -0.076 },
+    serrations: 3,
+    barrel: { r: 0.013, len: 0.104, y: 0.014, z: -0.166 },
+    muzzle: { r: 0.017, len: 0.034, z: -0.218, fins: 4, finW: 0.034 },
+    magazine: { w: 0.022, h: 0.078, d: 0.044, y: -0.058, z: 0.008 },
+    tube: null,
+    /** A long slim handguard rather than a vertical grip — you cradle a marksman rifle. */
+    foreEnd: { w: 0.030, h: 0.030, d: 0.082, y: -0.006, z: -0.148, ribs: 4 },
+    /** Full stock: the mass behind the grip that says "braced". */
+    stock: { w: 0.030, h: 0.060, d: 0.112, y: 0.010, z: 0.086, skeleton: false },
+    rib: { w: 0.013, h: 0.011, d: 0.140, y: 0.0545, z: -0.076 },
+  },
+];
+
+function profileFor(id: string): GunProfile {
+  return PROFILES.find((p) => p.id === id) ?? (PROFILES[0] as GunProfile);
+}
+
+/**
  * THE AIM SOCKET — the rear-sight notch, in ROOT-LOCAL space (post-`MODEL_SCALE`, post-
  * `depthCompress`). This is the point the ADS solve puts on the camera's forward axis.
+ *
+ * Solved PER PROFILE: four receivers at four heights cannot share one socket without putting the
+ * sight picture off the bullet on three of them.
  */
-const AIM_SOCKET = new Vector3(
-  0,
-  SIGHT.lineY * MODEL_SCALE,
-  SIGHT.rearZ * MODEL_SCALE * V.depthCompress,
-);
+function aimSocketOf(p: GunProfile): Vector3 {
+  return new Vector3(0, p.sight.lineY * MODEL_SCALE, p.sight.rearZ * MODEL_SCALE * p.depthCompress);
+}
 
 /**
  * THE SOLVED ADS TRANSLATION. Rotation at full ADS is identity (see `compose`), so the socket
  * lands at `(0, 0, −adsSightDistance)` in camera space exactly when the root sits here.
  */
-const ADS_X = -AIM_SOCKET.x;
-const ADS_Y = -AIM_SOCKET.y;
-const ADS_Z = -V.adsSightDistance - AIM_SOCKET.z;
+function adsOffsetOf(socket: Vector3): { x: number; y: number; z: number } {
+  return { x: -socket.x, y: -socket.y, z: -V.adsSightDistance - socket.z };
+}
+
+/** The active model's solve. Rebound by `equip()`; the pistol's until then. */
+let AIM_SOCKET = aimSocketOf(PROFILES[0] as GunProfile);
+let ADS = adsOffsetOf(AIM_SOCKET);
+let ADS_X = ADS.x;
+let ADS_Y = ADS.y;
+let ADS_Z = ADS.z;
+
+/** One built weapon: its geometry, its subtree, and its own solved aim socket. */
+interface GunModel {
+  id: string;
+  geo: GunGeometry;
+  group: Group;
+  slideMesh: Object3D;
+  magMesh: Object3D;
+  socket: Vector3;
+  ads: { x: number; y: number; z: number };
+}
 
 interface GunGeometry {
   /** Static lower: frame, grip, trigger guard. */
@@ -253,7 +456,8 @@ interface GunGeometry {
  * Nothing structural on this gun is under 0.010 m any more.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
-function buildGunGeometry(): GunGeometry {
+function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometry {
+  const SIGHT = P.sight;
   const frameParts: BufferGeometry[] = [];
   const slideParts: BufferGeometry[] = [];
   const sightParts: BufferGeometry[] = [];
@@ -305,19 +509,74 @@ function buildGunGeometry(): GunGeometry {
   // ── barrel: a real cylindrical read poking out under the slide's nose ──────────────────
   // The "no barrel read" note. The muzzle brake sits ON the slide line; this is the round mass
   // beneath it that says "gun" in silhouette before any detail resolves.
-  const barrel = inkCylinder(0.014, 0.056, 7, { seed: 18 });
+  const barrel = inkCylinder(P.barrel.r, P.barrel.len, 7, { seed: 18 });
   place(barrel, { rx: Math.PI * 0.5 });
-  place(barrel, { y: 0.010, z: -0.112 });
+  place(barrel, { y: P.barrel.y, z: P.barrel.z });
   frameParts.push(barrel);
 
-  // ── slide: the fat top mass, with cut serrations at the rear ───────────────────────────
-  const slide = bevelBox(0.032, 0.040, 0.150, 0.007, 21);
-  place(slide, { y: 0.030, z: -0.052 });
+  // ── the fore-end: what the SUPPORT hand is on ──────────────────────────────────────────
+  // A vertical grip (SMG) or a long handguard (marksman). The ribs are what stop a plain box
+  // reading as a plain box at the one part of the gun the eye tracks while you are moving.
+  if (P.foreEnd) {
+    const fe = P.foreEnd;
+    const block = bevelBox(fe.w, fe.h, fe.d, 0.005, 81);
+    place(block, { y: fe.y, z: fe.z });
+    frameParts.push(block);
+    for (let i = 0; i < fe.ribs; i++) {
+      // Ribs run across the SHORT axis of whichever way the fore-end is oriented: stacked down
+      // a vertical grip, spaced along a handguard.
+      const vertical = fe.h > fe.d;
+      const rib = vertical
+        ? bevelBox(fe.w + 0.004, 0.008, fe.d + 0.004, 0.002, 82 + i)
+        : bevelBox(fe.w + 0.004, fe.h + 0.004, 0.008, 0.002, 82 + i);
+      place(rib, vertical
+        ? { y: fe.y + fe.h * 0.30 - i * (fe.h * 0.62 / Math.max(1, fe.ribs - 1)), z: fe.z }
+        : { y: fe.y, z: fe.z + fe.d * 0.34 - i * (fe.d * 0.68 / Math.max(1, fe.ribs - 1)) });
+      frameParts.push(rib);
+    }
+  }
+
+  // ── tube magazine (shotgun): the second cylinder that makes the fore-end read as a pump ──
+  if (P.tube) {
+    const tube = inkCylinder(P.tube.r, P.tube.len, 7, { seed: 88 });
+    place(tube, { rx: Math.PI * 0.5 });
+    place(tube, { y: P.tube.y, z: P.tube.z });
+    frameParts.push(tube);
+  }
+
+  // ── stock: the mass behind the grip ────────────────────────────────────────────────────
+  // Skeleton = two rails and a pad, which reads as a wire brace and keeps the SMG light. Solid
+  // = one block and a pad, which is what makes the marksman look like it is meant to be held
+  // still. Both sit BEHIND the hand, i.e. at +z, where they cost reach nothing.
+  if (P.stock) {
+    const st = P.stock;
+    if (st.skeleton) {
+      for (const sy of [1, -1]) {
+        const rail = bevelBox(st.w, 0.012, st.d, 0.003, 91 + sy);
+        place(rail, { y: st.y + sy * st.h * 0.34, z: st.z });
+        frameParts.push(rail);
+      }
+    } else {
+      const body = bevelBox(st.w, st.h, st.d, 0.008, 93);
+      place(body, { y: st.y, z: st.z });
+      frameParts.push(body);
+    }
+    const pad = bevelBox(st.w + 0.006, st.h + 0.010, 0.016, 0.004, 94);
+    place(pad, { y: st.y, z: st.z + st.d * 0.5 + 0.008 });
+    frameParts.push(pad);
+  }
+
+  // ── slide / receiver: the fat top mass, with cut serrations at the rear ────────────────
+  const slide = bevelBox(P.receiver.w, P.receiver.h, P.receiver.d, 0.007, 21);
+  place(slide, { y: P.receiver.y, z: P.receiver.z });
   slideParts.push(slide);
 
-  for (let i = 0; i < 4; i++) {
-    const serration = bevelBox(0.034, 0.026, 0.006, 0.0015, 22 + i);
-    place(serration, { y: 0.030, z: 0.008 - i * 0.012 });
+  for (let i = 0; i < P.serrations; i++) {
+    const serration = bevelBox(P.receiver.w + 0.002, P.receiver.h * 0.65, 0.006, 0.0015, 22 + i);
+    place(serration, {
+      y: P.receiver.y,
+      z: P.receiver.z + P.receiver.d * 0.5 - 0.010 - i * 0.012,
+    });
     slideParts.push(serration);
   }
 
@@ -342,14 +601,14 @@ function buildGunGeometry(): GunGeometry {
   // ── trim / accent ──────────────────────────────────────────────────────────────────────
   // Oversized muzzle brake: three fins on a short can. Pure comic — real pistols do not have
   // this, and that is the point. It is the read at the business end.
-  const can = inkCylinder(0.017, 0.030, 7, { seed: 31 });
+  const can = inkCylinder(P.muzzle.r, P.muzzle.len, 7, { seed: 31 });
   place(can, { rx: Math.PI * 0.5 });
-  place(can, { y: 0.030, z: -0.140 });
+  place(can, { y: P.receiver.y, z: P.muzzle.z });
   trimParts.push(can);
 
-  for (let i = 0; i < 3; i++) {
-    const fin = bevelBox(0.036, 0.010, 0.011, 0.002, 32 + i);
-    place(fin, { y: 0.030, z: -0.128 - i * 0.013 });
+  for (let i = 0; i < P.muzzle.fins; i++) {
+    const fin = bevelBox(P.muzzle.finW, 0.010, 0.011, 0.002, 32 + i);
+    place(fin, { y: P.receiver.y, z: P.muzzle.z + P.muzzle.len * 0.4 - i * 0.013 });
     trimParts.push(fin);
   }
 
@@ -382,8 +641,8 @@ function buildGunGeometry(): GunGeometry {
   // line — at a top of 0.0555 it occluded all but ~16 px of a 38 px post and the ADS picture had
   // no front sight in it at all. Sitting 2 mm proud of the slide's 0.050 top face it still reads
   // as a warm rib leading the eye to the post, and it clears ~34 px of it.
-  const rib = bevelBox(0.014, 0.011, 0.104, 0.002, 74);
-  place(rib, { y: 0.0465, z: -0.052 });
+  const rib = bevelBox(P.rib.w, P.rib.h, P.rib.d, 0.002, 74);
+  place(rib, { y: P.rib.y, z: P.rib.z });
   accentSlideParts.push(rib);
 
   // Hammer spur: the rearmost thing on the gun, and the top-right corner of the silhouette.
@@ -441,20 +700,34 @@ function buildGunGeometry(): GunGeometry {
   handParts.push(forearm);
 
   // ── magazine ───────────────────────────────────────────────────────────────────────────
-  const mag = bevelBox(0.024, 0.086, 0.036, 0.004, 41);
-  place(mag, { rx: 0.30 });
-  place(mag, { y: -0.060, z: 0.016 });
-  magParts.push(mag);
+  // This group is what the reload animation drops and re-seats, so the SHOTGUN puts its PUMP
+  // here rather than a box mag: racking the fore-end on a reload is the shotgun's whole gesture,
+  // and it comes for free by hanging it off the same bone the animation already drives.
+  if (P.magazine) {
+    const mag = bevelBox(P.magazine.w, P.magazine.h, P.magazine.d, 0.004, 41);
+    place(mag, { rx: 0.30 });
+    place(mag, { y: P.magazine.y, z: P.magazine.z });
+    magParts.push(mag);
 
-  const plate = bevelBox(0.032, 0.010, 0.046, 0.003, 42);
-  place(plate, { rx: 0.30 });
-  place(plate, { y: -0.105, z: 0.030 });
-  magParts.push(plate);
+    const plate = bevelBox(P.magazine.w + 0.008, 0.010, P.magazine.d + 0.010, 0.003, 42);
+    place(plate, { rx: 0.30 });
+    place(plate, { y: P.magazine.y - P.magazine.h * 0.5 - 0.004, z: P.magazine.z + 0.014 });
+    magParts.push(plate);
+  } else if (P.tube) {
+    const pump = bevelBox(0.040, 0.034, 0.050, 0.007, 41);
+    place(pump, { y: P.tube.y, z: P.tube.z - 0.010 });
+    magParts.push(pump);
+    for (let i = 0; i < 4; i++) {
+      const grip = bevelBox(0.044, 0.010, 0.010, 0.002, 43 + i);
+      place(grip, { y: P.tube.y, z: P.tube.z + 0.014 - i * 0.014 });
+      magParts.push(grip);
+    }
+  }
 
   // ── the emissive muzzle core (GOLD — the palette reserves the muzzle core for it) ───────
-  const core = inkCylinder(0.010, 0.004, 7, { seed: 51 });
+  const core = inkCylinder(Math.max(0.008, P.muzzle.r * 0.6), 0.004, 7, { seed: 51 });
   place(core, { rx: Math.PI * 0.5 });
-  place(core, { y: 0.030, z: -0.155 });
+  place(core, { y: P.receiver.y, z: P.muzzle.z - P.muzzle.len * 0.5 });
 
   const out: GunGeometry = {
     frame: mergeForStatic(frameParts),
@@ -477,7 +750,7 @@ function buildGunGeometry(): GunGeometry {
     out.frame, out.slide, out.sights, out.trim, out.accent, out.accentSlide, out.hand,
     out.magazine, out.core,
   ]) {
-    place(g, { sx: MODEL_SCALE, sy: MODEL_SCALE, sz: MODEL_SCALE * V.depthCompress });
+    place(g, { sx: MODEL_SCALE, sy: MODEL_SCALE, sz: MODEL_SCALE * P.depthCompress });
     g.computeBoundingSphere();
   }
   return out;
@@ -567,7 +840,9 @@ const SWAY_CORNERS: readonly (readonly [number, number])[] = [
 const SWAY_ROLL_FROM_YAW = -0.55;
 
 /** Every pose `compose()` can put the model in, at its extreme. */
-function posesToCheck(): readonly Pose[] {
+function posesToCheck(
+  adsX: number = ADS_X, adsY: number = ADS_Y, adsZ: number = ADS_Z,
+): readonly Pose[] {
   const kick = V.clearanceKickBudget;
   const rest: Pose = {
     name: 'rest',
@@ -576,7 +851,7 @@ function posesToCheck(): readonly Pose[] {
     canFlourish: true,
   };
   const ads: Pose = {
-    name: 'ads', x: ADS_X, y: ADS_Y, z: ADS_Z, pitchDeg: 0, yawDeg: 0, rollDeg: 0,
+    name: 'ads', x: adsX, y: adsY, z: adsZ, pitchDeg: 0, yawDeg: 0, rollDeg: 0,
   };
   return [
     rest,
@@ -623,17 +898,19 @@ function posesToCheck(): readonly Pose[] {
   ];
 }
 
-function assertClearance(g: GunGeometry): void {
+function assertClearance(g: GunGeometry, P: GunProfile = PROFILES[0] as GunProfile): void {
   if (!import.meta.env?.DEV) return;
 
   // ── the alignment contract, stated as an assertion instead of as a hope ──────────────────
   // With the ADS rotation identity, the socket must land dead on the camera's forward axis.
   // If someone re-introduces a "nice" residual tilt or a lateral offset at full ADS, this is
   // what tells them the sight picture no longer agrees with the bullet.
-  _probe.copy(AIM_SOCKET).add(_pos.set(ADS_X, ADS_Y, ADS_Z));
+  const socket = aimSocketOf(P);
+  const ads = adsOffsetOf(socket);
+  _probe.copy(socket).add(_pos.set(ads.x, ads.y, ads.z));
   if (Math.abs(_probe.x) > 1e-9 || Math.abs(_probe.y) > 1e-9) {
     console.warn(
-      `[weapons/viewmodel] the ADS aim socket is off the camera axis by ` +
+      `[weapons/viewmodel] ${P.id}: the ADS aim socket is off the camera axis by ` +
       `(${_probe.x.toExponential(2)}, ${_probe.y.toExponential(2)}) m. The sights will not ` +
       'point where the shot goes.',
     );
@@ -656,7 +933,7 @@ function assertClearance(g: GunGeometry): void {
   // nothing on a normal boot and is one filter away when someone is moving a pose.
   const report: string[] = [];
 
-  for (const p of posesToCheck()) {
+  for (const p of posesToCheck(ads.x, ads.y, ads.z)) {
     let reach = 0;
     let reachSway = 0;
     let depth = Infinity;
@@ -744,7 +1021,7 @@ function assertClearance(g: GunGeometry): void {
   }
 
   console.debug(
-    `[weapons/viewmodel] pose clearance (budgets: reach ${V.maxEyeDistance}, ` +
+    `[weapons/viewmodel] ${P.id} pose clearance (budgets: reach ${V.maxEyeDistance}, ` +
     `MOVE.radius ${MOVE.radius}, near ${V.nearClearance}, CAMERA.near ${CAMERA.near})\n  ` +
     report.join('\n  '),
   );
@@ -801,6 +1078,16 @@ export class Viewmodel {
   private slideMesh: Object3D | null = null;
   private magMesh: Object3D | null = null;
 
+  /**
+   * EVERY GUN IS BUILT AT BOOT AND THEN HIDDEN — `ARCHITECTURE §4`, pool everything, allocate
+   * nothing after the first frame. Four models is four Groups of nine meshes; three of them are
+   * `visible = false` at any moment and three.js skips an invisible subtree entirely, so the
+   * draw-call cost is exactly one gun. Building on swap instead would mean constructing geometry
+   * AND an inverted hull mid-fight, which is a hitch on an input the player made.
+   */
+  private readonly models = new Map<string, GunModel>();
+  private active: GunModel | null = null;
+
   // ── layers ──────────────────────────────────────────────────────────────────────────────
   /** Look-lag sway. Position in metres, rotation in radians (x=pitch, y=yaw, z=roll). */
   private readonly swayPos = new SpringVec3(V.swayHz, V.swayDamping);
@@ -839,10 +1126,8 @@ export class Viewmodel {
   // ═══════════════════════════════════════════════════════════════════════════════════════
 
   build(scene: Object3D): void {
-    if (this.geo) return;
-    const g = buildGunGeometry();
-    this.geo = g;
-    assertClearance(g);
+    if (this.models.size) return;
+    const g = buildGunGeometry(PROFILES[0]);
 
     /**
      * ═══════════════════════════════════════════════════════════════════════════════════════
@@ -965,26 +1250,45 @@ export class Viewmodel {
     });
     this.materials.push(bodyMat, accentMat, gloveMat, trimMat, sightMat, coreMat);
 
-    // The hand is added FIRST so it sorts behind the frame in the (identical) depth order and
-    // reads as the thing being held rather than as a mitten laid over the gun.
-    this.addMesh(g.hand, gloveMat, 'vm-hand', true);
-    this.addMesh(g.frame, bodyMat, 'vm-frame', true);
-    const slide = this.addMesh(g.slide, bodyMat, 'vm-slide', true);
-    this.slideMesh = slide;
-    // THE SIGHTS GET THEIR OWN MESH AND THEIR OWN, LIGHTER LINE. They ride the slide (so they
-    // cycle with it) but they are not the silhouette — they are the one piece of INTERIOR
-    // detail on this gun that the player is asked to read precisely, and at the silhouette's
-    // 7 px the notch and both light bars inked shut. See the SIGHT block for the measurements.
-    this.addMesh(g.sights, sightMat, 'vm-sights', true, slide, V.sightOutlinePx);
-    this.addMesh(g.accent, accentMat, 'vm-accent', true);
-    // Rides the slide, so it cycles with it on every shot.
-    this.addMesh(g.accentSlide, accentMat, 'vm-accent-slide', true, slide);
-    this.addMesh(g.trim, trimMat, 'vm-trim', true);
-    this.magMesh = this.addMesh(g.magazine, trimMat, 'vm-mag', true);
-    // The muzzle core is the one emissive thing on the gun. It joins LAYER.BLOOM (keeping
-    // LAYER.DEFAULT, which `markBloom` does not clear) so the selective bloom halos it.
-    const core = this.addMesh(g.core, coreMat, 'vm-core', false);
-    markBloom(core, false);
+    // ── one Group per weapon, all built now, all but one hidden ──────────────────────────
+    // The six materials above are SHARED by all four guns: they are the art direction, not the
+    // gun, and four copies would be four times the shader compilation for an identical result.
+    for (const p of PROFILES) {
+      const gp = p === PROFILES[0] ? g : buildGunGeometry(p);
+      assertClearance(gp, p);
+
+      const group = new Group();
+      group.name = `vm-${p.id}`;
+      group.visible = false;
+      this.root.add(group);
+
+      // The hand is added FIRST so it sorts behind the frame in the (identical) depth order and
+      // reads as the thing being held rather than as a mitten laid over the gun.
+      this.addMesh(gp.hand, gloveMat, 'vm-hand', true, group);
+      this.addMesh(gp.frame, bodyMat, 'vm-frame', true, group);
+      const slide = this.addMesh(gp.slide, bodyMat, 'vm-slide', true, group);
+      // THE SIGHTS GET THEIR OWN MESH AND THEIR OWN, LIGHTER LINE. They ride the slide (so they
+      // cycle with it) but they are not the silhouette — they are the one piece of INTERIOR
+      // detail on this gun that the player is asked to read precisely, and at the silhouette's
+      // 7 px the notch and both light bars inked shut. See the SIGHT block for the measurements.
+      this.addMesh(gp.sights, sightMat, 'vm-sights', true, slide, V.sightOutlinePx);
+      this.addMesh(gp.accent, accentMat, 'vm-accent', true, group);
+      // Rides the slide, so it cycles with it on every shot.
+      this.addMesh(gp.accentSlide, accentMat, 'vm-accent-slide', true, slide);
+      this.addMesh(gp.trim, trimMat, 'vm-trim', true, group);
+      const mag = this.addMesh(gp.magazine, trimMat, 'vm-mag', true, group);
+      // The muzzle core is the one emissive thing on the gun. It joins LAYER.BLOOM (keeping
+      // LAYER.DEFAULT, which `markBloom` does not clear) so the selective bloom halos it.
+      const core = this.addMesh(gp.core, coreMat, 'vm-core', false, group);
+      markBloom(core, false);
+
+      const socket = aimSocketOf(p);
+      this.models.set(p.id, {
+        id: p.id, geo: gp, group, slideMesh: slide, magMesh: mag, socket, ads: adsOffsetOf(socket),
+      });
+    }
+    // The starter is what you are holding at boot; `equip(id)` re-points everything on a swap.
+    this.equip(PROFILES[0]?.id);
 
     this.root.name = 'viewmodel';
     // The root's world matrix is composed by hand from the camera every lateUpdate, so three
@@ -1072,8 +1376,31 @@ export class Viewmodel {
     this.slideSpring.impulse(impulseFor(14, 0.5, 0.020 * V.depthCompress));
   }
 
-  /** Weapon drawn / swapped to. Plays the raise. */
-  equip(): void {
+  /**
+   * Weapon drawn / swapped to. Plays the raise, and — when an id is given — swaps which model is
+   * visible and REBINDS THE AIM SOLVE to that gun's own sight socket.
+   *
+   * That rebind is the whole reason this takes an argument. The four receivers sit at four
+   * heights, so a shared socket would leave the sight picture off the bullet on three of them,
+   * which is the exact bug already reported once as "you aim like inside the pistol".
+   */
+  equip(defId?: string): void {
+    if (defId) {
+      const next = this.models.get(defId);
+      if (next && next !== this.active) {
+        if (this.active) this.active.group.visible = false;
+        next.group.visible = true;
+        this.active = next;
+        this.geo = next.geo;
+        this.slideMesh = next.slideMesh;
+        this.magMesh = next.magMesh;
+        AIM_SOCKET = next.socket;
+        ADS = next.ads;
+        ADS_X = ADS.x;
+        ADS_Y = ADS.y;
+        ADS_Z = ADS.z;
+      }
+    }
     this.equipT = 0;
     this.kickPos.reset();
     this.kickRot.reset();

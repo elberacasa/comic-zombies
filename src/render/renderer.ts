@@ -63,8 +63,32 @@ import type { QualityTier, RenderService } from '@/core/types';
  */
 const RenderScale = {
   MIN: 0.74,
-  TARGET_MS: 13.5,
-  RELAX_MS: 10.5,
+  /**
+   * ═══ THESE TWO NUMBERS WERE THE WHOLE BUG, AND THEY WERE BELOW THE VSYNC FLOOR ═══
+   *
+   * They were `TARGET_MS: 13.5` and `RELAX_MS: 10.5`. **A vsynced 60 Hz frame is 16.67 ms.**
+   * So on a machine hitting a locked, perfect 60 fps, `ms > TARGET_MS` was ALWAYS true and
+   * `ms < RELAX_MS` needed 95 fps to ever fire. The governor could only walk downward. It did
+   * exactly that, forever, on every machine — and the console said so in as many words:
+   *
+   *     [render] 60 fps sustained — render scale 1.00 → 0.90
+   *     [render] 60 fps sustained — render scale 0.90 → 0.80   … → 0.55
+   *     [render] 60 fps sustained at minimum render scale — dropping quality high → med
+   *
+   * "60 fps sustained" and dropping resolution in the same sentence. That is the playtester's
+   * *"graphics are going low and they look bad"*, in full: not a governor that was too eager,
+   * a governor that was mathematically incapable of ever being satisfied. Every session, after
+   * about forty seconds, degraded to minimum resolution and then walked the quality tiers down.
+   *
+   * The thresholds are now stated in fps, below the vsync floor rather than above it:
+   * degrade only under ~50 fps, recover once back over ~58. The 2.8 ms gap is the hysteresis,
+   * and both sides are reachable at a normal 60 Hz refresh — which is the property the old pair
+   * did not have.
+   */
+  /** ~51 fps. Genuinely slow, not merely vsynced. */
+  TARGET_MS: 19.5,
+  /** ~58 fps. Reachable at a locked 60, which is what makes recovery possible at all. */
+  RELAX_MS: 17.2,
   /** Per-adjustment change. Small enough that ONE step is not perceptible. */
   STEP: 0.04,
   /** Seconds between steps once the governor has committed to adjusting. */

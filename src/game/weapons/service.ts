@@ -654,7 +654,7 @@ export class WeaponSystem implements System, WeaponService {
     this.dryCooldown = 0;
     this.emptySince = w.ammo <= 0 ? 0 : -1;
     this.equipRemaining = isNew ? WEAPON.equipTime * 0.6 : WEAPON.equipTime;
-    this.viewmodel.equip();
+    this.viewmodel.equip(w.def.id);
 
     this.ctx.events.emit('weapon:equipped', { weapon: w, slot });
     this.emitAmmo(this.ctx, w);

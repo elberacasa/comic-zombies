@@ -292,7 +292,7 @@ export class BootOverlay {
     if (this.cta) this.cta.textContent = 'CLICK TO DROP IN';
     // Keep this in step with the console banner in `main.ts` — this is the one the PLAYER sees,
     // and a stale number here reads as "the deploy didn't land" even when the code is current.
-    if (this.hint) this.hint.textContent = 'BUILD 008 · SPECIALS & BODIES';
+    if (this.hint) this.hint.textContent = 'BUILD 009 · THE ARSENAL';
   }
 
   paused(reason = 'PAUSED'): void {

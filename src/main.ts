@@ -1000,7 +1000,7 @@ function printControls(quality: QualityTier, draws: number, tris: number, seed: 
   const key = `color:${electric};font:700 13px monospace`;
   const txt = `color:${paper};font:13px monospace`;
 
-  console.log('%c COMIC ZOMBIES  ·  BUILD 008  ·  SPECIALS & BODIES ', title);
+  console.log('%c COMIC ZOMBIES  ·  BUILD 009  ·  THE ARSENAL ', title);
   console.log(
     `%cMOVE%c  WASD   %cSPRINT%c  SHIFT   %cJUMP%c  SPACE   %cSLIDE%c  TAP CTRL   %cDIVE%c  HOLD CTRL`,
     key, txt, key, txt, key, txt, key, txt, key, txt,
@@ -1045,7 +1045,7 @@ function printControls(quality: QualityTier, draws: number, tris: number, seed: 
     head, txt, key, txt, key, txt, key, txt, key, txt, key,
   );
   console.log(
-    `%cBUILD 008%c  %cCZ.setEscalation(20)%c paints round 20's NIGHT without playing it ` +
+    `%cBUILD 009%c  %cCZ.setEscalation(20)%c paints round 20's NIGHT without playing it ` +
     `(no argument = back to live). %cCZ.skipToRound(10)%c is the gameplay half.`,
     head, txt, key, txt, key, txt,
   );
