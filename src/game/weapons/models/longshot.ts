@@ -14,71 +14,102 @@ import { PALETTE, hexMix } from '@/art/palette';
  * LONGSHOT — the longest thing in the game, the only one with a full stock, and the palest
  * object the player will hold all session.
  *
- * ─── WHAT THE PLAYTESTER SAID, AND WHAT IT COST ──────────────────────────────────────────
- * "the longshot has this sights or grey things on top too long, i would remove those and
- * remake that part" — and separately, of the whole arsenal, "we need more differentiator
- * colours, still look the same overall".
+ * ─── FOUR BUILDS, FOUR TIMES THE SAME NOTE, AND WHY THE LAST THREE FIXES MISSED ──────────
+ * "gray lines on top" · "sights too long" · "3 grey thing on top" · "the guns in the top have
+ * this sticks like showing out". Four separate reports across four builds, and every previous
+ * pass answered them by SUBTRACTING NEIGHBOURS: the sight ears went, the rail teeth went, the
+ * 120 mm warm rib was cut to 30 mm, the blades were darkened from BONE 0.73 to dark iron. The
+ * note came back every time, because none of that touched the thing being described.
  *
- * Both are read literally below. The top of this receiver is the ONE edge the player looks at
- * 100% of the session, and it was carrying a 120 mm warm rib running nose-to-tail plus three
- * pale blades standing in mid-air above it — a long horizontal bar, exactly the read they
- * flagged. The sight rail teeth and the sight ears were already deleted for the same reason
- * and are NOT coming back; what was left behind was the worst of both worlds, because the
- * blades' only support went with them.
+ * THE BLADES THEMSELVES WERE THE STICKS. They stood 44 mm proud of a receiver top face at
+ * 0.054 — taller than the receiver is deep (40 mm) — on an 11 × 12 mm footprint. A part four
+ * times taller than it is thick, standing alone on a flat plate, is an ANTENNA. It does not
+ * matter what colour it is or what is next to it.
  *
- * ─── THE SIGHT, REMADE: TWO EVENTS AND A LOT OF NOTHING BETWEEN THEM ─────────────────────
- * The new assembly is TALL and SHORT, where the old one was low and long:
+ * ─── THE PRINCIPLE: A SIGHT IS SUBTRACTIVE, NOT ADDITIVE ─────────────────────────────────
+ * A post stuck ON a receiver reads as glued on. A real sight reads as part of the gun because
+ * it is a MASS with a slot cut INTO it, and because the blade sits WITHIN a base rather than
+ * on top of one. Same job in the sight picture, opposite read in the silhouette. So:
  *
- *   REAR   a raised aperture BLOCK — two 46 mm towers either side of a 20 mm notch, 12 mm
- *          deep, bottoms buried 2 mm into the receiver's top face. It is one compact mass
- *          seen from anywhere but dead astern, and it is the tallest thing on the gun.
- *   FRONT  a SINGLE 11 mm post, 46 mm tall, 12 mm deep, standing on a warm 30 mm base.
- *   BETWEEN THEM  148 mm of bare receiver with NOTHING on it. That gap is the point: it is
- *          what stops the top edge reading as one bar, and it is why the rib had to be cut
- *          from 120 mm to 30 mm (see `rib`).
+ * EVERY MILLIMETRE BELOW IS A **DRAWN** MILLIMETRE — `z` here is halved by `depthCompress`
+ * 0.50 after the builder is done with it, so an authored depth and a drawn depth are two
+ * different numbers and only the second one is what the playtester is looking at. The pass
+ * before this one stated its proportions in authored millimetres and shipped a rear block
+ * that was still taller than it was deep. See the `sight` note for the measurement.
  *
- * NOTHING FLOATS ANY MORE, WHICH IS THE BUG UNDER THE COMPLAINT. The blades used to top out
- * at 0.098 with bottoms at 0.064–0.068 over a receiver top face of 0.054 — nine to thirteen
- * millimetres of daylight under three slabs, and the rear pair also stood at x ±0.024 on a
- * receiver only ±0.013 wide, i.e. outboard of their own host as well as above it. Both blade
- * heights now run the full 46 mm from the sight line DOWN INTO the receiver, and the notch is
- * tight enough (`notchHalfGap` 0.012 → 0.010) that the towers' outer faces come in to ±0.021.
- * The assembly is smaller in every direction that was wrong and bigger only in the one that
- * was right.
+ *   REAR   a machined BLOCK let into the top of the receiver's tail: 42 mm across, 18 mm
+ *          fore-and-aft drawn (`bladeD` 0.036), standing 16 mm proud, with a 20 × 16 × 18 mm
+ *          CHANNEL milled down its centre. Its rear face is flush with the receiver's own
+ *          rear face (both at z 0.024) and its bottom is buried 6 mm inside the top face, so
+ *          it is machined out of the receiver rather than fastened to it. Wider than it is
+ *          tall, deeper than it is tall: a block with a notch, in every direction.
+ *   FRONT  a 24 × 18 mm BASE PAD (drawn) standing 5 mm proud of the top face, with the post
+ *          rising from INSIDE it — the post's 11 × 18 mm drawn footprint sits within the
+ *          pad's on all four sides (3.5 mm of shoulder each side, 3 mm fore and aft drawn)
+ *          and its bottom is buried 6 mm in. What stands clear is 11 mm of blade on a
+ *          plinth, not 44 mm of stick.
  *
- * ─── THE AIM SOLVE IS BYTE-IDENTICAL, DELIBERATELY ───────────────────────────────────────
- * `aimSocketOf()` reads exactly two numbers: `sight.lineY` and `sight.rearZ`. Neither moved.
- * The socket, `adsOffsetOf()` and the ADS translation are therefore the same numbers this gun
- * shipped with, and the boot assertion still reports the socket dead on the camera axis. The
- * builder places the front blade at `lineY - frontH/2` and the rear pair at `lineY - rearH/2`,
- * so both tops land on the sight line BY CONSTRUCTION — `rearH` and `frontH` are both 0.046
- * here, but even if they were not, the tops could not drift apart.
+ * The proportion is the whole fix, and it is arithmetic rather than taste. Rear blade, side
+ * profile, all drawn: was 44 proud × 6 deep (aspect 0.14, a flag), then 18 × 12 (0.67, still
+ * portrait). Now 16 proud × 18 deep — aspect 1.13, landscape, a block. Front blade: was
+ * 44 × 6 clear of everything; now 11 × 18 sitting in a pad.
  *
- * Everything else in the sight block is PICTURE, not solve, and the picture is measured rather
- * than hoped for: the notch's ±0.010 window projects to ±0.0132 at the front plane against a
- * 5.5 mm post half-width, so there are 7.6 mm of light bar per side — 0.0248 rad, within 2 % of
- * the pistol reference picture the whole sight contract was solved against. See `sight`.
+ * ─── WHERE THE HEIGHT WENT: `lineY` 0.098 → 0.070 ────────────────────────────────────────
+ * A blade's proud height is `lineY` minus the surface under it — there is no other way to
+ * shorten one, because both blades must reach DOWN to their host (the previous pass raised
+ * them to 46 mm precisely to kill the daylight under them, and that is not being undone).
+ * Dropping the sight line 28 mm is half the fix (deepening the blades is the other half, and
+ * the one the previous pass got wrong); it is also free three times over. The figures below
+ * were measured at `lineY` 0.072 and the line has since gone to 0.070, which moves them in
+ * the same direction by another 2 mm of drop — they are floors, not exact readings:
  *
- * ─── THE SILHOUETTE, AND WHY IT IS STILL FIVE EVENTS ─────────────────────────────────────
- * stock → receiver under a tall rear block → bare top → tall front post on a warm base →
- * hard step down → bare fluted barrel → the can. Plus a bolt handle out to the right and a
- * bipod stub under the handguard, which are the two events on the OUTLINE — the one kind of
- * detail the ink line cannot erase, because the ink line *is* the outline.
+ *   · THE AIM SOLVE FOLLOWS IT — see below. `lineY` is an input to the solve, not a tuned
+ *     constant, so a lower line is a lower socket and a re-solved ADS translation.
+ *   · THE ADS PICTURE GETS CLEANER, MEASURED. The eye sits on the line, so the grazing angle
+ *     across the receiver's own top face falls from 0.187 rad to 0.0766 rad, and the muzzle
+ *     can's intrusion above that horizon drops from 18.5 mm to 5.8 mm at the muzzle plane.
+ *     Less gun in the notch, not more.
+ *   · THE GUN READS BIGGER AT ADS, which §1.5 of the constitution asks for: the receiver's
+ *     top edge sits 64 px under the crosshair instead of 156 px at 1600×821 / 56°.
  *
- * ─── CLEARANCE: NOTHING MOVED OUTWARD, IN EITHER BUDGETED DIRECTION ──────────────────────
- * The model's worst vertices are the ones this profile does not touch: `muzzle.fin3` at 0.3941
- * reach / 0.4146 swayed, the magazine floorplate at reload (0.3792 / 0.4087), the forearm at
- * the near plane (0.0893 at sprint). Every edit below is inward, backward or vertical:
+ * ─── THE AIM SOLVE, PRESERVED BY CONSTRUCTION RATHER THAN BY LUCK ────────────────────────
+ * `aimSocketOf()` = `(0, lineY, rearZ × depthCompress)` and `adsOffsetOf()` negates x and y
+ * exactly, so `socket + ads` is (0, 0, −adsSightDistance) for ANY `lineY` and ANY `rearZ`.
+ * The boot assertion in `assertClearance()` tests precisely that residual, and it is
+ * identically zero here — moving the line moves the socket and the ADS translation together.
  *
- *   front post   z −0.132 → −0.128 (4 mm BACK), width 12 → 11 mm, depth 13 → 12 mm
- *   rear towers  outer x ±0.024 → ±0.021 (3 mm IN per side), depth 13 → 12 mm
- *   both blades  +12 to +16 mm of HEIGHT, which is not a term in either metric
- *   rib          120 → 30 mm long, and now strictly inside the receiver's own x/z footprint
- *                (|x| ≤ 0.007 < 0.013, front face −0.143 > the receiver nose at −0.146), so it
- *                cannot be a worst vertex while the receiver corner above it exists
+ * The two TOPS stay coincident the same way: the builder places the front blade at
+ * `lineY − frontH/2` and the rear pair at `lineY − rearH/2`, so both top faces land on the
+ * sight line whatever the heights are. `rearH` 0.022 and `frontH` 0.017 differ here — they
+ * have different surfaces under them — and the tops still cannot drift apart.
  *
- * Reach is `hypot(|x| + sway, z)` and the near plane is a depth: neither reads y at all, so
- * 46 mm blades are free. No forward-most (−z) or right-most (+x) vertex on this model moved.
+ * The PICTURE is the part that could have drifted, so it is measured. Sight radius 0.128
+ * (`rearZ` 0.006 → `frontZ` −0.122), compressed 0.50, puts the notch 0.235 m from the eye and
+ * the post 0.299 m. The ±0.010 notch window projects to ±0.01272 at the front plane against a
+ * 5.5 mm post half-width: 7.22 mm of light bar per side, 0.0241 rad. The geometry before this
+ * pass gave 0.0245 and the pistol reference the whole sight contract was solved against gives
+ * 0.0253. A 1.6 % change to the number the player actually aims with.
+ *
+ * ─── CLEARANCE: EVERY EDIT IS VERTICAL, INWARD OR BACKWARD ───────────────────────────────
+ * The model's worst vertices are ones this profile still does not touch: `muzzle.fin3` at
+ * 0.389 reach, the magazine floorplate at reload, the forearm at the near plane (0.096).
+ *
+ *   sight line   −28 mm of HEIGHT, and neither metric reads y at all
+ *   rear block   `rearZ` 0.020 → 0.006 and 36 mm deep, so it spans z −0.012…0.024 — inside the
+ *                receiver's own z footprint, 8 mm FURTHER from the near plane than before
+ *   front pad    front face −0.146, level with the receiver nose at −0.146; |x| ≤ 0.009 <
+ *                the receiver's ±0.013. Worst reach hypot(0.009 + sway, 0.146) ≈ 0.148 m,
+ *                against a receiver corner at 0.150 that already ranks above it
+ *   front post   `frontZ` −0.128 → −0.122, i.e. it grew BACKWARD; its front face is −0.140,
+ *                6 mm inside the pad, which is itself level with the nose
+ *
+ * No forward-most (−z) or right-most (+x) vertex on this model moved. Reach stays 0.389,
+ * near stays 0.096.
+ *
+ * ─── THE SILHOUETTE, STILL FIVE EVENTS ───────────────────────────────────────────────────
+ * stock → receiver with a notched block milled into its tail → bare top → front pad and blade
+ * → hard step down → bare fluted barrel → the can. Plus the bolt handle out to the right and
+ * the bipod stub under the handguard, the two events on the OUTLINE.
  */
 const PROFILE: GunProfile = {
   id: 'longshot',
@@ -95,36 +126,72 @@ const PROFILE: GunProfile = {
   restDz: 0.016,
   sight: {
     /**
-     * `lineY` and `rearZ` ARE THE AIM SOLVE. Untouched — see the header note.
+     * A NOTCHED BLOCK AND A BLADE IN A PAD — the geometry the header argues for, as numbers.
+     * Read that note first; this one is the arithmetic and the two floors it is against.
      *
-     * `rearH` 0.030 → 0.046 and `frontH` 0.034 → 0.046 are the whole remake. The receiver's
-     * top face is 0.054 and the line is 0.098, so 0.044 is exactly the height that closes the
-     * daylight; at 0.046 both blades bury their bottom 2 mm INSIDE the receiver and there is
-     * no gap left to see at any angle. This is presence bought with HEIGHT instead of length,
-     * which is the one axis neither spatial budget measures.
+     * `lineY` 0.098 → 0.072 → 0.070. Proud height = `lineY` − the surface underneath, and
+     * both blades must reach down to their host or they float (which is the bug two passes ago
+     * closed by making them 46 mm tall). 0.070 over a 0.054 top face is 16 mm of rear block
+     * proud; over the 0.059 front pad it is 11 mm of blade. `lineY` is an INPUT to
+     * `aimSocketOf()`, not a tuned constant, so the socket and the ADS translation move with
+     * it and the boot assertion's residual stays identically zero. It cannot go much lower:
+     * `guardSightLine()` fails anything on the top face above `lineY − 0.010`, and the front
+     * pad tops out at 0.059, so 0.070 leaves exactly 1 mm of that ceiling.
      *
-     * `bladeD` 0.013 → 0.012 and `bladeW` 0.012 → 0.011 shorten the assembly fore-and-aft and
-     * narrow it, both still clear of the 0.010 ink floor. `frontZ` −0.132 → −0.128 pulls the
-     * post BACK, which puts 12 mm of receiver ahead of it (it reads mounted rather than
-     * cantilevered off the nose) and buys reach margin rather than spending it.
+     * `rearZ` 0.020 → 0.012 → 0.006 keeps the block's rear face at 0.024, FLUSH with the
+     * receiver's own rear face, rather than hanging over the stock behind it. It is
+     * bookkeeping, not a move: the face is `rearZ` + `bladeD`/2, so deepening the block by
+     * 12 mm pulls its centre back by 6. The nearest sight vertex is exactly where it was.
      *
-     * `notchHalfGap` 0.012 → 0.010 brings the rear towers' outer faces in from ±0.024 to
-     * ±0.021 — 8 mm proud of a ±0.013 receiver instead of 11 mm, i.e. an aperture housing
-     * overhanging its base, which is what a rear sight block looks like, rather than two slabs
-     * hanging outboard of their own host in space.
+     * `bladeD` 0.012 → 0.024 → 0.036, AND THE MIDDLE NUMBER WAS MEASURED IN THE WRONG SPACE.
+     * Every `z` in this file is multiplied by `depthCompress` on the way out of the builder
+     * (`place(g, { sz: MODEL_SCALE * P.depthCompress })`, viewmodel.ts) — AFTER every clamp,
+     * so a depth authored here is not the depth that is drawn. On this gun the factor is 0.50,
+     * the harshest in the game: `bladeD` 0.024 renders as **12 mm**, not 24, and the claimed
+     * side-profile aspect of 1.33 was really 12/18 = 0.67. Still portrait, i.e. still a post,
+     * which was the whole complaint. Verified in-browser, not derived: the built `vm-sights`
+     * geometry's local z span measured 0.082 = 0.164 × 0.50 exactly, while its y span measured
+     * 0.022 = `rearH` untouched. z is halved; y and x are not.
      *
-     * WHAT THAT COSTS THE PICTURE, MEASURED RATHER THAN WAVED THROUGH. The 148 mm sight
-     * radius, compressed by 0.50, puts the notch 0.235 m from the eye and the post 0.309 m, so
-     * the ±0.010 window projects to ±0.0132 at the front plane; against a 5.5 mm post
-     * half-width that is a 7.6 mm light bar per side, or 0.0248 rad. The old geometry gave
-     * 0.0314 rad, so the bars ARE narrower — deliberately, and they land within 2 % of the
-     * pistol's 0.0253, which is the reference picture this whole sight contract was solved
-     * against. A tighter notch on a marksman rifle is what a marksman rifle has; what it must
-     * not be is CLOSED, and 0.0248 rad is ~13 px of albedo at the 56° ADS FOV before the
-     * sights' thinner `view.sightOutlinePx` hull takes its few pixels a side.
+     * So the target is now stated in DRAWN millimetres, which is the only space that can be
+     * checked against a complaint about what the screen shows:
+     *
+     *     drawn depth = `bladeD` × 0.50 = 18 mm      proud = `lineY` − the surface under it
+     *     rear   18 deep / 16 proud = 1.13      front  18 deep / 11 proud = 1.64
+     *
+     * Both terms move: depth alone would have needed `bladeD` 0.044 to clear an 18 mm-proud
+     * block, which does not fit between the receiver's rear face (0.024) and its nose
+     * (−0.146) with a pad around it. For reference the other three profiles land at 1.01
+     * (inkslinger), 1.17 (ratatat) and 2.17 (boomstick) on this same measure — this gun was
+     * the only one still under 1, and it is the one in the playtester's screenshot.
+     *
+     * `rearH` 0.022 and `frontH` 0.017 are unchanged, and the lower line buries them DEEPER
+     * rather than floating them: rear bottoms at 0.048, 6 mm inside a 0.054 top face; front
+     * bottoms at 0.053, 6 mm inside a pad spanning 0.043…0.059. The two are ALLOWED to differ
+     * — the builder derives both tops from `lineY`, so the sight line survives any pair.
+     *
+     * `bladeW` 0.011 and `notchHalfGap` 0.010 ARE NOT TOUCHED, on purpose: together they are
+     * the sight picture. Outer faces stay at ±0.021 on a ±0.013 receiver, which on a block
+     * this deep now reads as a sight base overhanging its dovetail rather than as two slabs
+     * outboard in space.
+     *
+     * THE PICTURE, MEASURED. Radius 0.128 (`rearZ` 0.006 → `frontZ` −0.122), compressed 0.50:
+     * notch 0.235 m from the eye, post 0.299 m, ratio 1.272. The ±0.010 window projects to
+     * ±0.01272 against a 5.5 mm post half-width → 7.22 mm of light bar per side, 0.0241 rad.
+     * The previous geometry gave 0.0245 and the pistol reference this whole sight contract was
+     * solved against gives 0.0253. A 1.6 % change to the number the player actually aims with.
+     *
+     * THE INK FLOOR (0.010 m), every dimension AS DRAWN — which is the correction above: a
+     * depth has to be checked after `depthCompress`, not before, and it matters more here than
+     * anywhere because the builder makes the blades with `bevelBox` and NOT `inkChunk`, so
+     * there is no clamp and no dev warning behind this line. Rear blade 0.011 × 0.022 × 0.018
+     * drawn, front blade 0.011 × 0.017 × 0.018 drawn. Thinnest term 0.011, one millimetre
+     * clear. The notch VOID is checked too, since a gap has to survive the line as well as a
+     * mass: 20 mm wide × 16 mm tall (its floor is the receiver's own 0.054 top face) × 18 mm
+     * deep drawn — every term over the floor, and now wider and deeper than it is tall.
      */
-    lineY: 0.098, rearZ: 0.020, frontZ: -0.128,
-    bladeW: 0.011, rearH: 0.046, frontH: 0.046, bladeD: 0.012, notchHalfGap: 0.010,
+    lineY: 0.070, rearZ: 0.006, frontZ: -0.122,
+    bladeW: 0.011, rearH: 0.022, frontH: 0.017, bladeD: 0.036, notchHalfGap: 0.010,
   },
   /**
    * 170 mm, cut entirely off the FRONT of an older 200 (rear face still z 0.024) — which is
@@ -193,28 +260,43 @@ const PROFILE: GunProfile = {
    */
   stock: { w: 0.032, h: 0.060, d: 0.118, y: 0.014, z: 0.080, skeleton: false },
   /**
-   * THE WARM RIB, CUT FROM 120 mm TO 30 mm — and this is half of the "grey bar on top" fix.
+   * THE FRONT SIGHT'S BASE PAD — the `rib` slot spent on the subtractive read rather than on a
+   * stripe. It was a 120 mm bar nose-to-tail once (the "grey line on top"), then a 30 × 14 mm
+   * block under the post; it is now the PLINTH THE BLADE SITS INSIDE, which is the only job on
+   * this gun worth the one warm mark forward of the hand.
    *
-   * It used to run z −0.126…−0.006, i.e. nose-to-tail down the middle of the top face, which
-   * is precisely the long horizontal mark the playtester asked to have removed. What is left
-   * is a 30 × 14 mm BLOCK sitting directly under the front post: 5 mm proud of the receiver's
-   * top face, 9 mm of it buried inside, and 30 mm long against the post's 12 — so the post
-   * grows out of a base instead of standing on a flat plate, and the base is the one WARM mark
-   * on the forward half of the gun (every other RUST mark — grip tape, hammer spur, the shell
-   * in the port — is behind the hand).
+   * 48 × 18 mm on plan, spanning z −0.146…−0.098 and x ±0.009, top at 0.059 — 5 mm proud of
+   * the receiver's 0.054 top face with 11 mm of it buried inside. The post's 11 × 36 mm
+   * footprint sits WITHIN that on all four sides: 3.5 mm of shoulder either side, 6 mm fore
+   * and aft. A blade rising out of a pad is a machined front sight; the same blade on a flat
+   * plate is the stick the playtester has now reported four times.
    *
-   * IT CANNOT OCCLUDE THE SIGHT PICTURE, and the check is the one that killed the old rib.
-   * Anything on top of the receiver runs FORWARD of the rear notch and is therefore NEARER the
-   * eye than the post at every ray below the line — but this block is AT the post's own z
-   * (both centred on −0.128), so it is not in front of the post, it IS the post's base. Its
-   * top at 0.059 is also 39 mm under `lineY`, four times the 10 mm clearance
-   * `guardSightLine()` asks of anything up there.
+   * `d` 0.032 → 0.048 and `z` −0.128 → −0.122 TRACK THE BLADE, they are not an independent
+   * choice: `sight.bladeD` went to 0.036 to fix the drawn side-profile aspect (see that note),
+   * and a pad the blade overhangs is not a pad. Both are still halved by `depthCompress` on
+   * the way out, so what is drawn is a 24 mm-deep pad under an 18 mm-deep blade — the shoulder
+   * survives the compression because BOTH terms are compressed by the same factor.
    *
-   * AND IT COSTS NO CLEARANCE. |x| ≤ 0.007 against the receiver's ±0.013 and its front face is
-   * −0.143 against the receiver's nose at −0.146 — strictly inside the host's own x/z
-   * footprint, so the receiver's corner vertex ranks above it in reach at every pose.
+   * IT CANNOT OCCLUDE THE SIGHT PICTURE, and this is the check that killed the 120 mm rib.
+   * Anything on the top face runs FORWARD of the rear notch and is therefore nearer the eye
+   * than the post at every ray below the line — but this pad is AT the post's own z (both
+   * centred on −0.122), so it is not in front of the post, it IS the post's base. Its top at
+   * 0.059 is 11 mm under `lineY` 0.070, and `guardSightLine()` fails anything on the top face
+   * above `lineY − 0.010` = 0.060. One millimetre of margin, and it is the binding constraint
+   * on how far the sight line may drop — re-checked against the new line, not inherited.
+   *
+   * AND IT COSTS NO CLEARANCE. |x| ≤ 0.009 against the receiver's ±0.013, front face −0.146,
+   * exactly level with the receiver's own nose: strictly inside the host's x/z footprint, so
+   * the receiver's corner vertex (hypot(0.013, 0.146) ≈ 0.1466) still ranks above the pad's
+   * (hypot(0.009, 0.146) ≈ 0.1463) at every pose, and both are 240 mm inside the 0.40 budget
+   * the muzzle actually spends. Confirmed at boot: reach 0.389, near 0.096, unchanged.
+   *
+   * INK FLOOR: 0.018 × 0.016 × 0.024 AS DRAWN (`d` 0.048 × `depthCompress` 0.50), thinnest
+   * term 6 mm clear — which needs saying twice, because the builder makes this one with
+   * `bevelBox` and no `inkChunk` clamp behind it, and because the clamp would have validated
+   * the pre-compression number anyway.
    */
-  rib: { w: 0.014, h: 0.014, d: 0.030, y: 0.052, z: -0.128 },
+  rib: { w: 0.018, h: 0.016, d: 0.048, y: 0.051, z: -0.122 },
 
   /**
    * THE EJECTION PORT — on this gun it is the BOLT'S port, the longest in the game at 44 mm,
@@ -284,9 +366,11 @@ const PROFILE: GunProfile = {
   magWell: { w: 0.018, h: 0.022, d: 0.024, y: -0.030, z: -0.132, flare: 0.005 },
   /**
    * NO SIGHT EARS AND NO RAIL TEETH, PERMANENTLY. Both were deleted because together they were
-   * the pale bar the playtester asked to have removed, and the remake above replaces the one
-   * structural job the teeth were doing (holding the blades up) with blade height, which is
-   * free in both budgets where a rail is not. Do not re-add them.
+   * the pale bar the playtester asked to have removed. The remake above replaces the one
+   * structural job the teeth were doing — holding the blades up off the top face — with the
+   * blades' own hosts: the rear pair is buried in the receiver, the front blade is buried in
+   * its pad. A rail would also cost the reach a hood or an ear cannot pay for. Do not re-add
+   * them, under any name.
    *
    * TWO BOLD FLUTES PER FLANK, HOSTED ON THE BARREL, in the 51 mm window the shortened
    * receiver and the pulled-back handguard opened between them.
@@ -344,8 +428,13 @@ const PROFILE: GunProfile = {
  * a desert tan, so the separation is bought where it is visible instead — GOLD is luma 0.779 /
  * sat 0.81 / value 1.00 and this is 0.571 / 0.44 / 0.68, i.e. a dark khaki against a bright
  * yellow, not a dimmer version of the same signal. Every field is under `ENV_VALUE_CEIL`
- * (0.78) and every field is under the sights' BONE (0.729) — the frame by 0.158, which keeps
- * the front post reading as the brightest thing on the gun, which is its whole job.
+ * (0.78).
+ *
+ * AND THE SIGHTS ARE NOT IN THIS TABLE, WHICH IS THE POINT OF THEM. They wear the shared
+ * sight material — dark iron, flat value 0.188, set in `viewmodel.ts` after the playtester
+ * objected to pale marks on the top edge three times. Against this frame at 0.571 that is the
+ * hardest value break on the weapon, so the notched block and the blade read as DARK CUTOUTS
+ * in a pale sand receiver. Nothing in this file may lighten them.
  * ═════════════════════════════════════════════════════════════════════════════════════════
  */
 const FIELDS: FieldSet = {

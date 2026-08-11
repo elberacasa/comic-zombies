@@ -26,7 +26,7 @@
 
 import {
   BackSide, Color, DoubleSide, FrontSide, Mesh, ShaderMaterial, SphereGeometry, Vector2, Vector3,
-  type BufferGeometry, type Matrix4, type Object3D, type Texture,
+  type BufferGeometry, type Material, type Matrix4, type Object3D, type Texture,
 } from 'three';
 import { PALETTE, color } from '@/art/palette';
 import { makeHullGeometry } from '@/art/shapes';
@@ -660,6 +660,120 @@ export function makeInkMaterial(opts: InkMaterialOptions): InkMaterial {
   // uses whatever normals the geometry carries, and `art/shapes` already builds every
   // primitive faceted (non-indexed, per-face normals). Weld it yourself if you want smooth.
   return mat as InkMaterial;
+}
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE PATCHED-VERTEX PREPASS MATERIAL — the same bug the zombies had, on the gun this time.
+ *
+ * `render/renderer.ts` fills a view-normal + depth buffer before the beauty pass; `passes/ink.ts`
+ * Sobels it for every line in the frame, gates its screen-space rim on it (`nearerMask`) and
+ * feeds the boil from it. A mesh whose SHAPE is decided in its own vertex shader cannot be drawn
+ * into that buffer with a stock `MeshNormalMaterial` — the prepass then records whatever is
+ * BEHIND the object across its silhouette, and the ink pass inks the background straight through
+ * it. The zombies shipped exactly this (their skinning uniforms were missing; see
+ * `game/enemies/body.ts`) and they fixed it by publishing a posed normal material on
+ * `mesh.userData.czPrepassMaterial`.
+ *
+ * The viewmodel has the same class of patch and never opted in. `game/weapons/viewmodel.ts`
+ * rewrites every one of its materials' vertex shaders with the HERO LENS — a clip-space
+ * magnification of the gun's image about a fixed screen point (`uHeroLens`, ~2.6× at hip). The
+ * prepass drew the gun UNMAGNIFIED and much smaller, so across most of the pixels the beauty
+ * pass painted the gun on, the prepass held the CITY: buildings, overhead wires and the street
+ * were Sobel'd across the receiver and the sight posts, which is the playtester's *"the guns in
+ * the top have this sticks"* — the sights looked like translucent antennae because they were
+ * being drawn through.
+ *
+ * THIS IS THE ENEMIES' MECHANISM, NOT A SECOND ONE. Same `userData.czPrepassMaterial` slot,
+ * same hand-written normal shader, same "output matches `MeshNormalMaterial` exactly" contract:
+ * `normalize(view normal) * 0.5 + 0.5`. The only difference is WHO fills the slot. The zombies
+ * author theirs by hand because they own a bespoke skinning patch; here the patch is applied by
+ * a game system to a material this module built, so the material derives its own stand-in and
+ * the renderer asks for it — no game import in the renderer, and `viewmodel.ts` needs no edit.
+ *
+ * HOW IT KNOWS IT IS NEEDED: `makeInkMaterial` assigns the shared `VERT` constant BY REFERENCE.
+ * Any owner that patches a vertex shader must replace that string, so `mat.vertexShader !== VERT`
+ * is precisely "this material's geometry is no longer where the stock shader would put it". An
+ * unpatched material — every wall, prop, kerb and enemy hull in the arena — compares equal by
+ * reference in O(1) and returns null, i.e. keeps the stock normal material it has always used.
+ * The check is on the LIVE string, so a shader patched later, or re-patched, is picked up.
+ *
+ * COST: none per frame. The derived material re-uses the source's vertex shader verbatim and
+ * SHARES its `uniforms` object by reference — the same trick that keeps the zombies' three
+ * shaders from ever posing differently — so `uHeroLens` reaches the prepass the same frame it
+ * reaches the beauty pass, with no copy. It adds no draw call (the mesh was already in the
+ * prepass, just wrong) and no target. What it costs is a couple of extra shader PROGRAMS, once:
+ * three keys its program cache on shader source + defines, and the nineteen patched viewmodel
+ * materials share ONE vertex source, so they collapse to one program per `defines` combination
+ * — measured in-browser as exactly two (`::prepass`, mapped and unmapped) for the equipped gun,
+ * compiled on the first frame that draws them. Draw calls before and after: 199 either way.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const PREPASS_FRAG = /* glsl */ `
+  precision highp float;
+  varying vec3 vViewNormal;
+  void main() {
+    gl_FragColor = vec4(normalize(vViewNormal) * 0.5 + 0.5, 1.0);
+  }
+`;
+
+/** The derived material, plus the vertex source it was derived from (so a re-patch rebuilds). */
+interface DerivedPrepass { src: string; mat: ShaderMaterial }
+
+const _prepassCache = new WeakMap<ShaderMaterial, DerivedPrepass>();
+
+/**
+ * The normal/depth stand-in for a material whose vertex shader has been patched by its owner,
+ * or `null` for anything the renderer's stock `MeshNormalMaterial` already draws correctly.
+ *
+ * Called by `renderer.ts` per prepass mesh, AFTER the explicit `mesh.userData.czPrepassMaterial`
+ * slot — an object that hand-authors its own stand-in (the zombies) always wins.
+ */
+export function inkPrepassMaterialFor(
+  material: Material | Material[] | null | undefined,
+): ShaderMaterial | null {
+  // A multi-material mesh would need one stand-in per group; nothing in the game has one, and
+  // guessing which group's shader to honour would be worse than the stock material.
+  if (!material || Array.isArray(material)) return null;
+  if (!(material as { isInkMaterial?: boolean }).isInkMaterial) return null;
+  const src = material as ShaderMaterial;
+  // The whole gate: unpatched materials compare equal BY REFERENCE and cost nothing.
+  if (src.vertexShader === VERT) return null;
+
+  const hit = _prepassCache.get(src);
+  if (hit && hit.src === src.vertexShader) return hit.mat;
+  if (hit) hit.mat.dispose();
+
+  const mat = new ShaderMaterial({
+    vertexShader: src.vertexShader,
+    fragmentShader: PREPASS_FRAG,
+    // `USE_ALBEDO` is fragment-only and `USE_COLOR` gates the vertex shader's `vAo` read, so the
+    // defines and `vertexColors` must travel together — three only declares the `color`
+    // attribute when the flag is on, and the shader would not compile without it.
+    defines: { ...(src.defines ?? {}) },
+    vertexColors: src.vertexColors,
+    // Shared BY REFERENCE. The lens uniform is written once per frame by the viewmodel and both
+    // materials read the same object, so the prepass can never lag the beauty pass by a frame.
+    uniforms: src.uniforms,
+    side: src.side,
+    // The prepass is an opaque depth+normal fill. It must write depth whatever the source does.
+    transparent: false,
+    depthWrite: true,
+    depthTest: true,
+  });
+  mat.name = `${src.name || 'Ink'}::prepass`;
+  _prepassCache.set(src, { src: src.vertexShader, mat });
+  // three fires this from `Material.dispose()`. Freeing the stand-in with its source keeps the
+  // derivation invisible to the owner: nobody has to know it exists in order to clean it up.
+  // Only on the FIRST derivation — a re-patch replaces the cached material, and the listener
+  // reads the cache rather than closing over one instance, so it stays correct.
+  if (!hit) {
+    src.addEventListener('dispose', () => {
+      const cur = _prepassCache.get(src);
+      if (cur) { cur.mat.dispose(); _prepassCache.delete(src); }
+    });
+  }
+  return mat;
 }
 
 /** Convenience: recolour an existing ink material without rebuilding it. */

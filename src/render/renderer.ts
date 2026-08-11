@@ -9,6 +9,9 @@
  *   3. **normal + depth prepass** — the whole scene through a MeshNormalMaterial into an
  *      RGBA target with a DepthTexture attached. Passes 2 and 3 of the post stack live on
  *      this. Half resolution at LOW/MED; the edge pass is written to survive that.
+ *      Anything whose shape is computed in its OWN vertex shader (posed enemies, the
+ *      lens-magnified viewmodel) is drawn with a matching stand-in instead — see
+ *      `swapInPrepassMaterials`, which is the only place that subtlety lives.
  *   4. **emissive prepass** — LAYER.BLOOM objects only, into a small black target. This is
  *      what makes the bloom *selective* rather than a brightness threshold.
  *   5. the post stack (`pipeline.ts`)
@@ -97,7 +100,7 @@ const RenderScale = {
 import { PALETTE, color, rgb8Hex } from '@/art/palette';
 import { setArtAnisotropy } from '@/art/textures';
 import {
-  INK_GLOBALS, LAYER, disposeOutlines, outlineTree, updateInkGlobals,
+  INK_GLOBALS, LAYER, disposeOutlines, inkPrepassMaterialFor, outlineTree, updateInkGlobals,
   type OutlineOptions,
 } from './materials/index';
 import { ComicPipeline, type PipelineOptions, type PipelineQuality } from './pipeline';
@@ -602,6 +605,22 @@ export class ComicRenderer implements RenderService {
    * `mesh.userData.czPrepassMaterial` and we swap it in per object. No import, no registry, and
    * anything that does not opt in behaves exactly as it did under `overrideMaterial`.
    *
+   * SECOND SHIPPED SYMPTOM, SAME BUG, THE VIEWMODEL ("the guns have these sticks showing out"):
+   * `game/weapons/viewmodel.ts` rewrites every gun material's vertex shader with the HERO LENS,
+   * a clip-space magnification (~2.6× at hip) about a fixed screen point. The stock normal
+   * material has no `uHeroLens` and no patch, so the prepass drew the gun small and centred
+   * while the beauty pass drew it big — and over most of the gun's pixels the prepass held the
+   * CITY. The ink pass Sobel'd buildings and overhead wires straight across the receiver and
+   * the sight posts, which is why the sights read as translucent antennae, and why they were
+   * SOLID the moment you set `pipeline.inkPass.enabled = false`.
+   *
+   * Those materials do not hand-author a stand-in — the patch is applied by a game system to a
+   * material `materials/index.ts` built — so the fallback below asks the MATERIAL for one:
+   * `inkPrepassMaterialFor()` returns a normal-writing derivative carrying that same patched
+   * vertex shader, or null for anything whose shader is still the stock `VERT` (every wall,
+   * prop and enemy hull in the arena — an O(1) reference compare, no behaviour change, no cost).
+   * The renderer still imports nothing from `game/`.
+   *
    * Only objects that the prepass camera mask can actually see are touched, so outline hulls
    * (LAYER.OUTLINE) and the sky (LAYER.NO_INK) are skipped for free.
    * ═════════════════════════════════════════════════════════════════════════════════════════
@@ -617,7 +636,12 @@ export class ComicRenderer implements RenderService {
     if (!(obj as { isMesh?: boolean }).isMesh) return;
     if ((obj.layers.mask & this.prepassBits) === 0) return;
     const mesh = obj as Mesh;
-    const custom = (mesh.userData as { czPrepassMaterial?: Material }).czPrepassMaterial;
+    // Hand-authored stand-in first: an object that knows how it is posed always wins.
+    // Otherwise ask the material itself — an ink material whose vertex shader its owner has
+    // patched (the viewmodel's hero lens) derives one; everything unpatched returns null in
+    // O(1) and gets the stock normal material exactly as before. See `inkPrepassMaterialFor`.
+    const custom = (mesh.userData as { czPrepassMaterial?: Material }).czPrepassMaterial
+      ?? inkPrepassMaterialFor(mesh.material);
     this.prepassMeshes.push(mesh);
     this.prepassSaved.push(mesh.material);
     mesh.material = custom ?? this.normalMat;

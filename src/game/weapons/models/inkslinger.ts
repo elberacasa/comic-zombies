@@ -12,62 +12,145 @@ import { PALETTE, hexMix } from '@/art/palette';
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════════════════════
- * THE SIGHT — the reference the whole game's ADS is solved against, and now the SHORTEST
- * assembly in the arsenal rather than merely the smallest numbers in it.
+ * THE SIGHT — a MILLED BLOCK WITH A SLOT IN IT, and no longer three columns standing on a slide.
  *
- * THE THREE NUMBERS THAT MAY NOT MOVE: `lineY`, `rearZ` and `notchHalfGap`. `lineY` feeds
- * `aimSocketOf()` feeds the ADS translation — move it and the gun shoots somewhere other than
- * where it looks; `rearZ` is the socket's z; `notchHalfGap` is the light-bar window that was
- * measured open once and must stay open. Everything else here is shape.
+ * THE COMPLAINT, FOUR BUILDS RUNNING. *"gray lines on top"* → *"the sights are too long"* →
+ * *"3 grey thing on top looks bad"* → *"the guns in the top have this sticks like showing out"*.
+ * Four separate reports, and the three previous fixes all missed because they treated the
+ * SURROUNDINGS of the blades as the problem: the wings came off, the rail teeth came off, and
+ * the whole assembly went from `BONE` 0.73 to dark iron 0.188. The playtester then said "sticks"
+ * again, because the blades themselves ARE the sticks and nothing had touched them.
  *
- * WHAT CHANGED, AND WHY IT IS THE ONLY LEVER THIS GUN HAS. The playtester, on the arsenal:
- * *"the sights or grey things on top are too long, i would remove those and remake that part in
- * all guns"*. They are right, and on THIS gun the answer is arithmetic rather than taste:
+ * ─── THE PRINCIPLE, WHICH IS THE ENTIRE FIX ───────────────────────────────────────────────
+ * **A SIGHT MUST BE SUBTRACTIVE, NOT ADDITIVE.** A thin post added on top of a receiver reads as
+ * a stick glued on, no matter what colour it is or how short you make it — nothing about a
+ * column standing off a flat face says "this was machined". A real sight reads as part of the
+ * gun because it is a MASS with a notch CUT INTO IT. Same silhouette job, opposite read, and it
+ * is a proportion change rather than a part count change — which is also the only kind of change
+ * WEAPON_ART §0 lets us make up here, because every part in this assembly already sits within a
+ * few millimetres of the ink floor.
  *
- *   · The blades stand `lineY − 0.049` = 17 mm proud of the slide's top face. That height is
- *     `lineY`, i.e. the aim solve, and it cannot come down. Their WIDTH is 11 mm — one
- *     millimetre over `INK_FLOOR`, so it cannot come in either without the post printing solid
- *     black (WEAPON_ART §0; this project has already lost a front sight to exactly that).
- *   · So the only axis with room is fore-and-aft, and `bladeD` takes the trim: 12 → 11 mm on
- *     all three blades. The post is now an 11 × 11 mm SQUARE COLUMN in plan — a pistol post,
- *     not a rail segment — and the rear pair are two matching 11 mm blocks with a 20 mm notch
- *     between them. Nothing on this gun's top edge is longer than it is wide.
+ * ─── WHAT THE BLADES WERE, IN NUMBERS ─────────────────────────────────────────────────────
+ * 11 wide × 11 deep, standing `lineY − 0.049` = 17 mm proud of the slide's top face. An 11 × 11
+ * column 17 mm tall is TALLER THAN IT IS THICK ON BOTH HORIZONTAL AXES — the literal definition
+ * of a post — and there were three of them in a row on the one edge the player looks at for 100%
+ * of the session. "Sticks showing out" is a precise description of that solid.
  *
- * AND THE PALE MASS THIS GUN ACTUALLY HAD IS NOT UP HERE. `sightParts` is three blocks; the
- * `BONE` that dominates the pistol at a glance was the muzzle brake — a 30 mm can wearing three
- * fins that protruded ONE millimetre past it. See the `muzzle` note in the profile: that is
- * where the "long pale thing" on the inkslinger got shortened.
+ * ─── WHAT THEY ARE NOW ────────────────────────────────────────────────────────────────────
+ * The same three solids, re-proportioned so the long axis is FORE-AND-AFT and the pair at the
+ * rear reads as one body:
  *
- * NO WINGS, EVER. Ears round the front post were removed across the arsenal and are not coming
- * back: they are `BONE` (0.73, the brightest value on the weapon) standing on the one edge the
- * player looks at for 100% of the session, and four guns wearing them is four guns wearing the
- * same pale bar. `sightWings` is therefore absent from the profile below, not set to a small
- * number.
+ *   bladeD  0.011 → 0.026   the whole read. Each solid is now 26 mm along the slide against
+ *                           17 mm of proud height — LANDSCAPE, not portrait. A block lying along
+ *                           the gun is a machined boss; the same volume standing up is an
+ *                           antenna. Nothing else in this file moves as much per millimetre.
+ *   bladeW  0.011 → 0.014   the rear pair become 14 mm WALLS either side of the 20 mm notch
+ *                           instead of 11 mm pins beside a gap wider than both of them. Wall :
+ *                           slot : depth is now 14 : 20 : 26, i.e. the metal dominates the void,
+ *                           which is what makes the eye read "block with a slot" rather than
+ *                           "two posts with a space".
+ *   frontZ −0.118 → −0.114  puts the front block's FRONT FACE at z −0.127 — dead flush with the
+ *                           slide's nose (receiver z −0.052, d 0.150 → −0.127) and butted
+ *                           against the muzzle can's rear face, which is at −0.127 as well
+ *                           (muzzle z −0.140, len 0.026). Slide nose, sight block and brake now
+ *                           terminate on ONE plane. A part that shares a face with two other
+ *                           masses was machined with them; a part floating 3 mm short of both
+ *                           was dropped on afterwards.
+ *   frontH  0.020 → 0.028   the front block's root goes 11 mm INSIDE the slide (bottom 0.038 vs
+ *                           the 0.049 top face) instead of 3 mm. It is 14 mm wide inside a 30 mm
+ *                           slide, so every millimetre of that is buried and invisible — it costs
+ *                           nothing and it means the block GROWS OUT OF the slide, with no
+ *                           hairline seam at its base for any bevel, recoil offset or ink pass to
+ *                           open up.
+ *   rearH   0.018 → 0.021   the rear pair root 4 mm in rather than 1 mm. Deliberately NOT the
+ *                           front's 11: the rear body is 48 mm across against a 30 mm slide, so
+ *                           its outer 9 mm per side hangs past the slide's flanks and every
+ *                           millimetre of root below the top face becomes a visible skirt. At 4
+ *                           the skirt is a lip on a wide plate; at 11 it would be a pair of ears
+ *                           hanging down the sides of the slide, and at y 0.038 they would run
+ *                           into the cocking serrations (their top is 0.0424). Four is the number
+ *                           that buries the base and stops short of the serrations.
+ *
+ * ─── AND WHY THE REAR IS WIDER THAN THE SLIDE, WHICH IS NOT AN ACCIDENT ────────────────────
+ * The rear body spans x ±0.024 (`notchHalfGap` + `bladeW`), and the slide is 30 mm wide, so it
+ * stands 9 mm proud of each flank. That is forced: the notch may not close (see below) and the
+ * walls may not go under the ink floor, so 2 × (10 + 14) is the narrowest a two-walled rear sight
+ * on this gun can be. It is made to look intentional rather than accidental by landing where the
+ * gun is ALREADY widest — the ejection-port deflector's outer face is at x 0.023, one millimetre
+ * inboard of this. The widest points of the pistol now agree with each other, top and side, which
+ * is what a machined family of parts looks like.
+ *
+ * ─── THE THREE NUMBERS THAT DID NOT MOVE, AND WHY ─────────────────────────────────────────
+ * `lineY`, `rearZ`, `notchHalfGap`. The first two are the aim solve: `aimSocketOf()` reads
+ * exactly `(0, lineY, rearZ · depthCompress)`, so leaving both untouched leaves the ADS
+ * translation, the socket and the boot assertion bit-for-bit what they were. The builder places
+ * the front block at `lineY − frontH/2` and the rear pair at `lineY − rearH/2`, so all three tops
+ * are coincident on `lineY` BY CONSTRUCTION — changing a height cannot break the sight line, only
+ * change how deep the block is rooted.
+ *
+ * `notchHalfGap` is pinned by the RUST rib, not by the blades. The rib is 14 mm wide (±0.007)
+ * with its top at 0.052, it runs FORWARD from the notch and is therefore nearer the eye than the
+ * post at every ray under the sight line, and the ±0.010 window is what leaves a ~3 mm light bar
+ * either side of it. That was measured off the framebuffer after the "orange mass filling the
+ * notch" bug and the note in `rib` says it is one millimetre from failing again. It stays.
+ *
+ * ─── THE LIGHT BARS, RE-CHECKED AGAINST THE WIDER POST ────────────────────────────────────
+ * Widening `bladeW` widens the front post too — the builder feeds one number to both — so the
+ * sight picture has to be re-derived rather than assumed. At ADS the socket sits
+ * `view.adsSightDistance` = 0.235 m from the eye and the post is a further `0.114 × 0.66` =
+ * 0.075 m out, so the post is referred to the notch plane at 0.235 / 0.310 = 0.758× its size:
+ * 14 mm of post projects as 10.6 mm inside a 20 mm window, leaving 4.7 mm of light either side.
+ * The old 11 mm post left 5.9 mm. Both are wider than the 3 mm the rib leaves at the near end of
+ * the same window — so the rib is still the binding constraint on the picture, exactly as it was,
+ * and the post is not close to becoming one.
+ *
+ * ─── INK FLOOR (`INK_FLOOR` 0.010), EVERY SOLID, EVERY AXIS ───────────────────────────────
+ * front block  14 × 28 × 26 · rear walls 14 × 21 × 26. Smallest dimension anywhere in the
+ * assembly is 14 mm, 40 % over the floor and up from the old 11 mm, which was one millimetre
+ * over it on two axes. The blades are built with `bevelBox`, which does NOT clamp — `inkChunk`
+ * is what dev-warns, and the sight blades do not go through it — so this check is the only thing
+ * standing between this file and a solid black bar on the top edge. The VOIDS were checked too,
+ * because a hull is blind to the space between two parts: the notch is 20 mm of air between the
+ * walls (unchanged), and the gap between the rear body's front face (z −0.011) and the front
+ * block's rear face (−0.101) is 90 mm. Neither can close under a 3.5 px `sightOutlinePx` band.
+ *
+ * NO WINGS, EVER, AND NO RAIL TEETH. Both were removed across the arsenal by name and neither is
+ * coming back: they were pale bars added ON TOP of the top edge, i.e. the additive answer to an
+ * additive problem. The housing above is made out of the blades that were already there — the
+ * part count of this assembly is three, exactly as it was before this build.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
 const SIGHT = {
   /**
-   * THE sight line: the top edge of the front blade and of both rear blades. Gun space, metres.
-   * The slide's top face is at 0.049, so the blade heights below are what stands the line off it
-   * — raise `lineY` and you MUST raise the heights with it or the blades float. FROZEN: this is
+   * THE sight line: the top edge of the front block and of both rear walls. Gun space, metres.
+   * The slide's top face is at 0.049, so the heights below are what stands the line off it —
+   * raise `lineY` and you MUST raise the heights with it or the sight floats. FROZEN: this is
    * the number `aimSocketOf()` is anchored to.
    */
   lineY: 0.066,
-  /** Rear notch centre and front blade centre, along the slide. `rearZ` is the aim socket. */
-  rearZ: 0.002,
-  frontZ: -0.118,
-  /** Blade width — one millimetre over the ink floor, so the blades hold albedo. */
-  bladeW: 0.011,
   /**
-   * Blade heights below the line. Both are the minimum that still BURIES the blade in the slide:
-   * at `rearH` 0.018 the rear pair reach down to 0.048, one millimetre inside the 0.049 top face,
-   * and anything less leaves them floating over a hairline gap once the bevels are cut.
+   * Rear notch centre and front block centre, along the slide. `rearZ` is the aim socket and is
+   * FROZEN. `frontZ` is not — it is sight RADIUS, not sight LINE (the socket does not read it,
+   * and the front top sits on `lineY` at any z) — and it is set so the block's front face lands
+   * flush on the slide's nose at −0.127.
    */
-  rearH: 0.018,
-  frontH: 0.020,
-  /** Fore-and-aft length. 12 → 11 mm: square in plan, and one over the ink floor. */
-  bladeD: 0.011,
-  /** Half the notch gap: the inner face of each rear blade sits this far off centre. SOLVED. */
+  rearZ: 0.002,
+  frontZ: -0.114,
+  /** Wall thickness / post width: 14 mm of metal against the 20 mm notch. Was 11. */
+  bladeW: 0.014,
+  /**
+   * How far each solid reaches DOWN from the line. Both are rooted inside the slide rather than
+   * standing on it; the rear stops 4 mm in because anything deeper hangs a visible skirt off the
+   * flanks (the rear body is wider than the slide) and would reach the serrations at 0.0424.
+   */
+  rearH: 0.021,
+  frontH: 0.028,
+  /**
+   * Fore-and-aft length — 11 → 26 mm, and the single number that turns a post into a boss. Every
+   * solid in the assembly is now half again as long as it is proud.
+   */
+  bladeD: 0.026,
+  /** Half the notch gap: the inner face of each rear wall sits this far off centre. SOLVED. */
   notchHalfGap: 0.010,
 } as const;
 
@@ -115,11 +198,17 @@ const PROFILE: GunProfile = {
   depthCompress: 0.66,
   restDz: 0,
   /**
+   * A HOUSED SIGHT, NOT THREE POSTS — see the SIGHT block, which is the whole argument. The
+   * assembly is still exactly three solids and still costs one mesh; they are re-proportioned so
+   * the rear pair read as ONE 48 × 17 × 26 mm block with a 20 mm slot milled through it and the
+   * front reads as a boss machined into the slide's nose.
+   *
    * NO SIGHT WINGS, NO RAIL TEETH. Both were added for "reads military" and both were wrong:
    * the wings are BONE (0.73 luma, the brightest value on the gun) and the teeth are steel, so
    * every weapon ended up wearing a stack of pale bars along its top edge. The playtester: "all
-   * the guns have like gray lines on top of it, they look bad". The front post and rear notch
-   * STAY: those are the sight picture and ADS needs them. See the SIGHT block.
+   * the guns have like gray lines on top of it, they look bad". Adding a hood or a set of ears
+   * would be the same mistake a third time — the housing above is CUT from the blades that were
+   * already there, which is why the part count did not move.
    */
   sight: SIGHT,
   receiver: { w: 0.030, h: 0.038, d: 0.150, y: 0.030, z: -0.052 },

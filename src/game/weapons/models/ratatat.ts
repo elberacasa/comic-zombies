@@ -25,10 +25,16 @@ import { FIELD, plainSteel } from './types';
  * differintiator colours, still look the same overall"*. Three answers, all of them in this
  * file and none of them in the parts they said they liked:
  *
- *   1 · THE SIGHT IS NOW SHORT, LOW AND WIDE-NOTCHED — see the `sight` block. It lost 20 mm
- *       of sight radius, 2 mm off every blade's length, 4 mm of height and gained 6 mm of
- *       notch. A close-range gun gets a fast, open sight; a rifle gets a fine, tall one. The
- *       pale bar on the top edge is now the shortest of the four.
+ *   1 · THE SIGHT IS SHORT, LOW AND WIDE-NOTCHED — see the `sight` block. It lost 20 mm of
+ *       sight radius, 4 mm of height and gained 6 mm of notch. A close-range gun gets a fast,
+ *       open sight; a rifle gets a fine, tall one.
+ *
+ *       AND THEN A LATER PASS FOUND THE ACTUAL BUG UNDER ALL OF THAT: `bladeD` was 0.010,
+ *       authored at the ink floor, but `depthCompress` 0.54 is a z-SCALE applied after every
+ *       clamp, so the blades the renderer drew were 5.4 mm deep — thin plates standing on
+ *       edge, which is what "sticks showing out" was describing all along. The sight is now a
+ *       NOTCHED BLOCK and a BOSS ON A RAIL. All of the reasoning is in the `sight` block and
+ *       the second half of the `rib` block; read both before touching either.
  *   2 · THE OLIVE IS ACTUALLY OLIVE — see `FIELDS`. It was a 0.28-saturation grey that
  *       happened to lean green; it is now a 0.64-saturation olive drab at the frame's proper
  *       0.43 luma, with a pale sage steel above it and a near-black olive polymer below.
@@ -57,12 +63,14 @@ import { FIELD, plainSteel } from './types';
  *   front-low-left   three bold stamped cuts in the lower's flank   (polymer, static)
  *   mid-left         charging handle standing 20 mm off the receiver (steel, rides slide)
  *   mid-right        ejection port frame + brass in the port         (steel + RUST, slide)
- *   top              a RUST rib running forward INTO the front post   (accent, rides slide)
+ *   top              a RUST rail running INTO the front post's base   (accent, rides slide)
  *   rear-left        folding-stock pivot boss + latch arm            (polymer, static)
  *   butt             flared magwell mouth the stick feeds through    (polymer, static)
  *
- * Four value fields, none of them geometry: polymer 0.25 · frame 0.43 · steel 0.58 ·
- * BONE 0.73, plus the RUST rib and the brass.
+ * Four value fields, none of them geometry: polymer 0.25 · frame 0.43 · steel 0.58, plus the
+ * RUST rail and the brass — and the sights, which are DARK IRON (flat 0.188), not BONE. They
+ * were pale once; a pale mass on the top edge is the single thing the playtester has objected
+ * to most, and it is not coming back.
  *
  * ─── WHY THE VENTS ARE ON THE LOWER AND NOT ON THE SHROUD ────────────────────────────────
  * They wanted to be on the receiver's forward third, which IS this gun's barrel shroud. They
@@ -102,53 +110,102 @@ const PROFILE: GunProfile = {
   restDz: 0.010,
   /**
    * ═══════════════════════════════════════════════════════════════════════════════════════
-   * THE SIGHT: SHORT, LOW AND WIDE-NOTCHED — an SMG's sight, not a rifle's.
+   * THE SIGHT: A NOTCHED BLOCK AND A BOSS ON A RAIL — not three posts standing in the air.
    *
-   * The playtester's complaint was about LENGTH and VALUE: a pale bar lying fore-and-aft along
-   * the one edge that is on screen 100% of the session. So every fore-and-aft dimension here
-   * came down, and none of the numbers that make the sight *usable* did.
+   * ─── THE BUG THIS FIXES, AND IT IS ARITHMETIC, NOT TASTE ───────────────────────────────
+   * The playtester has now reported the same thing four builds running — "gray lines on top",
+   * "sights too long", "3 grey thing on top", "sticks like showing out". Three previous passes
+   * answered it by making the sights SHORTER, THINNER and DARKER, and every one of them made
+   * it worse, because none of them touched the axis the complaint is actually about.
    *
-   *   frontZ   −0.138 → −0.118   the post moves 20 mm BACK. Sight radius 152 → 132 mm.
-   *   bladeD    0.012 →  0.010   every blade is 2 mm shorter along the gun. That is the ink
-   *                              floor exactly, and the sights carry `view.sightOutlinePx`
-   *                              (3.5 px), half the silhouette's 7 — so at the floor a sight
-   *                              blade has the same albedo headroom a 20 mm part has anywhere
-   *                              else on the gun. Nothing here prints black.
-   *   lineY     0.074 →  0.070   4 mm lower. The post now stands 13 mm proud of the receiver
-   *                              deck (0.057) instead of 17 — still ≈ 21 px of post at ADS,
-   *                              which is the number that decides whether the picture works.
-   *   frontH    0.024 →  0.020   } both blades shrink by exactly the drop in `lineY`, so the
-   *   rearH     0.020 →  0.016   } bases stay where they were, inside the receiver.
+   * MEASURED, off this file's own numbers: `bladeD` was 0.010 — authored at the ink floor,
+   * which looks legal. But `depthCompress` is 0.54 and it is applied as a z-SCALE on the way
+   * out of the builder (`place(g, { sz: MODEL_SCALE · depthCompress })`), AFTER every clamp.
+   * So the blade the renderer actually drew was **5.4 mm deep**, not 10: a hair under the
+   * 10 mm floor and barely half of it. `inkChunk()` cannot catch this — the sights are built
+   * with `bevelBox` and, more importantly, the clamp runs pre-compression, so it is checking a
+   * number that no longer exists by the time the geometry is on screen.
    *
-   * AND ONE NUMBER WENT UP, WHICH IS THE IDENTITY HALF. `notchHalfGap` 0.010 → 0.013 and
-   * `bladeW` 0.011 → 0.013: a WIDE, OPEN notch flanked by two stubby fat posts. That is what a
-   * close-range gun's sight is for — the eye finds the front post without hunting — and it is
-   * a completely different shape from the marksman's fine tall blade or the shotgun's bead.
-   * Wider is also strictly safer under the ink line than narrower: the notch's light bars are
-   * 26 mm apart now, where the pistol's 20 mm gap was already the fix for a notch the line was
-   * closing.
+   * A 13 × 13 × 5.4 mm box viewed from the side IS A THIN PLATE STANDING ON EDGE. Three of
+   * them in a row on a flat deck is exactly what "sticks showing out" describes. The gun did
+   * not have a styling problem; it had three blades that were a third of the mass they were
+   * authored to be, on the one axis nobody was checking.
+   *
+   * ─── THE PRINCIPLE: SUBTRACTIVE, NOT ADDITIVE ──────────────────────────────────────────
+   * A post STUCK ON a receiver reads as glued on. A MASS with a notch CUT INTO IT reads as
+   * machined. Same silhouette job, opposite read. The shared builder gives a gun exactly three
+   * boxes of sight — one front, two rear — so the block has to be made out of those three, and
+   * it is, on the two axes that were never spent:
+   *
+   *   bladeD    0.010 →  0.026   THE FIX. 26 mm authored × 0.54 = **14.0 mm of real gun**, up
+   *                              from 5.4. The blades stop being plates and become cubes: the
+   *                              front post is now 15 wide × 14 deep × 13 proud, i.e. as deep
+   *                              as it is tall. Nothing in the arsenal reads as a stick at
+   *                              that aspect ratio. This is also the first time this gun's
+   *                              sights have been over the ink floor POST-COMPRESSION.
+   *   bladeW    0.013 →  0.015   The rear pair now spans 56 mm across a 46 mm receiver with a
+   *                              26 mm slot down the middle: one block, 14 mm deep, standing
+   *                              13 mm proud, with a square notch cut through it to the deck.
+   *                              Read the rear from the front and it is a mass with a bite out
+   *                              of it, which is the whole point.
+   *   rearH     0.016 →  0.020   } Purely how far the blades are BURIED. The builder pins both
+   *   frontH    0.020 →  0.024   } tops to `lineY`, so proud height is unchanged at 13 mm and
+   *                              nothing about the picture moves; the bases go 0.054 → 0.050
+   *                              and 0.050 → 0.046, so each block is grown 7–11 mm INTO the
+   *                              receiver instead of perched 3 mm in it. The ink hull's skirt
+   *                              at the base is now fully inside its host and cannot hover.
+   *
+   * AND THE FRONT POST IS NOW HOUSED, WITHOUT A SINGLE NEW PART. See the `rib` block: the warm
+   * rail already ran forward along the deck between the sights and died 10 mm short of the
+   * post. It now runs 11.5 mm INTO the post's base and 0.5 mm into the rear block's, at exactly
+   * the cross-section it already had — 17 mm wide against the post's 15, so the post is the
+   * rail TURNING UP rather than a separate object landing on it. One continuous machined
+   * feature from the notch to the muzzle end of the deck. That is "a raised rail the sight sits
+   * WITHIN", built out of a part that was already on the gun.
+   *
+   * ─── WHAT DID NOT MOVE, AND WHY EACH ONE COULD NOT ─────────────────────────────────────
+   *   lineY 0.070 · rearZ 0.014 · frontZ −0.118 · notchHalfGap 0.013.
+   * The first two are the aim solve (below). The last two are the sight PICTURE: 132 mm of
+   * sight radius and a 26 mm notch. `notchHalfGap` in particular is the one number that must
+   * not shrink — the window projects to `1.303 × gap` at the post plane (0.3063 m against the
+   * notch's 0.235), so a 15 mm post inside a 26 mm notch leaves a 9.4 mm light bar either
+   * side ≈ 24 px at ADS, ≈ 17 px after both hulls eat 3.5 px each. Narrowing the notch to make
+   * the block read as more block would close the picture, which is the bug the pistol's 20 mm
+   * gap was the fix for. Width was spent instead, outward, where it is free.
    *
    * ─── THE AIM SOLVE IS INTACT, BY CONSTRUCTION ──────────────────────────────────────────
-   * `rearZ` IS THE SOCKET's z and it has NOT MOVED (0.014), so `aimSocketOf()` returns the
-   * same depth it always did and the ADS z-translation is unchanged. `lineY` moved, and that
-   * is fine BECAUSE it is the one number both blades are placed from: `buildGunGeometry` puts
-   * the front at `lineY − frontH/2` and the rear pair at `lineY − rearH/2`, so both tops land
-   * ON `lineY` whatever it is, and the socket is `(0, lineY, rearZ · compress)`. x is 0 and
-   * `adsOffsetOf` negates y exactly, so the boot assertion's on-axis probe is 0 to within
-   * floating point on both axes. Moving `lineY` moves where the gun sits at ADS; it cannot
-   * move where the gun shoots relative to where it looks.
+   * `aimSocketOf()` reads exactly two numbers: `(0, lineY, rearZ · depthCompress)`. NEITHER
+   * MOVED — 0.070 and 0.014, to the millimetre, as shipped. So the socket, `adsOffsetOf()` and
+   * the entire ADS translation are bit-for-bit what they were, and the boot on-axis probe is
+   * unchanged: x is 0 because the rear pair is symmetric about x = 0, and y cancels because
+   * `adsOffsetOf` negates `lineY` exactly.
    *
-   * ─── CLEARANCE ─────────────────────────────────────────────────────────────────────────
-   * Every edit above is neutral or POSITIVE. The post's forward face goes −0.144 → −0.123
-   * (21 mm further from the muzzle end, and it was never the worst vertex — the muzzle can's
-   * face is at −0.189). The blades' outer x goes ±0.021 → ±0.026, which is still inboard of
-   * the ejection-port deflector (±0.031) and the charging handle (−0.037), neither of which is
-   * the worst lateral vertex either. Nothing added forward, nothing added outboard.
+   * The COINCIDENCE of the two tops on the line is also structural, not maintained by hand:
+   * `buildGunGeometry` places the front at `lineY − frontH/2` and each rear blade at
+   * `lineY − rearH/2`, so both tops land ON `lineY` for any `frontH`/`rearH`. That is why
+   * growing the blades downward (the only thing `rearH`/`frontH` do) cannot move the sight
+   * line, and why this edit changes where the gun LOOKS like it aims not at all.
+   *
+   * ─── CLEARANCE: NEUTRAL ON EVERY BINDING AXIS ──────────────────────────────────────────
+   * Latest worst case for this gun is 0.374 reach / 0.080 near against 0.40 / 0.42 / 0.07.
+   *   FORWARD (the expensive one). The post's front face goes −0.123 → −0.131 authored, i.e.
+   *     −0.0664 → −0.0707 after the 0.54 compress: 4.3 mm of real gun. It is nowhere near the
+   *     worst vertex — the muzzle can's face is at −0.189 authored, −0.102 real, 32 mm ahead
+   *     of it. The front sight cannot become this gun's reach vertex without growing 60 mm.
+   *   LATERAL (the other expensive one). Blade outer x ±0.026 → ±0.028, still inboard of the
+   *     ejection-port deflector at ±0.031, which is the existing lateral vertex on that side,
+   *     and far inboard of the charging handle's −0.045 (which subtracts from a +0.125 pose
+   *     and costs nothing).
+   *   REARWARD / NEAR. The rear block's back face goes 0.019 → 0.027 authored = 0.0146 real,
+   *     3.8 mm nearer the eye and flush with the receiver's own 0.026 rear face. The near
+   *     vertex on this gun is the stock and the fist, both an order of magnitude further back
+   *     (stock rear face 0.117 authored, 0.063 real). No effect on the 0.080 margin.
+   *   HEIGHT is free and unchanged: the top of the sight is `lineY`, which did not move.
    * ═══════════════════════════════════════════════════════════════════════════════════════
    */
   sight: {
     lineY: 0.070, rearZ: 0.014, frontZ: -0.118,
-    bladeW: 0.013, rearH: 0.016, frontH: 0.020, bladeD: 0.010, notchHalfGap: 0.013,
+    bladeW: 0.015, rearH: 0.020, frontH: 0.024, bladeD: 0.026, notchHalfGap: 0.013,
   },
   receiver: { w: 0.046, h: 0.050, d: 0.184, y: 0.032, z: -0.066 },
   serrations: 5,
@@ -186,8 +243,34 @@ const PROFILE: GunProfile = {
    * at 17 mm it leaves ~12. Width is free here — occlusion of the front post is a function of
    * HEIGHT only, and the deck it sits on is 46 mm wide, so 17 still leaves 14 mm of olive
    * either side of it.
+   *
+   * ─── AND NOW IT IS THE SIGHT RAIL, WHICH IS THE HALF OF THE SIGHT FIX THAT IS NOT GEOMETRY
+   * A front post standing alone on a flat deck reads as glued on however chunky it is. The
+   * cheapest housing available is a rail the post GROWS OUT OF, and this gun already had one
+   * running down the middle of the deck between the two sights — it just stopped 10 mm short at
+   * each end, so all three blades had daylight under them.
+   *
+   * `d 0.107 → 0.118` and `z −0.0545 → −0.0575` close both gaps and nothing else: the rib now
+   * spans z −0.1165 → +0.0015, against the front post's −0.131 → −0.105 and the rear block's
+   * +0.001 → +0.027. It runs 11.5 mm into the post's base and 0.5 mm into the block's, so the
+   * three sight masses and the rail are ONE continuous machined feature from the notch to the
+   * front of the deck.
+   *
+   * **THE CROSS-SECTION IS DELIBERATELY UNTOUCHED — `w` and `h` and `y` are to the millimetre
+   * what they were.** RUST is 0xf4761b, luma 0.54, and it sits on the one edge the playtester
+   * keeps objecting to; widening or raising it to make a beefier rail would trade "grey sticks
+   * on top" for "orange slab on top". What the rail gains is 11 mm of LENGTH, and every
+   * millimetre of that is inside the front post (17 mm rib against a 15 mm post — 1 mm of rib
+   * shows either side of it), so the extra warm area visible on the top edge is ~0.
+   *
+   * OCCLUSION IS UNCHANGED, and it is the only thing extending it forward could have broken.
+   * The binding ray is the one grazing the rib's FRONT top corner, and at a top of 0.058 with
+   * the eye 0.235 m behind the notch it clears the post from y 0.0575 up — 12.4 mm of a 13 mm
+   * proud post, ≈ 31 px at ADS. The old front face at −0.108 gave 0.0575 too. Eight millimetres
+   * of authored length (4.3 real) at a fixed height cannot move a shadow line that is set by
+   * the height.
    */
-  rib: { w: 0.017, h: 0.011, d: 0.107, y: 0.0525, z: -0.0545 },
+  rib: { w: 0.017, h: 0.011, d: 0.118, y: 0.0525, z: -0.0575 },
 
   /**
    * THE EJECTION PORT, AND IT IS FORWARD OF THE SERRATIONS ON PURPOSE.
