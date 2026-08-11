@@ -408,6 +408,12 @@ interface GunProfile {
   id: string;
   /** Per-gun foreshortening along z. Longer gun → stronger compression. See the note above. */
   depthCompress: number;
+  /**
+   * Rest-pose slide along z, metres. Positive = toward the eye. Spends near-plane margin to buy
+   * reach margin, which is what lets a long gun BE long. See the REST_DZ note. Optional; 0 for
+   * any gun that is already pinned against the near plane.
+   */
+  restDz?: number;
   sight: SightSpec;
   /** The upper mass: half-width, half-height, length, and where it sits. */
   receiver: { w: number; h: number; d: number; y: number; z: number };
@@ -573,9 +579,10 @@ const PROFILES: readonly GunProfile[] = [
    */
   {
     id: 'inkslinger',
-    depthCompress: V.depthCompress,
+    depthCompress: 0.66,
+    restDz: 0,
     sight: SIGHT,
-    receiver: { w: 0.032, h: 0.040, d: 0.150, y: 0.030, z: -0.052 },
+    receiver: { w: 0.030, h: 0.038, d: 0.150, y: 0.030, z: -0.052 },
     serrations: 4,
     barrel: { r: 0.014, len: 0.056, y: 0.010, z: -0.112 },
     muzzle: { r: 0.017, len: 0.030, z: -0.140, fins: 3, finW: 0.036 },
@@ -781,12 +788,13 @@ const PROFILES: readonly GunProfile[] = [
      * 0.52, not 0.60 — MEASURED, twice. At 0.60 rest/reload/equip all read 0.402–0.403 m, and at
      * 0.56 the RELOAD pose alone still did. The budget is 0.40. See the header note.
      */
-    depthCompress: 0.56,
+    depthCompress: 0.54,
+    restDz: 0.010,
     sight: {
       lineY: 0.074, rearZ: 0.014, frontZ: -0.138,
       bladeW: 0.011, rearH: 0.020, frontH: 0.024, bladeD: 0.012, notchHalfGap: 0.010,
     },
-    receiver: { w: 0.030, h: 0.044, d: 0.184, y: 0.032, z: -0.066 },
+    receiver: { w: 0.046, h: 0.050, d: 0.184, y: 0.032, z: -0.066 },
     serrations: 5,
     barrel: { r: 0.012, len: 0.078, y: 0.012, z: -0.140 },
     muzzle: { r: 0.015, len: 0.026, z: -0.176, fins: 2, finW: 0.032 },
@@ -794,8 +802,8 @@ const PROFILES: readonly GunProfile[] = [
     magazine: { w: 0.022, h: 0.100, d: 0.032, y: -0.072, z: 0.020 },
     tube: null,
     /** Vertical foregrip. The support hand read. */
-    foreEnd: { w: 0.026, h: 0.056, d: 0.030, y: -0.020, z: -0.132, ribs: 3 },
-    stock: { w: 0.024, h: 0.040, d: 0.086, y: 0.020, z: 0.074, skeleton: true },
+    foreEnd: { w: 0.042, h: 0.056, d: 0.030, y: -0.020, z: -0.132, ribs: 3 },
+    stock: { w: 0.038, h: 0.040, d: 0.086, y: 0.020, z: 0.074, skeleton: true },
     rib: { w: 0.013, h: 0.011, d: 0.130, y: 0.0505, z: -0.066 },
 
     /**
@@ -956,7 +964,8 @@ const PROFILES: readonly GunProfile[] = [
      * UNTOUCHED, and deliberately so: that pose's worst vertex is the PUMP, which this profile
      * does not move, so there is no headroom here to spend and nothing gained by re-solving it.
      */
-    depthCompress: 0.58,
+    depthCompress: 0.62,
+    restDz: 0.009,
     sight: {
       /**
        * A single bead on a low rear notch — a shotgun is pointed, not aimed.
@@ -980,7 +989,7 @@ const PROFILES: readonly GunProfile[] = [
      * 128, cut entirely off the front (rear face still z 0.020). Width relative to LENGTH is what
      * the eye actually measures, and 46 × 106 reads as a brick where 42 × 128 read as a bar.
      */
-    receiver: { w: 0.046, h: 0.048, d: 0.106, y: 0.030, z: -0.033 },
+    receiver: { w: 0.068, h: 0.056, d: 0.106, y: 0.030, z: -0.033 },
     /**
      * TWO, NOT THREE — an arithmetic consequence, and the right answer anyway. The serrations
      * march back from z 0.015 at a 17 mm pitch, and the ejection port's deflector needs the band
@@ -995,9 +1004,9 @@ const PROFILES: readonly GunProfile[] = [
      * 29 mm window the shortened receiver opened. Frame grey, so it is the mid value the polymer
      * shroud above it and the polymer cuts in its flanks both read against.
      */
-    barrel: { r: 0.022, len: 0.064, y: 0.014, z: -0.098 },
+    barrel: { r: 0.026, len: 0.064, y: 0.014, z: -0.098 },
     /** The bore. `fins: 0` — a plain flared choke, because the diameter IS the detail. */
-    muzzle: { r: 0.028, len: 0.030, z: -0.130, fins: 0, finW: 0 },
+    muzzle: { r: 0.034, len: 0.030, z: -0.130, fins: 0, finW: 0 },
     magazine: null,
     /**
      * Fatter tube (0.014 → 0.016) — more bore under the barrel — but the SAME y and z, and that
@@ -1007,7 +1016,7 @@ const PROFILES: readonly GunProfile[] = [
      * spends margin that does not exist. The pump's four grip ribs (§1's "ribbing that reads as
      * grip") are the builder's and are likewise left alone.
      */
-    tube: { r: 0.016, len: 0.088, y: -0.012, z: -0.090 },
+    tube: { r: 0.020, len: 0.088, y: -0.012, z: -0.090 },
 
     /**
      * THE HEAT SHIELD, built out of the `foreEnd` slot — §1's first ask for this gun, and the
@@ -1034,7 +1043,7 @@ const PROFILES: readonly GunProfile[] = [
      * and the fore-end ribs each had once (see `inkChunk`). They are 2 mm proud on every face, so
      * each one is a step on the outline, which is the one kind of detail the ink cannot erase.
      */
-    foreEnd: { w: 0.046, h: 0.022, d: 0.036, y: 0.030, z: -0.100, ribs: 2 },
+    foreEnd: { w: 0.070, h: 0.030, d: 0.036, y: 0.030, z: -0.100, ribs: 2 },
     /**
      * NO STOCK, DELIBERATELY. A pistol-grip-only pump is the shape that says "this hurts to fire"
      * before it is fired, which is the whole brief for the 2.6 weaponKick — and a stock is the
@@ -1240,7 +1249,8 @@ const PROFILES: readonly GunProfile[] = [
      * this profile does not move the muzzle by a millimetre, so there is no headroom here to
      * spend and nothing to gain by re-solving it.
      */
-    depthCompress: 0.46,
+    depthCompress: 0.50,
+    restDz: 0.016,
     sight: {
       /**
        * `lineY` and `rearZ` ARE THE AIM SOLVE and they are byte-identical to what shipped —
@@ -1273,7 +1283,7 @@ const PROFILES: readonly GunProfile[] = [
      * ±0.014 host under a ±0.024 sight assembly is what "floating" looks like from the side.
      * At 32 × 170 it is still the slimmest long gun by ratio (5.3:1 against the shotgun's 2.3).
      */
-    receiver: { w: 0.032, h: 0.042, d: 0.170, y: 0.034, z: -0.061 },
+    receiver: { w: 0.026, h: 0.040, d: 0.170, y: 0.034, z: -0.061 },
     /**
      * NONE, AND THAT IS THE MECHANISM SPEAKING. Cocking serrations are a slide's cocking read
      * and this gun does not have a slide — it has a BOLT, which is now modelled, sticks out to
@@ -1324,7 +1334,7 @@ const PROFILES: readonly GunProfile[] = [
      * the fore-end ribs already had once. At three the pitch is 25.8 mm and 15.8 mm of
      * handguard shows between 10 mm ribs, so both the rib AND the gap survive the line.
      */
-    foreEnd: { w: 0.034, h: 0.036, d: 0.076, y: 0.004, z: -0.112, ribs: 3 },
+    foreEnd: { w: 0.028, h: 0.032, d: 0.076, y: 0.004, z: -0.112, ribs: 3 },
     /**
      * THE STOCK, AND WHAT IT IS DOING ABOUT §1's CHEEK RISER.
      *
@@ -1530,6 +1540,33 @@ function adsOffsetOf(socket: Vector3): { x: number; y: number; z: number } {
   return { x: -socket.x, y: -socket.y, z: -V.adsSightDistance - socket.z };
 }
 
+/**
+ * PER-GUN REST OFFSET ALONG Z — how a rifle is allowed to be longer than a pistol.
+ *
+ * The two spatial budgets pull in opposite directions: reach (<= 0.40) wants the gun close to the
+ * body, the near plane (>= 0.07) wants it far from the eye. Every gun was authored against ONE
+ * shared rest pose, so each was independently squashed with `depthCompress` until it fitted —
+ * and the result was that they all converged on the same apparent size. MEASURED, gun bodies
+ * only: the SMG and the rifle came out 0.181 and 0.186 long, 3% apart, with all four inside a
+ * 5.6–6.7 cm width band. Four slim sticks. The playtester's note — "weapons all look like the
+ * same gun" — was a correct reading of a real geometric fact.
+ *
+ * But the two budgets are not spent evenly. Measured margins:
+ *   inkslinger  reach 0.393 (7 mm spare) · near 0.072 (2 mm spare)   → pinned, cannot move
+ *   ratatat     reach 0.387 (13 mm)      · near 0.088 (18 mm)
+ *   boomstick   reach 0.393 (7 mm)       · near 0.087 (17 mm)
+ *   longshot    reach 0.393 (7 mm)       · near 0.117 (**47 mm**)
+ *
+ * The rifle is nowhere near the near plane. Sliding it BACK toward the eye spends the margin it
+ * has and BUYS the margin it does not — a smaller |z| at the deepest vertex is directly a smaller
+ * reach — which is then spent on being visibly the longest gun in the game. That is the trade
+ * this field exists to make, and it is why the guns can finally differ from one another.
+ *
+ * Positive = toward the eye (the near plane), negative = away. Applied to the REST pose only;
+ * ADS is solved from the sight socket and must not be touched.
+ */
+let REST_DZ = 0;
+
 /** The active model's solve. Rebound by `equip()`; the pistol's until then. */
 let AIM_SOCKET = aimSocketOf(PROFILES[0] as GunProfile);
 let ADS = adsOffsetOf(AIM_SOCKET);
@@ -1546,6 +1583,7 @@ interface GunModel {
   magMesh: Object3D;
   socket: Vector3;
   ads: { x: number; y: number; z: number };
+  restDz: number;
 }
 
 interface GunGeometry {
@@ -2185,12 +2223,12 @@ const SWAY_ROLL_FROM_YAW = -0.55;
 
 /** Every pose `compose()` can put the model in, at its extreme. */
 function posesToCheck(
-  adsX: number = ADS_X, adsY: number = ADS_Y, adsZ: number = ADS_Z,
+  adsX: number = ADS_X, adsY: number = ADS_Y, adsZ: number = ADS_Z, restDz = 0,
 ): readonly Pose[] {
   const kick = V.clearanceKickBudget;
   const rest: Pose = {
     name: 'rest',
-    x: V.restX, y: V.restY, z: V.restZ,
+    x: V.restX, y: V.restY, z: V.restZ + restDz,
     pitchDeg: V.restPitchDeg, yawDeg: V.restYawDeg, rollDeg: V.restRollDeg,
     canFlourish: true,
   };
@@ -2202,7 +2240,7 @@ function posesToCheck(
     ads,
     {
       name: 'sprint',
-      x: V.sprintX, y: V.sprintY, z: V.restZ + V.sprintZ,
+      x: V.sprintX, y: V.sprintY, z: V.restZ + restDz + V.sprintZ,
       pitchDeg: V.sprintPitchDeg, yawDeg: V.sprintYawDeg, rollDeg: V.sprintRollDeg,
     },
     {
@@ -2277,7 +2315,7 @@ function assertClearance(g: GunGeometry, P: GunProfile = PROFILES[0] as GunProfi
   // nothing on a normal boot and is one filter away when someone is moving a pose.
   const report: string[] = [];
 
-  for (const p of posesToCheck(ads.x, ads.y, ads.z)) {
+  for (const p of posesToCheck(ads.x, ads.y, ads.z, P.restDz ?? 0)) {
     let reach = 0;
     let reachSway = 0;
     let depth = Infinity;
@@ -2706,6 +2744,7 @@ export class Viewmodel {
       const socket = aimSocketOf(p);
       this.models.set(p.id, {
         id: p.id, geo: gp, group, slideMesh: slide, magMesh: mag, socket, ads: adsOffsetOf(socket),
+        restDz: p.restDz ?? 0,
       });
     }
     // The starter is what you are holding at boot; `equip(id)` re-points everything on a swap.
@@ -2824,6 +2863,7 @@ export class Viewmodel {
         ADS_X = ADS.x;
         ADS_Y = ADS.y;
         ADS_Z = ADS.z;
+        REST_DZ = next.restDz;
       }
     }
     this.equipT = 0;
@@ -2956,7 +2996,7 @@ export class Viewmodel {
     const a = this.adsPose;
     let px = lerp(V.restX, ADS_X, a);
     let py = lerp(V.restY, ADS_Y, a);
-    let pz = lerp(V.restZ, ADS_Z, a);
+    let pz = lerp(V.restZ + REST_DZ, ADS_Z, a);
     let pitch = lerp(V.restPitchDeg, 0, a) * DEG2RAD;
     let yaw = lerp(V.restYawDeg, 0, a) * DEG2RAD;
     let roll = lerp(V.restRollDeg, 0, a) * DEG2RAD;
