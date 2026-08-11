@@ -65,7 +65,111 @@ export interface SightSpec {
   rearH: number;
   frontH: number;
   bladeD: number;
+  /**
+   * Half the gap between the rear blades. **IGNORED when `opticBlock` is set** — an aperture has
+   * no notch, and the window the sight picture is measured against becomes `opticBlock.boreR`
+   * (which is what `sightWings`' light-bar warning then compares itself to).
+   */
   notchHalfGap: number;
+}
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE BORED APERTURE — one machined part with a hole through it, and the arithmetic that makes
+ * it possible at all.
+ *
+ * FIVE PASSES AT THE REAR SIGHT WERE REJECTED, and the fifth failed in a way worth writing down
+ * because this interface is the whole answer to it. `SightSpec` can express exactly three boxes
+ * — one at x 0 and a mirrored pair — with ALL THREE of their top faces pinned to `lineY` by the
+ * builder. Authored bold enough to survive the ink, that pair reads as what it literally is: two
+ * wall blocks with a 22 mm gap and NOTHING BRIDGING THE TOP. The verdict was "the 3 sights look
+ * bad like too huge", and the count is the tell — the player was counting solids, and there were
+ * three of them, because there is no hole anywhere on the gun, only a gap between things.
+ *
+ * A bridge over that gap is not expressible in `SightSpec` and would be wrong if it were: every
+ * blade top is pinned to `lineY`, and `lineY` is ALSO where `aimSocketOf()` puts the eye, so a
+ * bridge at `lineY` is a roof the player sights along instead of a ring they sight through.
+ *
+ * SO THE BORE IS CENTRED ON `sight.lineY`, NOT ON A FACE. That one sentence is the entire reason
+ * this spec exists and it is the thing `SightSpec` structurally cannot say. Material above the
+ * hole AND below it is what makes a part read as machined rather than as assembled.
+ *
+ * ─── IT IS FOUR BARS, AND THAT IS NOT A SHORTCUT ────────────────────────────────────────────
+ * The builder emits top / bottom / left / right bars around a SQUARE bore rather than a torus or
+ * a cylinder with a hole punched in it. WEAPON_ART §0: the inverted hull inflates every
+ * silhouette by a screen-space amount, so a thin round wall has no albedo between its two
+ * inflated faces and prints as a solid black doughnut — the exact failure that erased the trigger
+ * guard. Four chunky bars survive the line. A square aperture is fine in a comic; a black blob is
+ * not.
+ *
+ * ─── THE ARITHMETIC, BECAUSE IT DECIDES HOW BIG THIS PART CAN BE ────────────────────────────
+ * Proud height above the receiver's top face is FORCED, not chosen:
+ *
+ *     proud = (lineY − receiverTop) + boreR + topWall
+ *
+ * `lineY − receiverTop` cannot go under ~0.010 (anything on the top face nearer the eye than the
+ * front post occludes it — see `guardSightLine`), and `topWall` cannot go under `INK_FLOOR`. So
+ * the smallest legal bored ring stands about `0.020 + boreR` above the receiver, and `boreR` is
+ * itself pinned from below by the sight picture: the bore is the window, `V.adsSightDistance`
+ * from the eye, and a bore that is not meaningfully wider than the front post at the front plane
+ * leaves no light either side of it to aim with.
+ *
+ * WHERE THE SIZE IS ACTUALLY BOUGHT IS `d`, AND IT IS BOUGHT CHEAPLY. Depth is the axis the
+ * complaint named ("30 mm fore-and-aft") and the only one nothing else depends on — a ring wants
+ * to be a ring, not a tunnel. It is also the one axis `depthCompress` shrinks again on the way
+ * out of the builder (0.50 on the marksman), so an authored 0.024 draws as 12 mm.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+export interface OpticBlockSpec {
+  /** Outer width and height of the block, metres. The walls are what is left around the bore. */
+  w: number;
+  h: number;
+  /** Depth along z, metres — authored, i.e. BEFORE `depthCompress`. Keep it shallow. */
+  d: number;
+  /**
+   * Block centre in gun space, metres. `y` is the BLOCK's centre and has no reason to equal
+   * `lineY`: the bore is centred on the sight line whatever `y` says, so moving `y` down buries
+   * the bottom bar in the receiver (free — it is invisible) instead of standing it proud.
+   * The walls are therefore asymmetric by design, and each is checked separately.
+   *
+   * `z` should EQUAL `sight.rearZ`: that is where the ADS solve believes the window is, and the
+   * builder dev-warns when the two disagree by more than a millimetre.
+   */
+  y: number;
+  z: number;
+  /**
+   * Half-size of the SQUARE bore, metres — the hole spans `lineY ± boreR` in y and `± boreR` in
+   * x. This is the sight window: it is what the front element is framed in, so it is a sight
+   * picture number first and a styling number second. Under `INK_FLOOR / 2` the void itself is
+   * thinner than the ink band and the hole inks shut; the builder says so.
+   */
+  boreR: number;
+  /**
+   * The author's own minimum wall thickness, metres — an assertion, not a size. The builder
+   * takes `max(wallMin, INK_FLOOR)` as the floor, warns when a computed wall lands under it, and
+   * then GROWS THAT WALL OUTWARD rather than inward, because the bore is what the aim solve
+   * reads and it is never allowed to move.
+   */
+  wallMin: number;
+}
+
+/**
+ * The small front element that pairs with a bored aperture: a post whose TIP LANDS EXACTLY ON
+ * `sight.lineY`, i.e. dead centre of the bore. That is the whole aperture picture — tip in the
+ * middle of the ring, light all around it — and it is why this replaces the default front blade
+ * (whose top is pinned to `lineY` for the same reason, but which is sized for a notch).
+ *
+ * KEEP IT TINY. It is the second of the two solids left on the gun and the ring is the one doing
+ * the talking.
+ */
+export interface OpticFrontSpec {
+  /** Post width across the gun and depth along it, metres. Both floored at `INK_FLOOR`. */
+  w: number;
+  d: number;
+  /** Centre along z, metres. `sight.rearZ − z` is the sight radius. */
+  z: number;
+  /** Y of the surface the post stands on; its height is `sight.lineY − footY`. */
+  footY: number;
 }
 
 /**
@@ -296,6 +400,14 @@ export interface GunProfile {
   magWell?: MagWellSpec | null;
   /** Ears either side of the front post. Rides the sights, carries the sights' lighter ink. */
   sightWings?: SightWingsSpec | null;
+  /**
+   * A REAL BORED APERTURE, replacing the rear blade pair entirely — one part with a hole through
+   * it instead of two walls with a gap between them. When this is set the builder emits no rear
+   * blades at all, so the gun goes from three solids to two. See `OpticBlockSpec`.
+   */
+  opticBlock?: OpticBlockSpec | null;
+  /** The tiny post that pairs with it, replacing the default front blade. See `OpticFrontSpec`. */
+  opticFront?: OpticFrontSpec | null;
   /** 2–3 bold stamped cuts. Polymer, static. */
   panels?: PanelsSpec | null;
   /** Chunky top-rail teeth. Steel, rides the slide. */

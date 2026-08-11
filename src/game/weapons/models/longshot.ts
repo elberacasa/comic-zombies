@@ -14,77 +14,71 @@ import { PALETTE, hexMix } from '@/art/palette';
  * LONGSHOT — the longest thing in the game, the only one with a full stock, and the palest
  * object the player will hold all session.
  *
- * ─── FIVE BUILDS, FIVE TIMES THE SAME NOTE, AND WHY FOUR FIXES MISSED ────────────────────
+ * ─── SIX BUILDS, SIX TIMES THE SAME NOTE, AND WHAT THE SIXTH ONE FINALLY SAID ────────────
  * "gray lines on top" · "sights too long" · "3 grey thing on top" · "the guns in the top have
  * this sticks like showing out" · "remove and remake a better sight blades that design looks
- * bad and not competitive at all". Five reports across five builds, and every previous pass
- * answered by RESHAPING THE BLADES: the ears went, the rail teeth went, the 120 mm warm rib
- * was cut to 30 mm, the blades were darkened from BONE 0.73 to dark iron, then re-proportioned
- * from 0.14 to 0.67 to 1.13 aspect. The note came back every time.
+ * bad and not competitive at all" · **"The 3 sights look bad like too huge?"**
  *
- * IT CAME BACK BECAUSE ALL FIVE OF THOSE PASSES LEFT THE STALK. Screenshotted with the ink
- * pass off, the previous geometry is unambiguous: two blocks STANDING OFF the receiver on a
- * neck, plus a third out front. Reshaping the block does not fix a shape whose problem is
- * that it RISES. It does not matter how landscape the block is if there is daylight logic
- * under it — the eye reads mass-on-a-neck as an antenna and always will.
+ * The sixth is the useful one, because it contains a COUNT and a SIZE, and the count was
+ * literally right. The parts list it was looking at was `housing wall ×2` + `front block`:
+ * three separate solids. The pass that shipped it called the first two "one optic housing
+ * with a window cut through it", but there was no hole anywhere on the gun — there was a
+ * 22 mm GAP between two wall blocks with NOTHING BRIDGING THE TOP, and a gap between two
+ * solids reads as two solids however the comment describes it.
  *
- * ─── THE RULE THIS PASS IS BUILT ON: NOTHING MAY RISE ON A NECK ──────────────────────────
- * A sight on this gun may now only be one of two things:
+ * ─── SO THIS PASS CHANGES THE TWO THINGS THAT HAD TO CHANGE TOGETHER ─────────────────────
+ *   1. A REAL BORED PART. `opticBlock` (see `OpticBlockSpec`) emits four bars closed at the
+ *      corners around a square hole that is centred ON `lineY`, with SOLID IRON ABOVE IT AND
+ *      BELOW IT. That is the difference between one machined ring and two walls, and it is
+ *      not expressible in `SightSpec` — the builder pins every blade top to `lineY`, so a
+ *      bridge over the gap would have sat exactly at eye height and the player would have
+ *      been sighting along the roof of their own optic. The previous pass was right to refuse
+ *      to fake it; the part now exists, so it is built for real.
+ *   2. IT IS MUCH SMALLER, and "smaller" is measured in the view that generated the
+ *      complaint, not on the spec sheet. See the table below.
  *
- *   (a) a SOLID BLOCK sitting flush on the receiver with the sight window CUT THROUGH it —
- *       the mass IS the sight and the hole is the picture; or
- *   (b) a window cut DOWN INTO mass the receiver already has, adding nothing that stands.
- *
- * "Flush" is not "zero height" — the line still has to clear the barrel. It means every
- * millimetre of height belongs to a CHUNKY BLOCK that reads as machined into the gun. The
- * test is a single question: could any part of this be mistaken for an antenna? If yes, wrong.
+ * PART COUNT GOES 3 → 2. `opticBlock` REPLACES the rear blade pair and `opticFront` REPLACES
+ * the front blade — the builder skips both, they never supplement. One ring, one post.
  *
  * EVERY MILLIMETRE BELOW IS A **DRAWN** MILLIMETRE — `z` here is halved by `depthCompress`
  * 0.50 after the builder is done with it, so an authored depth and a drawn depth are two
  * different numbers and only the second one is what the playtester is looking at.
  *
- * ─── WHAT IS THERE NOW: ONE LOW-PROFILE OPTIC HOUSING ────────────────────────────────────
- *   REAR   a single machined OPTIC HOUSING, 48 mm across the receiver's tail, 30 mm
- *          fore-and-aft drawn (`bladeD` 0.060), standing 12 mm proud, with a 22 × 12 × 30 mm
- *          WINDOW cut down through its centre. The window's floor is the receiver's own top
- *          face — it is not a gap between two parts, it is a hole in one part whose bottom is
- *          the gun. Its rear face is flush with the receiver's rear face (both z 0.024) and
- *          its bottom is buried 8 mm inside the top face.
- *   FRONT  the same block language 110 mm forward: 13 × 20 × 30 mm drawn, buried 8 mm into
- *          the receiver, standing the same 12 mm proud, its front face flush with the
- *          receiver's nose at −0.146. It is a machined front block, not a blade.
+ * ─── WHAT IS THERE NOW: A RING AND A PIN ─────────────────────────────────────────────────
+ *   REAR   ONE bored APERTURE RING at the receiver's tail: 36 mm across, 36 mm tall, 11 mm
+ *          fore-and-aft drawn, with a 16 × 16 mm SQUARE HOLE through it centred on the sight
+ *          line. 10 mm of iron on all four sides of that hole. Its bottom 8 mm is buried in
+ *          the receiver and its rear face is flush with the receiver's rear face (z 0.024),
+ *          so 28 mm of it stands proud and the rest is inside the gun.
+ *   FRONT  ONE PIN 148 mm forward: 10 × 10 mm, 11 mm deep drawn, standing exactly 10 mm
+ *          proud of the receiver top with its TIP ON THE SIGHT LINE — i.e. dead centre of the
+ *          ring — and its front face flush with the receiver's nose at −0.146.
  *
- * THE PROPORTION, IN THE VIEW THAT ACTUALLY GENERATED THE COMPLAINT. The rest pose shows the
- * player the gun's LEFT FLANK all session, and in that view the housing's two walls overlap
- * into one slab. Side profile, drawn, proud × deep:
+ * ─── "TOO HUGE", ANSWERED IN NUMBERS ─────────────────────────────────────────────────────
+ * The rest pose (x +0.125, yaw −14°) shows the player the gun's LEFT FLANK all session, so
+ * flank ink area is the number the complaint was actually about. Drawn, proud of the receiver:
  *
- *     44 × 6  (0.14, a flag)  →  18 × 12 (0.67)  →  16 × 18 (1.13)  →  12 × 30 (2.50)
+ *                        WAS (3 solids)              NOW (2 solids)          change
+ *     rear element       30 deep × 12 proud = 360    11 × 28 = 308           −14 %
+ *     front element      30 deep × 12 proud = 360    11 × 10 = 110           −69 %
+ *     FLANK INK TOTAL    720 mm²                     418 mm²                 −42 %
+ *     width across       48 mm                       36 mm                   −25 %
+ *     depth, drawn       30 mm                       11 mm                   −63 %
+ *     proud volume       14 040 mm³                  9 372 mm³               −33 %
  *
- * The front block is the same 12 × 30 = 2.50. Neither element is portrait in ANY view: the
- * housing wall is 13 wide × 12 proud head-on (1.08) and the front block is 13 × 12 (1.08).
- * There is no axis left along which either one is taller than it is thick.
+ * THE ONE AXIS THAT GREW IS HEIGHT, AND IT IS FORCED, NOT CHOSEN. A bored ring cannot be
+ * shorter than `2 × boreR + topWall + bottomWall`, and both walls are pinned at the 10 mm ink
+ * floor, so the smallest legal ring on this gun is 30 mm tall whatever it is authored at; this
+ * one is 36 mm because the hole has to stay a usable window. Mass above the hole is the whole
+ * point of the brief — it is what makes the part read as machined instead of assembled — so
+ * the height was spent there and bought back on the two axes nothing depends on. Depth is the
+ * axis the complaint named ("30 mm fore-and-aft") and it took the biggest cut.
  *
- * ─── THE HONEST LIMIT: THE WINDOW IS OPEN AT THE TOP ─────────────────────────────────────
- * A *bored* round aperture — mass above the hole as well as beside it — is NOT expressible
- * here and was not faked. The builder pins BOTH sight tops to `sight.lineY` (`lineY − h/2`
- * placement, viewmodel.ts), and `lineY` is also where the ADS solve puts the eye. Any bridge
- * over the window would therefore be exactly at eye height with the hole beneath it, and the
- * player would be sighting on the roof of their own optic. So the window is cut down through
- * the block from its top face: a machined U-channel, closed on three sides by real mass,
- * open on the fourth because the sight line runs through there. See the `sight` note for the
- * one spec that would close it.
- *
- * ─── WHERE THE HEIGHT WENT: `lineY` 0.070 → 0.066 ────────────────────────────────────────
- * Proud height is `lineY` minus the surface under it, so the line is the only lever. 0.066
- * over a 0.054 receiver top is 12 mm of housing proud — the lowest this gun has ever sat and
- * still 15 mm of clearance over the muzzle can's 0.051 top.
- *
- *   · THE AIM SOLVE FOLLOWS IT — see below. `lineY` is an input to the solve, not a tuned
- *     constant, so a lower line is a lower socket and a re-solved ADS translation.
- *   · THE GUN READS BIGGER AT ADS, which §1.5 of the constitution asks for: the receiver's
- *     top edge sits 42 px under the crosshair, against 55 px at `lineY` 0.070 and 156 px two
- *     passes ago (1600 × 821 / 56°, 772 px/rad).
- *   · IT BUYS CLEARANCE RATHER THAN SPENDING IT — see the clearance block.
+ * ─── WHERE THE HEIGHT WENT: `lineY` 0.066 → 0.064 ────────────────────────────────────────
+ * 0.064 over the 0.054 receiver top is 10 mm — the documented floor for this gap (anything on
+ * the top face nearer the eye than the front element occludes the picture from below, which is
+ * what `guardSightLine()` polices), and the last 2 mm available anywhere on this axis. It also
+ * still clears the muzzle can's 0.051 top by 13 mm, which the sight line has to.
  *
  * ─── THE AIM SOLVE, PRESERVED BY CONSTRUCTION RATHER THAN BY LUCK ────────────────────────
  * `aimSocketOf()` = `(0, lineY, rearZ × depthCompress)` and `adsOffsetOf()` negates x and y
@@ -92,38 +86,36 @@ import { PALETTE, hexMix } from '@/art/palette';
  * The boot assertion in `assertClearance()` tests precisely that residual and it is
  * identically zero here — moving the line moves the socket and the ADS translation together.
  *
- * The two TOPS stay coincident the same way: the builder places the front block at
- * `lineY − frontH/2` and the housing walls at `lineY − rearH/2`, so both top faces land on
- * the sight line whatever the heights are. Here they are equal (0.020) because both are
- * buried 8 mm into the same 0.054 top face, which is a stronger guarantee still.
+ * FRONT AND REAR STILL AGREE, BY A STRONGER GUARANTEE THAN BEFORE. The bore is placed from
+ * `lineY ± boreR`, so its centre IS the sight line by construction, and the front pin's height
+ * is derived as `lineY − footY`, so its tip IS the sight line too. Neither number can drift
+ * without the other; there is no shared blade height left to keep in sync by hand.
  *
- * THE PICTURE, MEASURED. Radius 0.110 authored (`rearZ` −0.006 → `frontZ` −0.116), 0.055
- * drawn, so the window is 0.235 m from the eye and the front block 0.290 m. Half-window
- * 0.011/0.235 = 0.04681 rad; front block half-width 0.0065/0.290 = 0.02241 rad; LIGHT BAR
- * 0.02440 rad per side. The previous geometry gave 0.02416 and the pistol reference the whole
- * sight contract was solved against gives 0.0253. The bar the player actually aims with got
- * 1 % WIDER, and the front block itself went from 28 px to 35 px across — bolder against a
- * 3.5 px sight hull, not thinner.
+ * THE PICTURE, MEASURED. Radius 0.148 authored (`rearZ` 0.013 → `frontZ` −0.135), 0.074
+ * drawn, so the ring is 0.235 m from the eye and the pin 0.309 m. Half-bore 0.008/0.235 =
+ * 0.03404 rad; pin half-width 0.005/0.309 = 0.01618 rad; LIGHT BAR 0.01786 rad per side, i.e.
+ * the pin fills 48 % of the aperture width and there is real daylight either side of it. At
+ * 772 px/rad that is a 14 px bar against a 3.5 px sight hull — thinner than the 19 px the
+ * U-channel gave, which is the price of a smaller ring, and still twice the hull. The sight
+ * radius itself went UP, 0.055 → 0.074 drawn, because the ring moved back to the tail.
  *
- * ─── CLEARANCE: THIS PASS BUYS MARGIN ────────────────────────────────────────────────────
- * The model's worst vertices are ones this profile still does not touch: `muzzle.fin3` at
- * 0.389 reach / 0.4087 swayed on the mag floorplate at reload, and the forearm at the near
- * plane (0.096). Neither metric reads y at all, so 4 mm off the sight line is free.
+ * ─── CLEARANCE: NOTHING MOVED OUTWARD, SO NOTHING MOVED ──────────────────────────────────
+ * The model's worst vertices are ones this profile does not touch: `muzzle.fin3` at 0.389
+ * reach and the forearm at the near plane (0.096).
  *
- *   housing      |x| ≤ 0.024 at drawn z −0.018…0.012 — its worst corner ranks far below the
- *                bolt paddle's (|x| ≈ 0.038 at drawn z 0.001, measured 0.3005 / 0.3247)
- *   near plane   housing rear face still 0.024 authored / 0.012 drawn, exactly where the old
- *                block's was, and 84 mm inside the butt pad that actually sets the near metric
- *   front block  |x| ≤ 0.0065 against the old front pad's ±0.009 at the same z — strictly
- *                INSIDE the footprint it replaces, and inside the receiver's own ±0.013 nose
- *   the rib      the 48 × 18 mm pad that used to sit at −0.122 on the top face is GONE (see
- *                the `rib` note), which is the millimetres this pass hands back
+ *   ring         |x| ≤ 0.018 at drawn z 0.001…0.012, against the old housing's ±0.024 at
+ *                drawn −0.018…0.012 — strictly INSIDE the footprint it replaces, and far
+ *                below the bolt paddle's corner (|x| ≈ 0.038 at drawn z 0.001, 0.3005/0.3247)
+ *   near plane   ring rear face still 0.024 authored / 0.012 drawn, exactly where the old
+ *                housing's was, and 84 mm inside the butt pad that actually sets the metric
+ *   front pin    |x| ≤ 0.005 and forward-most vertex at drawn z −0.073 — the SAME plane the
+ *                old front block's front face was on, at a third of the cross-section
  *
  * No forward-most (−z) or right-most (+x) vertex on this model moved. Reach stays 0.389,
  * near stays 0.096.
  *
  * ─── THE SILHOUETTE, STILL FIVE EVENTS ───────────────────────────────────────────────────
- * stock → receiver with an optic housing machined into its tail → bare top → front block →
+ * stock → receiver with an aperture ring machined into its tail → bare top → front pin →
  * hard step down → bare fluted barrel with a gas block under it → the can. Plus the bolt
  * handle out to the right and the bipod stub under the handguard, the two OUTLINE events.
  */
@@ -142,105 +134,112 @@ const PROFILE: GunProfile = {
   restDz: 0.016,
   sight: {
     /**
-     * ONE LOW OPTIC HOUSING AND ONE FRONT BLOCK — the header's argument, as numbers. Read that
-     * first; this note is the arithmetic, the three floors it is against, and the one spec
-     * that is missing.
+     * THE THREE NUMBERS THE APERTURE IS SOLVED FROM, AND NOTHING ELSE IN THIS BLOCK IS BUILT.
+     * Read the header first; this note is the arithmetic.
      *
-     * ─── THE SPEC THAT DOES NOT EXIST, STATED PLAINLY ────────────────────────────────────
-     * `SightSpec` gives this file exactly three boxes: one at x 0 and a mirrored pair, ALL
-     * THREE with their top faces pinned to `lineY` by the builder, all three sharing one
-     * `bladeW` and one `bladeD`. A truly BORED aperture needs a fourth box bridging the pair
-     * ABOVE the hole, and it needs that bridge to be the only thing at `lineY` while the hole
-     * sits below it — which the pinning forbids and which the ADS solve would break anyway,
-     * because the eye is AT `lineY` and would be looking at the bridge's top face instead of
-     * through the hole. Faking a bridge out of the front blade (moving `frontZ` onto `rearZ`)
-     * would give a solid slab with no window and no sight radius. So it was not done.
+     * `lineY`, `rearZ` and `frontZ` are the whole live contract now:
+     *   · `lineY` 0.064 is the eye, the bore's centre and the front pin's tip — one number,
+     *     three jobs, which is why front and rear cannot disagree.
+     *   · `rearZ` 0.013 must equal `opticBlock.z` (the builder dev-warns past 1 mm). The ring
+     *     is 0.022 deep, so its rear face lands at 0.024, FLUSH with the receiver's own rear
+     *     face — the same plane the old housing's rear face sat on, so the nearest sight
+     *     vertex has not moved a millimetre and the near-plane metric is untouched.
+     *   · `frontZ` −0.135 tracks `opticFront.z`. The pin is 0.022 deep, so its front face
+     *     lands at −0.146, flush with the receiver's nose. Sight radius 0.148 authored /
+     *     0.074 drawn, UP from 0.055 — a longer radius on a marksman rifle, bought by moving
+     *     the ring back to the tail rather than by pushing anything forward.
      *
-     * WHAT WOULD CLOSE IT — one part spec, and nothing else needs to change:
+     * ─── `lineY` 0.066 → 0.064, AND WHY THAT IS THE FLOOR ────────────────────────────────
+     * The gap between the sight line and the receiver's 0.054 top face is what the front
+     * element stands in, and `guardSightLine()` fixes the minimum at 0.010: below that the
+     * receiver's own top face — which runs forward from the ring and is therefore NEARER the
+     * eye than the pin at every ray under the line — starts eating the bottom of the picture,
+     * and the pin's visible height drops under the ink band and prints black. 0.064 is exactly
+     * that floor. It is also 13 mm over the muzzle can's 0.051 top, which the line must clear.
      *
-     *     opticBlock?: { w, h, d, y, z, boreR, wallMin } | null
-     *       one flush block on the receiver top with a ROUND hole bored through it on z; the
-     *       builder emits it into `sightParts`, centres the bore on `sight.lineY` (NOT on the
-     *       block's top face — that is the whole point), and dev-warns when
-     *       min(w/2 − boreR, (y + h/2) − (lineY + boreR)) < INK_FLOOR so the ring wall is
-     *       checked on every side rather than by hand in a comment like this one.
+     * `lineY` is an INPUT to `aimSocketOf()`, not a tuned constant, so the socket and the ADS
+     * translation moved down with it and the boot assertion's residual stays identically zero.
      *
-     * With that, the rear of this gun becomes a genuine ring: mass above the sight line as
-     * well as beside it, and a round hole instead of a square one. Without it, the honest
-     * best is a U-channel cut down through one block — which is what is below, and which is
-     * still option (b) of the brief: subtractive, and standing on nothing.
-     *
-     * ─── `lineY` 0.070 → 0.066 ───────────────────────────────────────────────────────────
-     * Proud height is `lineY` minus the surface under it, so this is the only lever there is.
-     * 0.066 over the receiver's 0.054 top face is 12 mm of housing proud, and 12 mm is also
-     * the window's height — the two are the same number by construction, because the window's
-     * floor IS the top face. `lineY` is an INPUT to `aimSocketOf()`, not a tuned constant, so
-     * the socket and the ADS translation move with it and the boot assertion's residual stays
-     * identically zero.
-     *
-     * IT CANNOT GO LOWER WITHOUT BREAKING THE INK FLOOR, and that is now the binding
-     * constraint rather than `guardSightLine()`: at `lineY` 0.064 the window would be exactly
-     * 10 mm tall, i.e. sitting on the floor with no margin. 0.066 leaves 2 mm. (The
-     * `guardSightLine()` ceiling of `lineY − 0.010` = 0.056 is clear by a wide margin now that
-     * the front pad is gone — the tallest thing on the top face is the receiver itself at
-     * 0.054, and the RUST hammer spur at 0.0529 behind it.)
-     *
-     * ─── THE HOUSING: `bladeD` 0.036 → 0.060, `bladeW` 0.011 → 0.013, gap 0.010 → 0.011 ──
-     * Every `z` in this file is multiplied by `depthCompress` on the way out of the builder
-     * (`place(g, { sz: MODEL_SCALE * P.depthCompress })`, viewmodel.ts) — AFTER every clamp —
-     * so a depth authored here is not the depth that is drawn, and on this gun the factor is
-     * 0.50, the harshest in the game. `bladeD` 0.060 renders as **30 mm**. Stated in the only
-     * space that can be checked against a complaint about what the screen shows:
-     *
-     *     drawn depth 30 mm · proud 12 mm · side-profile aspect 2.50, both blocks
-     *     head-on 13 mm wide × 12 mm proud → 1.08, both blocks
-     *
-     * The progression on the side profile, which is the view the rest pose shows all session:
-     * 0.14 → 0.67 → 1.13 → 2.50. For reference the other three profiles land at 1.01
-     * (inkslinger), 1.17 (ratatat) and 2.17 (boomstick); this gun is now the most landscape
-     * in the arsenal, which is right, because it is the one that was reported five times.
-     *
-     * `rearZ` 0.006 → −0.006 is bookkeeping, not a move: the housing's rear face is
-     * `rearZ` + `bladeD`/2, so deepening the block by 24 mm pulls its centre back by 12 and
-     * the face stays at 0.024, FLUSH with the receiver's own rear face. The nearest sight
-     * vertex is exactly where it has been for two passes.
-     *
-     * `frontZ` −0.122 → −0.116 puts the front block's front face at −0.146, flush with the
-     * receiver's nose, with the whole 30 mm of it drawn on the receiver's own top face. It
-     * moved BACKWARD relative to its own front face, which is why the clearance table says
-     * this pass buys margin.
-     *
-     * `rearH` and `frontH` are now both 0.020, and equal ON PURPOSE: both blocks stand on the
-     * same 0.054 top face and are buried the same 8 mm into it. The builder derives both tops
-     * from `lineY` independently, so they are ALLOWED to differ — they simply have no reason
-     * to here, and equal heights on a shared host is the strongest form of "machined out of
-     * the same piece" the vocabulary can express.
-     *
-     * ─── THE PICTURE, MEASURED ───────────────────────────────────────────────────────────
-     * Radius 0.110 authored (−0.006 → −0.116), 0.055 drawn: window 0.235 m from the eye,
-     * front block 0.290 m. Half-window 0.011/0.235 = 0.04681 rad. Front block half-width
-     * 0.0065/0.290 = 0.02241 rad. LIGHT BAR 0.02440 rad per side, against 0.02416 for the
-     * previous geometry and 0.0253 for the pistol reference the whole contract was solved
-     * against — 1 % WIDER than what shipped. At 772 px/rad the front block reads 35 px across
-     * and 30 px tall inside a 72 px window, against 28 px across and 40 px tall before: wider,
-     * squatter, and with more light either side of it.
-     *
-     * ─── THE INK FLOOR (0.010 m), EVERY DIMENSION AS DRAWN ───────────────────────────────
-     * The builder makes all three of these with `bevelBox` and NOT `inkChunk`, so there is no
-     * clamp and no dev warning behind this line — it is checked here or nowhere.
-     *
-     *     housing wall ×2   0.013 w × 0.020 h × 0.030 d      thinnest 0.013   +3 mm
-     *     front block       0.013 w × 0.020 h × 0.030 d      thinnest 0.013   +3 mm
-     *     WINDOW (void)     0.022 w × 0.012 h × 0.030 d      thinnest 0.012   +2 mm
-     *
-     * The void is the high-risk term and it is checked as hard as the mass: its floor is the
-     * receiver's own 0.054 top face, its walls are 13 mm of iron either side — 3 mm over the
-     * floor on the wall thickness the brief calls out — and it is 30 mm deep drawn. Wider,
-     * deeper and thicker-walled than it is tall, in every direction.
+     * ─── THE FIVE FIELDS BELOW ARE DEAD GEOMETRY, KEPT LEGAL ON PURPOSE ──────────────────
+     * `bladeW`, `rearH`, `frontH`, `bladeD` and `notchHalfGap` describe the blade pair and the
+     * front blade that `opticBlock` / `opticFront` REPLACE — the builder takes the aperture
+     * branch and never reads them. `SightSpec` still requires them, so rather than leave five
+     * stale numbers from a rejected build they are set to the aperture's own dimensions: a
+     * 0.010 blade at a 0.008 half-gap is a 0.036 rear pair, the ring's outer width, and 0.022
+     * is the ring's depth. If the optic is ever switched off, what comes back is floor-legal
+     * iron at the right size instead of the thing the playtester rejected six times.
      */
-    lineY: 0.066, rearZ: -0.006, frontZ: -0.116,
-    bladeW: 0.013, rearH: 0.020, frontH: 0.020, bladeD: 0.060, notchHalfGap: 0.011,
+    lineY: 0.064, rearZ: 0.013, frontZ: -0.135,
+    bladeW: 0.010, rearH: 0.010, frontH: 0.010, bladeD: 0.022, notchHalfGap: 0.008,
   },
+  /**
+   * THE BORED APERTURE RING — the part the last five passes could not express, and the answer
+   * to "the 3 sights look bad like too huge". See `OpticBlockSpec` for the contract and the
+   * header of this file for the size argument. This note is the arithmetic and the floors.
+   *
+   * ─── THE BORE IS THE PART. EVERYTHING ELSE IS DERIVED FROM IT ────────────────────────────
+   * `boreR` 0.008 puts the hole at 0.056…0.072 in y and ±0.008 in x — 16 × 16 mm, centred on
+   * `lineY` 0.064 BY CONSTRUCTION rather than by a placement number that could drift. The
+   * builder then hangs four bars off those edges and closes them at the corners: full-width top
+   * and bottom caps, jambs between them. One continuous frame, iron above the hole as well as
+   * beside and below it. That is the whole difference between this and the two walls it
+   * replaces, and it is why the player can now count ONE solid here instead of two.
+   *
+   * ─── THE OUTER BLOCK IS THE THINNEST LEGAL RING, EXACTLY ────────────────────────────────
+   * `w` 0.036 and `h` 0.036 are not chosen sizes, they are `2 × boreR` plus one ink floor on
+   * each of the four sides. Every wall lands ON the floor, which is the smallest a bored part
+   * can be here:
+   *
+   *     top wall     y + h/2 − (lineY + boreR)  =  0.082 − 0.072  =  0.010    at the floor
+   *     bottom wall  (lineY − boreR) − (y − h/2) = 0.056 − 0.046  =  0.010    at the floor
+   *     side wall ×2 w/2 − boreR                 = 0.018 − 0.008  =  0.010    at the floor
+   *     BORE (void)  2 × boreR                   =  0.016                     +6 mm
+   *     depth        0.022 authored → 0.011 DRAWN (`depthCompress` 0.50)      +1 mm
+   *
+   * Unlike the blades this replaces, none of that is checked by hand: all four bars go through
+   * `inkChunk()`, and `opticBlock`'s own guard re-derives every wall from the bore and names
+   * the thinnest one in dev if an edit ever drops it under `max(wallMin, INK_FLOOR)`. `wallMin`
+   * 0.010 is this file asserting the floor it believes it is authored against.
+   *
+   * THE VOID IS THE HIGH-RISK TERM and it is the one with margin: 16 mm of hole against a
+   * 10 mm band. It is a genuine hole with the world visible through it, not a gap between two
+   * parts — which is the sentence the previous five builds could not truthfully write.
+   *
+   * ─── `y` = `lineY`: THE BOTTOM BAR IS BURIED, WHICH IS WHERE THE SIZE IS HIDDEN ─────────
+   * `y` is the BLOCK's centre and is deliberately free of the bore. At 0.064 the block spans
+   * 0.046…0.082, so its bottom 8 mm sits INSIDE the receiver (top face 0.054) and costs nothing
+   * on screen: 28 mm stands proud, not 36. The bottom cap doubles as the mount — it is wider
+   * than the 26 mm receiver, so it steps out over both flanks and reads as a machined base the
+   * ring grows out of rather than a block set on top of one.
+   *
+   * ─── CLEARANCE: STRICTLY INSIDE WHAT IT REPLACES ────────────────────────────────────────
+   * |x| ≤ 0.018 at drawn z 0.001…0.012, against the old housing's ±0.024 at drawn −0.018…0.012.
+   * Narrower, shallower, no further back. It cannot become the worst vertex in any pose — the
+   * bolt paddle at |x| 0.038 / drawn z 0.001 measures 0.3005 reach against a 0.40 budget, and
+   * the butt pad still sets the near plane at 0.096. Reach stays 0.389.
+   */
+  opticBlock: { w: 0.036, h: 0.036, d: 0.022, y: 0.064, z: 0.013, boreR: 0.008, wallMin: 0.010 },
+  /**
+   * THE FRONT PIN — the second and last solid on this gun, and it is deliberately the smallest
+   * legal one. 10 × 10 mm in section, 0.022 deep authored / 11 mm DRAWN, standing exactly
+   * 10 mm proud of the receiver's 0.054 top face. Every one of those is the ink floor: there is
+   * no smaller front element this renderer can draw.
+   *
+   * `footY` 0.050 buries the foot 4 mm inside the receiver so the pin is 0.014 tall as
+   * geometry (clear of `inkChunk`'s clamp) while showing only 10 mm — the same trick the ring's
+   * bottom cap uses. The builder derives the height as `lineY − footY`, so the TIP LANDS ON
+   * `lineY`, i.e. dead centre of the bore: pin in the middle of the ring, daylight all round.
+   *
+   * THE PICTURE. Pin half-width 0.005 at 0.309 m = 0.01618 rad against the bore's 0.03404 —
+   * the pin fills 48 % of the aperture and leaves a 0.01786 rad light bar each side, 14 px at
+   * 772 px/rad against a 3.5 px sight hull. Narrower bars than the 22 mm U-channel gave, which
+   * is the honest cost of a ring a third of its width; still four times the hull.
+   *
+   * IT COSTS NOTHING. `z` −0.135 with `d` 0.022 puts its front face at −0.146 — flush with the
+   * receiver's nose and on the SAME plane (drawn z −0.073) the old front block's front face
+   * occupied, at |x| ≤ 0.005 against that block's ±0.0065. No forward-most vertex moved.
+   */
+  opticFront: { w: 0.010, d: 0.022, z: -0.135, footY: 0.050 },
   /**
    * 170 mm, cut entirely off the FRONT of an older 200 (rear face still z 0.024) — which is
    * what opens the bare-barrel window between the handguard's nose and the choke. Spans
@@ -317,11 +316,11 @@ const PROFILE: GunProfile = {
    * at x 0 on the gun's centreline, and every previous incarnation of it lived on the receiver
    * top: a 120 mm bar nose-to-tail (the literal "grey line on top"), then a 30 mm block, then
    * a 48 × 18 mm pad under the front post with its top at 0.059. That last one was legal only
-   * against `lineY` 0.070. The new sight line is 0.066, so `guardSightLine()`'s ceiling is
-   * 0.056 and the pad is 3 mm over it — but the real objection is worse than the guard:
-   * anything on the top face runs FORWARD of the window and is therefore NEARER the eye than
-   * the front block at every ray below the line, so a 5 mm-proud pad would appear at −0.0355
-   * rad against the front block's base at −0.0414 and eat the bottom quarter of the picture.
+   * against `lineY` 0.070. The sight line is now 0.064, so `guardSightLine()`'s ceiling is
+   * 0.054 and the pad is 5 mm over it — but the real objection is worse than the guard:
+   * anything on the top face runs FORWARD of the bore and is therefore NEARER the eye than the
+   * front pin at every ray below the line, so a 5 mm-proud pad would appear at −0.0289 rad
+   * against the bore's own bottom rim at −0.0340 and eat the bottom third of the picture.
    * A warm bar across the top of this gun is also, verbatim, complaint number one of five.
    * There is no height at which it is both visible and harmless. So it leaves the top face.
    *
@@ -423,9 +422,12 @@ const PROFILE: GunProfile = {
    * the pale bar the playtester asked to have removed, and re-adding either would put back the
    * exact thing the fifth complaint was about: a part that STANDS OFF the receiver. The one
    * structural job the teeth ever did — holding a blade clear of the top face — no longer
-   * exists, because nothing on this gun is held up any more: both sight blocks are buried
-   * 8 mm INTO the receiver and stand on their own mass. A rail would also cost reach a hood or
-   * an ear cannot pay for. Do not re-add them, under any name.
+   * exists, because nothing on this gun is held up any more: the ring's bottom cap is buried
+   * 8 mm into the receiver and the front pin's foot 4 mm, and both stand on their own mass.
+   * Sight ears would also be the wrong idea twice over now — the bore already IS a hood, and
+   * `sightWings` would eat the light bars either side of the pin, which is the whole picture.
+   * A rail would cost reach a hood or an ear cannot pay for. Do not re-add them, under any
+   * name. NOTHING ELSE STANDS ON THE TOP FACE: ring, 138 mm of bare receiver, pin.
    *
    * TWO BOLD FLUTES PER FLANK, HOSTED ON THE BARREL, in the 51 mm window the shortened
    * receiver and the pulled-back handguard opened between them.
@@ -488,9 +490,9 @@ const PROFILE: GunProfile = {
  * AND THE SIGHTS ARE NOT IN THIS TABLE, WHICH IS THE POINT OF THEM. They wear the shared
  * sight material — dark iron, flat value 0.188, set in `viewmodel.ts` after the playtester
  * objected to pale marks on the top edge three times. Against this frame at 0.571 that is the
- * hardest value break on the weapon, so the optic housing and the front block read as DARK
- * MACHINED MASS let into a pale sand receiver — and the window through the housing reads as a
- * hole because the sand shows through it. Nothing in this file may lighten them.
+ * hardest value break on the weapon, so the aperture ring and the front pin read as DARK
+ * MACHINED MASS let into a pale sand receiver — and the bore reads as a HOLE because the world
+ * behind the gun shows through it. Nothing in this file may lighten them.
  * ═════════════════════════════════════════════════════════════════════════════════════════
  */
 const FIELDS: FieldSet = {

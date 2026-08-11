@@ -603,10 +603,43 @@ function inkChunk(
  * Anything standing on top of the receiver runs FORWARD from the rear notch and is therefore
  * NEARER the eye than the front post at every ray below the sight line — so it occludes the sight
  * picture from the inside. This is the rib bug, generalised into a check.
+ *
+ * ─── THE ONE PART THIS CANNOT BE ASKED ABOUT ────────────────────────────────────────────────
+ * An `opticBlock` DELIBERATELY straddles the line: its whole point is solid material above the
+ * hole as well as below it, so it is above the ceiling by construction and always will be.
+ * Leaving it out of the check would leave a permanent false warning to be trained away, which is
+ * how a guard stops being read at all — so the part is routed through here WITH ITS BORE, and in
+ * that mode the ceiling test is replaced by the two questions that are actually load-bearing for
+ * a straddling part:
+ *
+ *   · does the bore CONTAIN the sight line (if not, the player sights at iron, not through it);
+ *   · is it BEHIND the front element (a window forward of what it frames is not a window).
  */
-function guardSightLine(topY: number, P: GunProfile, what: string): void {
+function guardSightLine(
+  topY: number, P: GunProfile, what: string,
+  /** Present only for a part the sight line runs THROUGH. Metres, gun space. */
+  straddle?: { boreLo: number; boreHi: number; z: number; frontZ: number },
+): void {
   if (!import.meta.env?.DEV) return;
-  const ceil = P.sight.lineY - 0.010;
+  const line = P.sight.lineY;
+  if (straddle) {
+    if (line <= straddle.boreLo || line >= straddle.boreHi) {
+      console.warn(
+        `[weapons/viewmodel] ${P.id}: "${what}" bore spans ${straddle.boreLo.toFixed(4)}…` +
+        `${straddle.boreHi.toFixed(4)} m, which does not contain sight.lineY ${line}. The eye is ` +
+        'on the line, so the player would be sighting on solid metal instead of through the hole.',
+      );
+    }
+    if (straddle.z <= straddle.frontZ) {
+      console.warn(
+        `[weapons/viewmodel] ${P.id}: "${what}" sits at z ${straddle.z.toFixed(4)} m, at or ` +
+        `forward of the front element at ${straddle.frontZ.toFixed(4)} m. A window in front of ` +
+        'what it frames is not a sight picture.',
+      );
+    }
+    return;
+  }
+  const ceil = line - 0.010;
   if (topY > ceil) {
     console.warn(
       `[weapons/viewmodel] ${P.id}: "${what}" tops out at ${topY.toFixed(4)} m, above the ` +
@@ -899,18 +932,108 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // the only two that are PLACED FROM one shared number. Both tops land on `SIGHT.lineY`, which
   // is what `AIM_SOCKET` (and therefore the entire ADS solve) is anchored to. See the SIGHT
   // block above before touching any of this: moving a blade moves the aim point.
-  const front = bevelBox(SIGHT.bladeW, SIGHT.frontH, SIGHT.bladeD, 0.002, 26);
-  place(front, { y: SIGHT.lineY - SIGHT.frontH * 0.5, z: SIGHT.frontZ });
-  sightParts.push(front);
+  //
+  // Each of the two is REPLACED, not supplemented, when the profile opts into an aperture: an
+  // `opticFront` post and a blade at the same z would be two solids doing one job, and an
+  // `opticBlock` behind a surviving blade pair would be three rear sights. The part COUNT is
+  // half of what was wrong with the shipped version — the player counted the solids.
+  const frontZ = P.opticFront ? P.opticFront.z : SIGHT.frontZ;
 
-  for (const sx of [-1, 1]) {
-    const rear = bevelBox(SIGHT.bladeW, SIGHT.rearH, SIGHT.bladeD, 0.002, 27 + sx);
-    place(rear, {
-      x: sx * (SIGHT.notchHalfGap + SIGHT.bladeW * 0.5),
-      y: SIGHT.lineY - SIGHT.rearH * 0.5,
-      z: SIGHT.rearZ,
-    });
-    sightParts.push(rear);
+  if (P.opticFront) {
+    // The aperture's partner: a post whose TIP IS ON `lineY`, i.e. dead centre of the bore.
+    const of = P.opticFront;
+    const h = Math.max(SIGHT.lineY - of.footY, INK_FLOOR);
+    const post = inkChunk(of.w, h, of.d, 0.002, 176, 'opticFront.post');
+    place(post, { y: SIGHT.lineY - h * 0.5, z: of.z });
+    sightParts.push(post);
+  } else {
+    const front = bevelBox(SIGHT.bladeW, SIGHT.frontH, SIGHT.bladeD, 0.002, 26);
+    place(front, { y: SIGHT.lineY - SIGHT.frontH * 0.5, z: SIGHT.frontZ });
+    sightParts.push(front);
+  }
+
+  if (P.opticBlock) {
+    // ── THE BORED APERTURE: FOUR BARS AROUND A HOLE CENTRED ON THE SIGHT LINE ─────────────
+    // Read `OpticBlockSpec` first. The one thing to know here: the bore is placed from
+    // `SIGHT.lineY` and NOTHING is allowed to move it — every clamp below grows a wall
+    // OUTWARD, away from the hole, because the hole is what `aimSocketOf()` points the eye
+    // through. A part that clamped inward would silently re-aim the gun.
+    const ob = P.opticBlock;
+    const floor = Math.max(ob.wallMin, INK_FLOOR);
+    const boreLo = SIGHT.lineY - ob.boreR;
+    const boreHi = SIGHT.lineY + ob.boreR;
+
+    // Walls AS AUTHORED — asymmetric on purpose, because `y` is free and burying the bottom
+    // bar in the receiver is how this part stays small. Each is checked on its own.
+    const rawTop = ob.y + ob.h * 0.5 - boreHi;
+    const rawBot = boreLo - (ob.y - ob.h * 0.5);
+    const rawSide = ob.w * 0.5 - ob.boreR;
+    if (import.meta.env?.DEV) {
+      if (ob.wallMin < INK_FLOOR - 1e-6) {
+        console.warn(
+          `[weapons/viewmodel] ${P.id}: opticBlock.wallMin ${(ob.wallMin * 1000).toFixed(1)} mm ` +
+          `is under the ${(INK_FLOOR * 1000).toFixed(0)} mm ink floor. Raised. See WEAPON_ART §0.`,
+        );
+      }
+      const thinnest = Math.min(rawTop, rawBot, rawSide);
+      if (thinnest < floor - 1e-6) {
+        const which = rawTop === thinnest ? 'top' : rawBot === thinnest ? 'bottom' : 'side';
+        console.warn(
+          `[weapons/viewmodel] ${P.id}: opticBlock's ${which} wall is ` +
+          `${(thinnest * 1000).toFixed(1)} mm, under the ${(floor * 1000).toFixed(1)} mm floor — ` +
+          'it would print as solid ink and the ring would read as a gap again. Grown outward, so ' +
+          `the block is bigger than the w ${ob.w} / h ${ob.h} authored. Fix it here.`,
+        );
+      }
+      if (ob.boreR * 2 < INK_FLOOR - 1e-6) {
+        console.warn(
+          `[weapons/viewmodel] ${P.id}: opticBlock.boreR ${ob.boreR} gives a ` +
+          `${(ob.boreR * 2000).toFixed(1)} mm hole, thinner than the ink band — the VOID inks ` +
+          'shut and the part becomes a solid block. The bore is the sight window; widen it.',
+        );
+      }
+      if (Math.abs(ob.z - SIGHT.rearZ) > 0.001) {
+        console.warn(
+          `[weapons/viewmodel] ${P.id}: opticBlock.z ${ob.z} is not sight.rearZ ${SIGHT.rearZ}. ` +
+          'The ADS solve measures the eye-to-window distance from rearZ, so the window would sit ' +
+          'off the distance it was solved for. Set them equal.',
+        );
+      }
+    }
+    const wTop = Math.max(rawTop, floor);
+    const wBot = Math.max(rawBot, floor);
+    const wSide = Math.max(rawSide, floor);
+    const spanW = ob.boreR * 2 + wSide * 2;
+
+    // Top and bottom bars run the FULL width, so the four bars close at the corners and the
+    // part is one continuous frame rather than four sticks with holes in the diagonals.
+    const capTop = inkChunk(spanW, wTop, ob.d, 0.003, 171, 'opticBlock.top');
+    place(capTop, { y: boreHi + wTop * 0.5, z: ob.z });
+    sightParts.push(capTop);
+
+    const capBot = inkChunk(spanW, wBot, ob.d, 0.003, 172, 'opticBlock.bottom');
+    place(capBot, { y: boreLo - wBot * 0.5, z: ob.z });
+    sightParts.push(capBot);
+
+    for (const sx of [-1, 1]) {
+      // Height is the bore's own height. If that is under the floor `inkChunk` grows it
+      // symmetrically about the line, which only overlaps the caps — it cannot eat the hole.
+      const jamb = inkChunk(wSide, ob.boreR * 2, ob.d, 0.003, 173 + sx, 'opticBlock.side');
+      place(jamb, { x: sx * (ob.boreR + wSide * 0.5), y: SIGHT.lineY, z: ob.z });
+      sightParts.push(jamb);
+    }
+
+    guardSightLine(boreHi + wTop, P, 'opticBlock', { boreLo, boreHi, z: ob.z, frontZ });
+  } else {
+    for (const sx of [-1, 1]) {
+      const rear = bevelBox(SIGHT.bladeW, SIGHT.rearH, SIGHT.bladeD, 0.002, 27 + sx);
+      place(rear, {
+        x: sx * (SIGHT.notchHalfGap + SIGHT.bladeW * 0.5),
+        y: SIGHT.lineY - SIGHT.rearH * 0.5,
+        z: SIGHT.rearZ,
+      });
+      sightParts.push(rear);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════════════
@@ -930,10 +1053,14 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // never become the model's worst forward vertex — the muzzle can is 20-40 mm ahead of them.
   if (P.sightWings) {
     const wg = P.sightWings;
-    if (import.meta.env?.DEV && wg.gap < SIGHT.notchHalfGap * 1.5) {
+    // The window the wings must stay outside of is the NOTCH on an iron-sighted gun and the BORE
+    // on an apertured one — same rule, different rear sight. Reading `notchHalfGap` here when the
+    // profile has an `opticBlock` would be checking the wings against a sight that is not built.
+    const windowHalf = P.opticBlock ? P.opticBlock.boreR : SIGHT.notchHalfGap;
+    if (import.meta.env?.DEV && wg.gap < windowHalf * 1.5) {
       console.warn(
-        `[weapons/viewmodel] ${P.id}: sightWings.gap ${wg.gap} is inside the rear notch's window ` +
-        `at the front plane (~${(SIGHT.notchHalfGap * 1.5).toFixed(4)} m). The wings will eat the ` +
+        `[weapons/viewmodel] ${P.id}: sightWings.gap ${wg.gap} is inside the rear sight's window ` +
+        `at the front plane (~${(windowHalf * 1.5).toFixed(4)} m). The wings will eat the ` +
         'light bars either side of the post, which is the whole sight picture.',
       );
     }
@@ -944,7 +1071,8 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
       place(wing, {
         x: sx * (wg.gap + wg.thick * 0.5),
         y: top - h * 0.5,
-        z: SIGHT.frontZ,
+        // The front element's plane, whichever front element the profile built.
+        z: frontZ,
       });
       sightParts.push(wing);
     }

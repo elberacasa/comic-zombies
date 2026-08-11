@@ -18,51 +18,66 @@ import { PALETTE, hexMix } from '@/art/palette';
  *
  * ─── THE THREE THINGS THIS PASS CHANGED, AND WHY ─────────────────────────────────────────
  *
- * 1 · THE STALK IS GONE. THE TOP OF THE RECEIVER IS NOW A RIB WITH A GROOVE IN IT. This is the
- *     SIXTH report of the same thing — *"gray lines on top"*, *"sights too long"*, *"3 grey thing
- *     on top"*, *"sticks like showing out"*, *"remove and remake, that design looks bad and not
- *     competitive at all"* — and every previous pass, this file's own last one included, answered
- *     it by RESHAPING the blades: shorter, darker, fewer, wider, deeper. None of it could work.
- *     A screenshot with the ink pass off finally said why: they were BLOCKS STANDING ON STALKS,
- *     and reshaping a block does not remove the stalk under it.
+ * 1 · THE THREE SLABS ARE ONE BEAD AND ONE NOTCHED LIP. 58 % LESS SIGHT, AND THE BIG ONE IS GONE.
+ *     This is the SEVENTH report of the same thing, and the seventh is the one that names the
+ *     failure precisely: *"the 3 sights look bad like too huge"*. Both halves of that sentence
+ *     are measurable and neither was answered last pass, which spent its whole budget on the
+ *     ASPECT of the three slabs and none of it on their SIZE or their NUMBER:
  *
- *     THE LAW THIS PASS IS WRITTEN UNDER: **a sight may not RISE OFF the receiver.** Its height
- *     must come from a chunky block that reads as machined INTO the gun. The test is literal —
- *     could you mistake any part of it for an antenna? Then it is wrong.
+ *       what shipped        three 20.5 × 42 mm pads, 5 mm proud — 2583 mm² of plan-view furniture
+ *                           standing on a 68 × 106 mm top face, i.e. 36 % of it
+ *       what is here now    one 11 × 14 mm bead and one 68 × 20 mm lip with a notch bitten out
+ *                           of it — 1094 mm², 58 % less, and the front slab is 83 % smaller
  *
- *     A shotgun is POINTED, not aimed, so it needs the least sight in the arsenal: a bead on a
- *     rib. That is what this is now, and the three numbers that make it are the PROUD HEIGHT, the
- *     PLAN-VIEW ASPECT and the SIGHT RADIUS:
+ *     THE LAW OF THE LAST PASS STANDS AND IS UNCHANGED: **a sight may not RISE OFF the receiver.**
+ *     Nothing here is a stalk; both parts are still mostly buried and still 5 mm proud. What is
+ *     new is that the front sight stopped being a 42 mm slab pretending to be a bead and became
+ *     an actual bead, which `SightSpec` alone could not express.
  *
- *       proud height   8 mm → 5 mm   (`lineY` 0.066 → 0.063 against a 0.058 top face)
- *       bladeD        0.028 → 0.042  (the pads are now LONGER than the groove is wide)
- *       sight radius  0.078 → 0.064  (what pays for the length; see 2 below)
+ *     · THE FRONT IS A BEAD, AND IT TAKES THE NEW `opticFront` PART TO BE ONE. `SightSpec` has
+ *       ONE `bladeW` and ONE `bladeD` shared by the front element and the rear pair, so the front
+ *       pad could never be smaller than the cheeks that have to reach the flanks — that single
+ *       coupling is why this gun has been wearing a 20.5 × 42 mm plate on its nose for six
+ *       passes. `opticFront` carries its own `w`/`d`, so the bead is now 11 × 14 mm: 154 mm² where
+ *       there was 861, 53 × 42 px at the hip where there was 98 × 125. It is the smallest sight
+ *       element in the arsenal, which is correct — a shotgun is POINTED, not aimed.
  *
- *     · THE REAR IS A GROOVE, NOT A GAP BETWEEN TWO THINGS. `notchHalfGap` 0.0135 → 0.0135 and
- *       `bladeW` 0.020 → 0.0205 puts the two cheeks' outer faces on |x| 0.034 — DEAD ON the
- *       receiver's own flank, so the pair adds not one micrometre of width and the Sobel merges
- *       their outer walls into the flank's existing line. What changed is the aspect of the void
- *       between them: it was 27 mm wide × 28 mm long, i.e. SQUARE, which is the plan-view of a
- *       gap between two blocks. It is now 27 × 42 — half again as long as it is wide, which is
- *       the plan-view of a groove milled down a rib. Same two boxes, opposite read.
+ *     · THE REAR IS A LIP ACROSS THE WHOLE TOP WITH A NOTCH BITTEN OUT OF ITS CENTRE, and the
+ *       fix is the RATIO, not the shape. It shipped as 20.5 mm of metal · 27 mm of void · 20.5 mm
+ *       of metal — the void was the WIDEST of the three, so the eye read two blocks with a gap and
+ *       counted them. It is now 23.5 · 21 · 23.5: each cheek is wider than the hole between them,
+ *       their outer faces are still dead on the receiver's own flank |x| 0.034, and the notch has
+ *       a FLOOR (the receiver's top face, 5 mm down). Metal on both sides, metal underneath, one
+ *       continuous 68 mm step: a slot milled into a lip, not two things with a space between them.
+ *       This is the pistol's answer to the same brief, arrived at independently — see the note in
+ *       `inkslinger.ts` about a hole in one part even though the geometry is two.
  *
- *     · THE FRONT IS A BEAD PAD LAID ALONG THE NOSE. 20.5 wide × 42 long × 5 proud, spanning
- *       z −0.044 → −0.086, so its front face is dead flush with the receiver's nose and its
- *       length is TWICE its width. A 5 mm step on a 42 mm pad is 8.4 : 1 in profile. There is no
- *       aspect ratio at which that is a post.
+ *     · AND `bladeD` 0.042 → 0.020, WHICH IS WHERE THE "TOO HUGE" ACTUALLY LIVED. Last pass made
+ *       the void 27 × 42 and called it 1.56 : 1, "the plan-view of a groove". It never drew that
+ *       way: `depthCompress` 0.62 is applied to z on the way out of the builder, so 42 mm of
+ *       authored length RENDERS as 26 — and 27 × 26 is a SQUARE VOID, which is exactly the
+ *       plan-view of a gap between two blocks that the last pass was trying to get away from. The
+ *       arithmetic was done in authored metres on an axis the renderer shrinks by 38 %. At
+ *       `bladeD` 0.020 the lip draws 12.4 mm deep against 68 mm wide — 5.5 : 1 across the gun,
+ *       which no amount of foreshortening can turn back into a block.
  *
- *     · BOTH ARE MOSTLY BURIED. `frontH` 0.014 and `rearH` 0.013 against a top face at 0.058:
- *       9 mm and 8 mm of each block is inside the receiver, 5 mm is out. The mass IS the sight.
- *       The rear cheeks bottom at 0.050, 1.8 mm above the cocking serrations' 0.048 ceiling; the
- *       front pad bottoms at 0.049, 9 mm above the barrel's 0.040 crown.
+ *     · WHY NOT THE BORED RING (`opticBlock`), WHICH IS THE PART THIS COMPLAINT SHIPPED. Because
+ *       its proud height is a formula, not a preference: `(lineY − receiverTop) + boreR + topWall`,
+ *       with `topWall ≥ INK_FLOOR` and `boreR ≥ INK_FLOOR/2` or the void inks shut. On this gun
+ *       `lineY − receiverTop` is 5 mm, and a bore that leaves any daylight around a 10 mm post at
+ *       this gun's 64 mm sight radius needs `boreR ≈ 0.010` — which floors the ring at **25 mm
+ *       proud against the 5 mm that is here now**. Answering "too huge" with a part five times
+ *       taller is not a trade. The ring belongs on the marksman, whose line sits 8 mm over a
+ *       receiver 40 mm deeper; the shotgun gets the subtractive version, which is the notch above.
+ *       `opticBlock` is therefore deliberately absent, not merely unset.
  *
- *     · WHAT IT COSTS ON SCREEN, MEASURED RATHER THAN HOPED. At the hip the hero lens is ×2.6
- *       and 5 mm subtends ≈ 24 px, of which the sights' 3.5 px line takes 7 — 17 px of dark-iron
- *       albedo, a low machined ledge rather than a black smear. At ADS the lens is identity and
- *       the picture is: two 71 × 18 px shoulders, a 200 px window between them, the receiver's
- *       own flat closing the bottom of that window 14 px under the crosshair, and the bead
- *       rising 15 px out of it to touch the line. ≈ 10 px of daylight each side of the bead
- *       after ink (see the `sight` block, point 2). That is a shotgun sight picture.
+ *     · WHAT IT COSTS ON SCREEN, MEASURED IN THE UNITS THE LAST PASS MEASURED IN. At the hip the
+ *       hero lens is ×2.6 and 5 mm subtends ≈ 24 px, of which the sights' 3.5 px line takes 7 —
+ *       17 px of dark-iron albedo on both parts, a low machined ledge rather than a black smear.
+ *       At ADS (846 px/rad, this file's own figure from last pass) the notch is 0.0894 rad ≈ 76 px
+ *       wide and the bead 0.0400 rad ≈ 34 px, so the light bars are 21 px each less 7 px of ink
+ *       = **14 px of daylight per side, up from 10**. Shrinking the front element bought sight
+ *       picture as well as screen. That is a shotgun sight picture.
  *
  *     The rib had to leave the top face for any of this to be possible, and the arithmetic is
  *     forced, not stylistic: `guardSightLine`'s rule is that nothing on the upper may come within
@@ -104,13 +119,15 @@ import { PALETTE, hexMix } from '@/art/palette';
  *                                              0.030 and the marksman's 0.026, on a body only
  *                                              106 mm long. Width against LENGTH is what the eye
  *                                              measures, and 68 × 106 is a brick
- *   a bold front sight on a raised base      → `sight` — a BEAD PAD laid along the receiver's
- *                                              nose, 42 mm long and 5 mm proud, rather than a
- *                                              post stood on it. §1 wrote "on a raised post" and
- *                                              the post is exactly what six rounds of feedback
- *                                              have been about, so the brief is answered on its
- *                                              intent (a bold, deliberate front sight) and
- *                                              refused on its letter. See 1 above
+ *   a bold front sight on a raised base      → `opticFront` — an 11 × 14 mm BEAD, 5 mm proud,
+ *                                              milled into the receiver's nose rather than stood
+ *                                              on a post. §1 wrote "on a raised post" and the
+ *                                              post is exactly what seven rounds of feedback have
+ *                                              been about, so the brief is answered on its intent
+ *                                              (one deliberate, unmistakable front sight) and
+ *                                              refused on its letter. "Bold" is now carried by
+ *                                              being the ONLY thing on the nose, not by area.
+ *                                              See 1 above
  *   ribbing on the pump that reads as grip   → the shared builder's four pump ribs, unchanged —
  *                                              which is why the pump can afford to wear walnut
  *                                              rather than a knurl map (see `SKIN`)
@@ -123,22 +140,20 @@ import { PALETTE, hexMix } from '@/art/palette';
  *   muzzle.r  0.027 → 0.025   |x| −2 mm and the can's y-extent shrinks at both ends; z is
  *                             untouched, so the model's forward-most vertex (−0.145) keeps its
  *                             z and loses width. Strictly inward.
- *   sight     THIS PASS SPENDS NOTHING AND HANDS BACK HEIGHT. Every extreme is unchanged or
- *                             smaller. Forward: the front pad's front face is still z −0.086,
- *                             flush with the receiver's nose, exactly where it was — `bladeD`
- *                             0.028 → 0.042 and `frontZ` −0.072 → −0.065 cancel by construction,
- *                             and the extra 14 mm of length is spent BACKWARD, toward the hand.
- *                             Rearward: the cheeks still end on z 0.020, the receiver's own back
- *                             face (`bladeD`/2 grew 7 mm and `rearZ` 0.006 → −0.001 gave it back),
- *                             so the near-plane figure — 0.073, set by the FOREARM 130 mm further
- *                             back — cannot have moved. Laterally the cheeks reach |x| 0.034,
- *                             which is the receiver's own flank: the gun is not one micrometre
- *                             wider. Vertically the topmost sight vertex drops 0.066 → 0.063, and
- *                             in the rolled sprint and reload poses a 3 mm drop on the highest
- *                             part of the upper is 3 mm off a rotated lever arm. The worst vertex
- *                             is still the PUMP at 0.390 in the reload pose, which nothing here
- *                             touches; the front pad's own worst is hypot(0.0103 + 0.020, 0.086)
- *                             ≈ 0.091 against a 0.40 budget, dominated by 6 cm.
+ *   sight     THIS PASS SPENDS NOTHING ON ANY AXIS AND HANDS BACK VOLUME ON ALL SIX. Every
+ *                             extreme is unchanged or smaller, and `lineY` / `rearZ` — the only
+ *                             two fields `aimSocketOf()` reads — are BYTE-IDENTICAL, so the ADS
+ *                             solve, the socket assertion and the ADS translation are the same
+ *                             numbers they were. Forward: the bead's front face retreats z −0.086
+ *                             → −0.072, 14 mm back INSIDE the receiver's nose. Rearward: the lip's
+ *                             back face retreats z 0.020 → 0.009, 11 mm forward of the receiver's
+ *                             own back face, so the near-plane figure — 0.073, set by the FOREARM
+ *                             130 mm further back — cannot have moved. Laterally the cheeks still
+ *                             reach |x| 0.034, the receiver's own flank, and the bead reaches
+ *                             |x| 0.0055: the gun is not one micrometre wider. Vertically the
+ *                             topmost sight vertex is unchanged at `lineY` 0.063 — it is the sight
+ *                             line itself and it does not move. The worst vertex is still the PUMP
+ *                             at 0.390 in the reload pose, which nothing here touches.
  *   port      h 0.022 → 0.030 is vertical only. The lips' |x| (0.039) and the deflector's
  *                             (0.042) are set by `rSideX` and do not move; every z is derived
  *                             from `ep.z`/`ep.d`, both unchanged.
@@ -165,65 +180,110 @@ const PROFILE: GunProfile = {
   depthCompress: 0.62,
   restDz: 0.009,
   /**
-   * A GROOVE DOWN THE BACK OF THE RIB AND A BEAD PAD ALONG ITS NOSE — a shotgun's sight, which
-   * is the least sight in the arsenal because a shotgun is POINTED and not aimed. Nothing here
-   * rises off the receiver on a neck; see point 1 of the header for the law and for the three
-   * numbers that carry it. The five constraints it is solved against:
+   * A NOTCH BITTEN OUT OF A LIP, AND A BEAD ON THE NOSE — the least sight in the arsenal, which
+   * is what a shotgun wants because a shotgun is POINTED and not aimed. Nothing here rises off
+   * the receiver on a neck; see point 1 of the header for the law, for the size arithmetic and
+   * for why the bored ring (`opticBlock`) is refused on this gun specifically.
    *
-   * 1 · THE AIM SOLVE STILL HOLDS, AND IT HOLDS BY CONSTRUCTION RATHER THAN BY LUCK.
-   *     `aimSocketOf` reads exactly two fields, `lineY` and `rearZ`, and BOTH MOVED: 0.066 →
-   *     0.063 and 0.006 → −0.001. That is fine and it is the intended way to change a sight —
-   *     the socket is `(0, lineY, rearZ · depthCompress)` = `(0, 0.063, −0.00062)` and
-   *     `adsOffsetOf` is its exact negation in x and y, so `socket + ads` is `(0, 0, …)` to the
-   *     bit and the boot on-axis assertion (which tests |x| and |y| against 1e-9) passes for the
-   *     same reason it did before: the equation is an identity, not a tuned pair of numbers. The
-   *     front pad does not enter the solve at all — the builder places it at x 0 with its top at
-   *     `lineY - frontH/2 + frontH/2` = `lineY`, so it shares the socket's x AND y at any z and
-   *     lands on the same camera axis. What LOWERING `lineY` actually does is re-solve the ADS
-   *     translation 3 mm further up, which is invisible, and drop the model's highest vertex by
-   *     3 mm, which is the entire point of the pass.
+   * THE FRONT ELEMENT IS `opticFront` AND IS NO LONGER BUILT FROM THESE FIELDS. `bladeW`,
+   * `bladeD` and `notchHalfGap` therefore now describe the REAR ONLY, which is the whole reason
+   * the bead could finally shrink: one shared `bladeW` cannot be 23.5 mm at the flank and 11 mm
+   * on the nose at the same time. `frontH` and `frontZ` are INERT — the builder takes
+   * `opticFront.footY` for the height and `opticFront.z` for the plane — and both are left equal
+   * to what the bead actually does, so nothing here lies about the gun that gets built.
    *
-   * 2 · THE LIGHT BARS SURVIVE THE INK, which is the bug the SIGHT block in `viewmodel.ts`
-   *     exists to record, and it is TIGHTER here than it was because the sight radius got
-   *     shorter. The two elements sit at different distances at ADS and the hull is SCREEN-SPACE,
-   *     so the comparison has to be angular. At `adsSightDistance` 0.235 the notch half-angle is
-   *     0.0135/0.235 = 0.0575 rad; the bead pad is 64 mm further out, which `depthCompress` 0.62
-   *     folds to 0.2747 m, so its half-angle is 0.01025/0.2747 = 0.0373. The bar is 0.0201 rad,
-   *     ≈ 17 px at the ADS FOV, and the sights carry `view.sightOutlinePx` (3.5) rather than the
-   *     silhouette's 7, so it loses 7 px total and prints ≈ 10 px of daylight per side. That is
-   *     the price of the 14 mm of extra pad length, paid knowingly: 14 px of bar bought the
-   *     plan-view aspect that stops the thing reading as blocks, and 10 px is still daylight.
+   * The five constraints it is solved against:
    *
-   * 3 · THE CHEEKS ADD NO WIDTH AT ALL. `notchHalfGap` 0.0135 + `bladeW`/2 = 0.0135 + 0.01025 =
-   *     0.034 — the receiver's own flank, exactly. The outer wall of each cheek is coplanar with
-   *     the flank below it, so the Sobel has one edge there and not two, and the pair reads as
-   *     the receiver's back end being GROOVED rather than as a rail clamped on top of it. It is
-   *     also why the clearance note above can say the gun is not one micrometre wider.
+   * 1 · THE AIM SOLVE IS UNTOUCHED, TO THE BIT. `aimSocketOf` reads exactly two fields, `lineY`
+   *     and `rearZ`, and NEITHER MOVED: 0.063 and −0.001, so the socket is still
+   *     `(0, lineY, rearZ · depthCompress)` = `(0, 0.063, −0.00062)`, `adsOffsetOf` is still its
+   *     exact negation in x and y, and the boot on-axis assertion (|x|, |y| against 1e-9) passes
+   *     for the same reason it did before: the equation is an identity, not a tuned pair. The
+   *     bead does not enter the solve either — the builder places it at x 0 with its top at
+   *     `lineY − h/2 + h/2` = `lineY` for any `footY`, so it shares the socket's x AND y at any z
+   *     and lands on the same camera axis. This pass changes the SIZE of two boxes and nothing
+   *     about where the gun looks or where it shoots.
    *
-   * 4 · THE GROOVE IS LONGER THAN IT IS WIDE, AND THAT IS THE WHOLE FIX. 27 mm across, 42 mm fore
-   *     and aft, 5 mm deep. The last pass had 27 × 28 — a square void, which is the plan-view of
-   *     a GAP BETWEEN TWO BLOCKS no matter how the blocks are shaped. At 1.56 : 1 it is the
-   *     plan-view of a channel milled down a rib. The front pad is the same trade: 20.5 wide by
-   *     42 long is 2 : 1 lying down, and 5 proud on 42 long is 8.4 : 1 in profile.
+   * 2 · THE LIGHT BARS GOT WIDER, NOT NARROWER, WHICH IS THE HAPPY HALF OF SHRINKING A SIGHT.
+   *     The two elements sit at different distances at ADS and the hull is SCREEN-SPACE, so the
+   *     comparison has to be angular. At `adsSightDistance` 0.235 the notch half-angle is
+   *     0.0105/0.235 = 0.0447 rad; the bead is 64 mm further out, which `depthCompress` 0.62
+   *     folds to 0.2747 m, so its half-angle is 0.0055/0.2747 = 0.0200. The bar is 0.0247 rad
+   *     ≈ 21 px at the ADS FOV (846 px/rad, this file's own figure), and the sights carry
+   *     `view.sightOutlinePx` (3.5) rather than the silhouette's 7, so it loses 7 px total and
+   *     prints ≈ 14 px of daylight per side against the 10 px that shipped. The notch got
+   *     6 mm NARROWER and the picture got BETTER, because the thing standing in it got 9.5 mm
+   *     thinner.
+   *
+   * 3 · THE CHEEKS STILL ADD NO WIDTH AT ALL. `notchHalfGap` 0.0105 + `bladeW`/2 = 0.0105 +
+   *     0.01175 = 0.034 — the receiver's own flank, exactly, as before. The outer wall of each
+   *     cheek is coplanar with the flank below it, so the Sobel has one edge there and not two,
+   *     and the pair reads as the receiver's own back end being NOTCHED rather than as a rail
+   *     clamped on top of it. It is also why the clearance note above can say the gun is not one
+   *     micrometre wider.
+   *
+   * 4 · THE METAL IS NOW WIDER THAN THE HOLE, AND THAT IS THE WHOLE FIX. Across the gun it reads
+   *     23.5 · 21 · 23.5 where it shipped 20.5 · 27 · 20.5 — the void used to be the largest of
+   *     the three fields, which is how a notch becomes "two blocks with a gap" and gets counted.
+   *     The hole also has a FLOOR: the cheeks are 13 mm tall against a 0.058 top face, so between
+   *     them is 5 mm of milled step with the receiver's own flat at the bottom of it. Metal both
+   *     sides, metal underneath, one continuous 68 mm lip. Depth is 0.020 authored = **12.4 mm
+   *     drawn** after `depthCompress`, against 68 mm across: 5.5 : 1, and unlike last pass's
+   *     27 × 42 that ratio is quoted in the units the renderer actually uses (0.042 drew as 26,
+   *     i.e. the "1.56 : 1 groove" shipped as a 27 × 26 square void — the exact shape it was
+   *     trying not to be).
    *
    * 5 · NOTHING FOULS. `rearH` 0.013 bottoms the cheeks at y 0.050, 1.8 mm above the cocking
-   *     serrations' 0.048 ceiling; `frontH` 0.014 bottoms the pad at 0.049, 9 mm above the
-   *     barrel's 0.040 crown. In z the two are 22 mm apart (rear ends at −0.022, pad starts at
-   *     −0.044) and neither touches the ejection port frame, whose top lip is at |x| 0.033 and
-   *     spans z −0.027 → −0.077 — outboard of the pad and forward of the cheeks.
+   *     serrations' 0.048 ceiling; the bead's `footY` 0.049 sits 9 mm above the barrel's 0.040
+   *     crown and 9 mm inside the 0.058 top face. In z they are 54 mm apart (the lip ends at
+   *     −0.011, the bead starts at −0.058) and neither touches the ejection port frame, whose top
+   *     lip is at |x| 0.033 and spans z −0.027 → −0.077 — outboard of the bead's |x| 0.0055 and
+   *     forward of the cheeks.
    *
-   * INK FLOOR — every dimension of both parts, checked: 0.0205 W · 0.042 D · 0.013 rear H ·
-   * 0.014 front H. All at or above the 0.010 m floor, and so is the 0.027 m groove between the
-   * cheeks. The 5 mm PROUD STEP is not a part and is not measured against the floor: it is a step
-   * in a block whose smallest real dimension is 13 mm, and the hull is drawn round the block, not
-   * round the step. Measured on screen it is 24 px at the hip and 15 px at ADS against a 7 px
-   * line, so it holds albedo at both. Nothing here is a wall, which is how the hood-shaped answer
-   * to this brief loses a front sight to the hull.
+   * INK FLOOR — every dimension of both parts, checked: cheeks 0.0235 W · 0.013 H · 0.020 D;
+   * bead 0.011 W · 0.014 H · 0.014 D. All at or above the 0.010 m floor, and so is the 0.021 m
+   * notch between the cheeks (a void under the band inks shut). The 5 mm PROUD STEP is not a part
+   * and is not measured against the floor: it is a step in blocks whose smallest real dimension
+   * is 11 mm, and the hull is drawn round the block, not round the step. Measured on screen it is
+   * 24 px at the hip and 15 px at ADS against a 3.5 px line, so it holds albedo at both. Nothing
+   * here is a wall, which is how the hood-shaped answer to this brief loses a front sight to the
+   * hull.
    */
   sight: {
+    // LIVE: the aim solve, byte-identical to what shipped. `frontZ` is shadowed by
+    // `opticFront.z` and set to match it; `frontH` is inert for the same reason.
     lineY: 0.063, rearZ: -0.001, frontZ: -0.065,
-    bladeW: 0.0205, rearH: 0.013, frontH: 0.014, bladeD: 0.042, notchHalfGap: 0.0135,
+    // REAR ONLY now — the front branch of the builder is replaced by `opticFront`.
+    bladeW: 0.0235, rearH: 0.013, frontH: 0.014, bladeD: 0.020, notchHalfGap: 0.0105,
   },
+  /**
+   * NO BORED RING. Not "unset" — REFUSED, and refused by arithmetic. A ring's proud height is
+   * `(lineY − receiverTop) + boreR + topWall`, `topWall ≥ INK_FLOOR` and `boreR ≥ INK_FLOOR/2`
+   * or the void inks shut; a bore that leaves daylight around a 10 mm post at this gun's 64 mm
+   * sight radius wants `boreR ≈ 0.010`. On a 0.058 top face with the line at 0.063 that floors
+   * at 25 mm proud, against the 5 mm here. The complaint being answered is "too huge". The ring
+   * is the marksman's part; this gun gets the subtractive version of the same idea — a notch with
+   * a floor, cut into a lip that is flush with the flanks. See header point 1.
+   */
+  opticBlock: null,
+  /**
+   * THE BEAD — 11 mm across, 14 mm fore-and-aft (8.7 mm drawn), 14 mm tall of which 9 is buried
+   * in the receiver and 5 stands proud. 154 mm² of plan-view where the pad it replaces was 861.
+   *
+   * `w` 0.011 is one millimetre over the ink floor and that is deliberate: it is the number the
+   * light bars are bought with (point 2 — every millimetre off the bead is ≈ 2 px of daylight
+   * back on each side), and at 53 px wide at the hip it still has 46 px of dark-iron albedo
+   * inside the 3.5 px sight line. `d` 0.014 draws as 8.7 mm after `depthCompress` 0.62, so the
+   * bead is very nearly SQUARE on screen — a stud, which is what a bead is, rather than the slab
+   * that has been sitting on this nose for six passes.
+   *
+   * `z` −0.065 is unchanged from the pad it replaces, so the 64 mm sight radius and every
+   * grazing-ray number in header point 2 (the choke's 2.7 mm of clearance under the eye line)
+   * hold exactly. `footY` 0.049 puts its underside 9 mm inside the receiver's 0.058 top face —
+   * the mass IS the sight, and the front face at z −0.072 is 14 mm inside the receiver's nose, so
+   * the bead can never become a forward vertex.
+   */
+  opticFront: { w: 0.011, d: 0.014, z: -0.065, footY: 0.049 },
   /**
    * THE THICKEST RECEIVER IN THE GAME, AND SHORT ENOUGH FOR THE WIDTH TO READ AS GIRTH.
    * x ±0.034, y 0.002 → 0.058, z 0.020 → −0.086. Every number below that talks about "the top

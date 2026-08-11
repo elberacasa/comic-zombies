@@ -25,7 +25,11 @@ import { FIELD, plainSteel } from './types';
  * differintiator colours, still look the same overall"*. Three answers, all of them in this
  * file and none of them in the parts they said they liked:
  *
- *   1 · THE SIGHT IS TWO MACHINED SLABS SUNK INTO THE RECEIVER — see the `sight` block. The
+ *   1 · THE SIGHT IS NOW ONE BORED RING AND ONE POST — see `opticBlock`/`opticFront` and the
+ *       long block above them. The two-slab answer this list used to describe was rejected on
+ *       its part COUNT ("the 3 sights look bad like too huge"), which no amount of reshaping
+ *       three solids can fix; the note below is kept as the record of that attempt.
+ *   1b· THE SIGHT WAS TWO MACHINED SLABS SUNK INTO THE RECEIVER — see the `sight` block. The
  *       complaint that has now been filed FIVE times ("gray lines on top" · "sights too long"
  *       · "3 grey thing on top" · "sticks like showing out" · "remove and remake") was never
  *       about the blades' shape, and four passes that reshaped them all missed. It was about
@@ -108,6 +112,141 @@ const PROFILE: GunProfile = {
   restDz: 0.010,
   /**
    * ═══════════════════════════════════════════════════════════════════════════════════════
+   * THE SIGHT: ONE BORED RING AND ONE POST. THE REAR BLADE PAIR IS GONE.
+   *
+   * ─── READ THIS BEFORE THE HISTORY BELOW IT ─────────────────────────────────────────────
+   * Everything from here to the "CLEARANCE" heading is the record of BUILD 012, which shipped
+   * `bladeW`/`rearH`/`frontH`/`bladeD`/`notchHalfGap` as two slabs and a post. **Those five
+   * numbers are now INERT on this gun** — `opticBlock` and `opticFront` below replace both
+   * ends of the sight outright, and the builder skips the blade branches entirely when they
+   * are present. They are left in place because `SightSpec` requires them and because the
+   * arithmetic they carry is what sized the parts that replaced them; do not tune them
+   * expecting to see anything move.
+   *
+   * `lineY` 0.068, `rearZ` 0.003 and `frontZ` −0.107 are STILL LIVE and still the aim solve.
+   * `lineY` and `rearZ` feed `aimSocketOf()` directly; `frontZ` is shadowed by
+   * `opticFront.z`, which is set to the same −0.107 so the sight radius did not move either.
+   *
+   * ─── WHY THE SIXTH PASS IS A DIFFERENT PART AND NOT A SIXTH RESTYLE ────────────────────
+   * The verdict on BUILD 012 was *"the 3 sights look bad like too huge?"*, and the COUNT in
+   * that sentence is the whole diagnosis. Three is what was authored: two rear wall blocks
+   * with a 22 mm gap between them and a front post. A gap between two solids is not a hole,
+   * so nothing on the gun ever read as one machined part — the eye had three lumps to count,
+   * and counting is what "looks bad" meant. `SightSpec` cannot say anything else: it pins all
+   * three blade tops to `lineY`, and `lineY` is where the eye goes, so a bridge across the
+   * gap would be a roof the player sights ALONG rather than a ring they sight THROUGH.
+   *
+   * `OpticBlockSpec` exists to say the one thing that fixes it: **the bore is centred ON the
+   * sight line, with solid metal above it as well as below.** Read that interface before
+   * touching any number here. Two solids now, not three, and one of them has a window in it.
+   *
+   * ─── THE NUMBERS, AND WHAT THEY REPLACED ───────────────────────────────────────────────
+   *
+   *                        BUILD 012 (2 slabs + post)        now (1 ring + 1 post)
+   *     rear, outer        58 w × 26 d × 11 proud            38 w × 13 d × 30 proud
+   *     rear, solids       2                                 1, bored 18 × 18 mm
+   *     front             15 w × 26 d × 11 proud             10 w × 15 d × 11 proud
+   *     part count         3                                 2
+   *
+   * (`d` quoted POST-COMPRESSION as always: authored `d` is z-scaled by `depthCompress` 0.54
+   * on the way out of the builder, so `opticBlock.d` 0.024 → 12.96 mm and `opticFront.d`
+   * 0.028 → 15.1 mm of real gun. This is the arithmetic four passes missed; it is why the
+   * authored depths look large.)
+   *
+   * **IT IS SMALLER ON EVERY AXIS THE PLAYTESTER WAS LOOKING DOWN.** Width 58 → 38 mm (−34%).
+   * Depth 26 → 13 mm (−50%), and depth is what a top-edge part shows the player at hip, where
+   * the gun is seen from behind and to the left. Side-on SOLID area above the deck — the
+   * number that is actually the silhouette — goes 26 × 11 = 286 mm² to 13 × 12 = 156 mm², a
+   * 45% cut, because half the ring's height is a hole and the rest is 13 mm deep instead of
+   * 26. The front post loses a third of its width and 42% of its depth.
+   *
+   * **AND IT IS 30 MM PROUD RATHER THAN 11, WHICH IS NOT A REGRESSION BUT IT IS A TRADE.**
+   * A bored part cannot be as short as a blade: the metal above the hole is the entire point.
+   * The floor is arithmetic, not taste —
+   *
+   *     proud = (lineY − deck) + boreR + wallTop
+   *
+   * — and every one of those three terms is already at ITS OWN floor. `deck` is 0.057
+   * (`receiver.y` 0.032 + `h`/2) and `lineY` 0.068 is pinned 11 mm above it by the RUST rib
+   * (see the `rib` block; that argument is unchanged). `wallTop` is 0.010, the ink floor
+   * exactly. `boreR` 0.009 is set by the sight picture and cannot go much under it (below).
+   * 11 + 9 + 10 = 30, and there is no fourth term to spend. Of those 30 mm, **18 are a window
+   * the player sees the world through and only 12 are metal.**
+   *
+   * ALSO NOT AVAILABLE: dropping `lineY`. `boreLo` = `lineY − boreR` must stay above the
+   * 0.057 deck or the receiver itself plugs the bottom of the hole, which caps the saving at
+   * 2 mm (`lineY` 0.066) and costs the rib its 1 mm of proudness — the exact bug the `rib`
+   * block below exists to record. Two millimetres is not worth re-opening it.
+   *
+   * ─── THE BORE IS SIZED BY THE SIGHT PICTURE, NOT BY THE BLOCK ──────────────────────────
+   * `boreR` 0.009 → an 18 mm square window, and the post inside it is 10 mm. Measured at
+   * `adsSightDistance` 0.235 m, 56° ADS, 821 px vertical (0.00119 rad/px), with the post
+   * 59.4 mm of REAL gun further out (0.110 authored × 0.54) at 0.2944 m:
+   *
+   *     bore half-angle    0.009 / 0.235   = 38.3 mrad ≈ 32.2 px
+   *     post half-angle    0.005 / 0.2944  = 17.0 mrad ≈ 14.3 px
+   *     light each side    21.3 mrad ≈ 17.9 px raw, ≈ 10.9 px after both `sightOutlinePx`
+   *                        3.5 hulls eat inward from the jamb and outward from the post
+   *     light ABOVE        the post tip is ON `lineY`, i.e. dead centre, so the daylight from
+   *                        tip to `boreHi` is the full `boreR`: 38.3 mrad ≈ 32 px
+   *
+   * That last line is what an aperture buys and a notch never could: the post floats in the
+   * middle of open sky rather than in a slot. It is also why `boreR` cannot shrink much —
+   * at 0.007 the side light falls to ≈ 3.7 px after the hulls and the picture inks shut,
+   * while the block only gets 4 mm shorter. The bore is the cheap axis and the height is the
+   * expensive one, so the bore is spent generously.
+   *
+   * The post is 10 mm wide, which is `INK_FLOOR` exactly and deliberately: the sights are
+   * DARK IRON (flat 0.188) and their hull is the thin `sightOutlinePx` 3.5, so a post at the
+   * floor prints as a crisp black bar in a bright window — which is the read we want — while
+   * every millimetre added to it is a millimetre taken off both light bars at once.
+   *
+   * ─── WHERE THE RING SITS, AND WHY IT CANNOT FLOAT ──────────────────────────────────────
+   *   `z` 0.003, EQUAL TO `rearZ` — the builder dev-warns past a millimetre of disagreement,
+   *     because `rearZ` is where the ADS solve believes the window is. At `d` 0.024 the ring
+   *     spans z −0.009 → +0.015, so its rear face is 11 mm INSIDE the receiver's 0.026 rear
+   *     face: nothing hangs off the back of the gun, which the 26 mm slabs very nearly did.
+   *   `y` 0.0675, WHICH IS NOT `lineY` AND IS NOT MEANT TO BE. The bore is centred on the
+   *     line by construction whatever `y` says, so `y` is free to sink the bottom bar. At
+   *     `h` 0.039 the block runs 0.048 → 0.087: the bottom bar is 0.048 → 0.059, so ELEVEN OF
+   *     ITS FOURTEEN MILLIMETRES ARE BELOW THE 0.057 DECK AND INVISIBLE, and only 2 mm of it
+   *     shows under the hole. That is the whole reason a bored part is affordable here.
+   *   0.048 IS THE SERRATION LINE, NOT A ROUND NUMBER. The five cocking serrations top out at
+   *     0.0483 (`receiver.h` × 0.65 about `receiver.y`) and reach x ±0.024, and the block's
+   *     skirt is ±0.019 — so it lands ON them across its whole width, exactly where BUILD
+   *     012's rear slabs landed, and for the same reason. Lower saws the serration stack in
+   *     half; higher leaves a 1–2 mm slot, which is far under the ink floor and would print
+   *     as a black seam rather than a shadow.
+   *
+   * ─── THE WALLS, EACH CHECKED SEPARATELY, WHICH IS WHY THEY ARE ASYMMETRIC ──────────────
+   *     top    0.0675 + 0.0195 − 0.077 = 0.010   ← the one at risk, and it is AT the floor
+   *     bottom 0.059 − 0.048            = 0.011
+   *     side   0.019 − 0.009            = 0.010
+   * All three at or over `wallMin` 0.010 = `INK_FLOOR`, so the builder grows nothing and the
+   * outer size is exactly the 38 × 39 authored. The void is 18 mm, comfortably over the ink
+   * band, so the hole stays a hole. If any of this is edited and a wall goes under, the
+   * builder names WHICH wall and grows it OUTWARD — never inward, because the bore is what
+   * `aimSocketOf()` points the eye through.
+   *
+   * ─── THE AIM SOLVE DOES NOT MOVE AT ALL ────────────────────────────────────────────────
+   * `aimSocketOf()` reads `(0, lineY, rearZ · depthCompress)` and both are untouched, so the
+   * socket is bit-for-bit BUILD 012's. It is on the bore axis by construction: the bore is
+   * centred on `lineY` in y and on x = 0 by the mirrored jambs. No aim-socket warning.
+   *
+   * ─── CLEARANCE: BOUGHT AGAIN, NOTHING SPENT ────────────────────────────────────────────
+   * Every face of both parts moved INWARD or REARWARD.
+   *   FORWARD. The post's front face goes −0.131 → −0.121 authored (−0.0707 → −0.0653 real),
+   *     5.4 mm of real gun given back. The muzzle can at −0.189 authored / −0.102 real is
+   *     still the reach vertex, 37 mm ahead of it.
+   *   LATERAL. Ring outer x ±0.029 → ±0.019; post ±0.0075 → ±0.005. The ejection-port
+   *     deflector at ±0.031 is still the lateral vertex, so the measured number cannot move.
+   *   HEIGHT. Up 19 mm — and `assertClearance` measures `hypot(|x| + sway, z)` for reach and
+   *     z for depth, so y enters neither budget except through pose rotation. Boot table
+   *     below confirms it did not move.
+   * ═══════════════════════════════════════════════════════════════════════════════════════
+   *
+   * ─── EVERYTHING BELOW HERE IS THE BUILD 012 RECORD. THE FIVE BLADE NUMBERS ARE INERT. ───
+   *
    * THE SIGHT: TWO SLABS SUNK INTO THE RECEIVER. NOTHING HERE STANDS ON A NECK.
    *
    * ─── WHAT WAS ACTUALLY WRONG, AFTER FIVE REPORTS AND FOUR FAILED PASSES ────────────────
@@ -216,9 +355,34 @@ const PROFILE: GunProfile = {
    * ═══════════════════════════════════════════════════════════════════════════════════════
    */
   sight: {
+    // LIVE: the aim solve. `frontZ` is shadowed by `opticFront.z` and set to match it.
     lineY: 0.068, rearZ: 0.003, frontZ: -0.107,
+    // INERT on this gun — `opticBlock`/`opticFront` replace both blade branches. See above.
     bladeW: 0.015, rearH: 0.020, frontH: 0.030, bladeD: 0.048, notchHalfGap: 0.014,
   },
+  /**
+   * THE BORED APERTURE — one part, one hole, 38 w × 39 h × 13 d(real), 30 mm proud of which
+   * 18 is window. Replaces the two rear slabs outright. All of the arithmetic is in the
+   * `sight` block above; the four load-bearing facts are: `z` MUST equal `sight.rearZ`, `y`
+   * is the BLOCK centre and is 0.5 mm off `lineY` on purpose so the bottom bar buries itself
+   * in the receiver, 0.048 is the serration line, and 0.009 is the smallest `boreR` whose
+   * light bars survive both ink hulls.
+   */
+  opticBlock: { w: 0.038, h: 0.039, d: 0.024, y: 0.0675, z: 0.003, boreR: 0.009, wallMin: 0.010 },
+  /**
+   * ITS PARTNER — a post whose TIP LANDS ON `lineY`, i.e. dead centre of the bore, so the
+   * picture is a bar in the middle of a ring rather than a bar in a slot.
+   *
+   * `footY` 0.038 is 19 mm inside the receiver: the post is 30 mm of geometry showing 11 mm,
+   * which is the same buried-to-the-hilt trick BUILD 012's front block used and it costs
+   * nothing, because a 15 mm-wide post on a 46 mm receiver has no skirt to land anyway.
+   * `w` 0.010 is `INK_FLOOR` exactly and is argued for above. `d` 0.028 → 15.1 mm real, so
+   * the post is still 1.4× as long fore-and-aft as it is tall — the aspect ratio that stops
+   * a small mass reading as a mast, which is the one lesson from BUILD 012 worth keeping.
+   * The RUST rail runs into it: `rib` ends at z −0.1165, 4.5 mm inside the post's −0.121
+   * front face, so the warm line dies inside the post and there is no daylight under either.
+   */
+  opticFront: { w: 0.010, d: 0.028, z: -0.107, footY: 0.038 },
   receiver: { w: 0.046, h: 0.050, d: 0.184, y: 0.032, z: -0.066 },
   serrations: 5,
   barrel: { r: 0.012, len: 0.078, y: 0.012, z: -0.140 },
@@ -267,16 +431,24 @@ const PROFILE: GunProfile = {
    * each end, so all three blades had daylight under them.
    *
    * `d 0.107 → 0.118` and `z −0.0545 → −0.0575` close both gaps and nothing else: the rib
-   * spans z −0.1165 → +0.0015. **AND THE SIGHT SLABS GREW TO MEET IT FROM BOTH ENDS**, so the
-   * overlap is now enormous rather than marginal: against the front block's −0.131 → −0.083
-   * and the rear block's −0.021 → +0.027, the rail runs 33.5 mm into the post's base and
-   * 22.5 mm into the rear block's, and the only stretch of it standing in the open is the
-   * 62 mm of deck between the two — which is precisely the sight radius, drawn as a warm line.
-   * The rail, the post and the notched block are one continuous machined feature.
+   * spans z −0.1165 → +0.0015, and both sights are still bedded into it after the aperture
+   * pass shortened them. Against the post's −0.121 → −0.093 and the ring's −0.009 → +0.015,
+   * the rail runs 4.5 mm into the post and 10.5 mm into the ring, so it terminates INSIDE
+   * both and there is no daylight under either end. The overlap is smaller than BUILD 012's
+   * 33.5 / 22.5 mm only because the parts it runs into are half as deep; what matters is that
+   * neither end of the rail is ever visible in the open, and neither is.
    *
-   * It also floors the notch: the rib is 17 mm wide inside a 28 mm notch, so at ADS the bottom
-   * of the sight window is a RUST strip with 5.5 mm of olive either side of it. That is 10 mm
-   * below the line the player actually reads, and it costs the picture nothing (below).
+   * The stretch standing in the open is the ~84 mm of deck between the two, which is the sight
+   * radius drawn as a warm line. The rail, the post and the bored ring are one machined
+   * feature — and the rail is what stops a 10 mm post reading as glued on.
+   *
+   * It also FLOORS THE APERTURE, which is the same job it used to do for the notch. The rib
+   * tops out at 0.058 and the bore's bottom edge is at 0.059, so the rail passes a millimetre
+   * UNDER the hole at the ring itself; forward of that the eye's own rays descend, and by the
+   * post plane the lower window edge has fallen to 0.0567, i.e. 1.3 mm below the rail. So at
+   * ADS the bottom of the window is a RUST strip running out to the foot of the post — 1.3 mm
+   * of an 18 mm window, ≈ 6% of its height, at the very bottom where nothing is read. It leads
+   * the eye to the post and costs the picture nothing (below).
    *
    * `w`, `h`, `y` and `d` are all untouched by the sight pass — the rail did not have to move
    * a millimetre for any of this, because the sights came to it.
@@ -289,10 +461,11 @@ const PROFILE: GunProfile = {
    * shows either side of it), so the extra warm area visible on the top edge is ~0.
    *
    * OCCLUSION IS STILL A NON-EVENT, and it is the only thing any of this could have broken.
-   * The rib's front end is now buried 33.5 mm inside the front block, so the binding ray is
-   * the one grazing where the rail EXITS that block — z −0.083, y 0.058, 0.2814 m from an eye
-   * sitting on the line at y 0.068. It clears the post from 0.058 up: 10 mm of an 11 mm proud
-   * post, ≈ 30 px at ADS. A shadow line set by a height cannot be moved by a length.
+   * The rib's rear end is buried inside the ring and its front end inside the post, so the
+   * binding ray is the one grazing where the rail EXITS the ring — z +0.015 authored, y 0.058,
+   * against an eye sitting on the line at y 0.068. It clears the post from 0.058 up: 10 mm of
+   * an 11 mm proud post, ≈ 30 px at ADS. A shadow line set by a HEIGHT cannot be moved by a
+   * length, and the rib's height is untouched by the aperture pass.
    */
   rib: { w: 0.017, h: 0.011, d: 0.118, y: 0.0525, z: -0.0575 },
 

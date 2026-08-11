@@ -12,94 +12,149 @@ import { PALETTE, hexMix } from '@/art/palette';
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════════════════════
- * THE SIGHT — THE STALK IS DELETED. What is left is a slot cut into the slide's own top mass and
- * a boss that grows out of it, and there is no longer anything on this gun standing on a neck.
+ * THE SIGHT — SIXTH PASS, AND THIS ONE ONLY TAKES THINGS AWAY. Same two events in the same two
+ * places at the same height; 45 % less solid in both of them.
  *
- * ─── FIVE REPORTS, FOUR WRONG FIXES ───────────────────────────────────────────────────────
+ * ─── SIX REPORTS, AND WHAT THE SIXTH ONE ACTUALLY SAID ────────────────────────────────────
  * *"gray lines on top"* → *"sights too long"* → *"3 grey thing on top"* → *"sticks like showing
- * out"* → *"remove and remake a better sight, that design looks bad and not competitive at all"*.
- * Every previous pass RESHAPED THE BLADES: the wings came off, the rail teeth came off, the whole
- * assembly went from `BONE` 0.73 to dark iron 0.188, the solids were turned landscape. All four
- * left the STALK intact, and the stalk is what was being objected to. A screenshot with the ink
- * pass disabled settled it: these were blocks standing on necks, 17 mm proud of a flat slide, and
- * a block on a neck is an antenna at any width, any colour and any aspect ratio.
+ * out"* → *"remove and remake a better sight"* → **"the 3 sights look bad like too huge?"**
  *
- * ─── THE RULE THIS BUILD IS WRITTEN TO ────────────────────────────────────────────────────
- * **A SIGHT MAY NOT RISE OFF THE RECEIVER.** Its height has to come out of a mass that is
- * obviously part of the gun — either a chunky block sitting flush on the slide with the notch
- * BORED OR CUT INTO IT, or a notch cut DOWN INTO the slide's existing top mass. Nothing thin,
- * nothing standing, nothing you could mistake for an aerial. Height is not banned; NECKS are.
+ * The sixth is two complaints wearing one sentence and they have to be answered separately:
+ *   · **THREE.** The player is counting SOLIDS. On a notch sight there are literally three —
+ *     left wall, right wall, front post — and the two walls do not read as one part because
+ *     there is nothing bridging them. That is a real defect and it has a real fix (a bored
+ *     ring), which this gun cannot afford; see the next section, which is arithmetic, not
+ *     taste.
+ *   · **TOO HUGE.** That one is answerable here and in full, and it is what this pass does.
  *
- * ─── WHAT THE THREE SOLIDS ARE NOW, AND WHERE THEY SIT ────────────────────────────────────
+ * ─── WHY THE PISTOL DOES NOT GET THE BORED APERTURE ───────────────────────────────────────
+ * `OpticBlockSpec` is the fix for "three solids": one machined part, a hole through it, material
+ * above the hole AND below it. It landed for the marksman. It is arithmetically impossible here,
+ * and the formula is in the interface itself:
+ *
+ *     proud = (lineY − slideTop) + boreR + topWall
+ *           = (0.061 − 0.049) + boreR + topWall
+ *
+ * `topWall` cannot go under `INK_FLOOR` (0.010) and `boreR` cannot go under `INK_FLOOR / 2`
+ * (0.005) or the VOID inks shut and the ring becomes a solid block again. So the smallest legal
+ * bored ring on this gun stands **27 mm proud of the slide** — against the 12 mm that is there
+ * now. Fixing "three" by shipping a part two and a quarter times taller is answering half a
+ * complaint with the other half, on the one gun whose sight line the entire ADS solve is anchored
+ * to. The pistol stays SUBTRACTIVE: a slot milled down into the slide's top mass, and a boss
+ * grown out of it. If "three" outlives this build, the lever is `lineY`, not a ring — see the
+ * bottom of this block, where that trade is priced.
+ *
+ * ─── SO EVERY MILLIMETRE CAME OFF THE TWO AXES THAT WERE FREE ─────────────────────────────
+ * Proud height is FORCED: it is `lineY − slideTop`, and `lineY` is the aim socket. Width and
+ * depth are not, and both were authored far past what the read needs.
+ *
+ *                       was            now          Δ
+ *   rear body   w      44 mm          36 mm       −18 %   (overhang per flank 7 → 3 mm)
+ *   rear body   d      30 mm          18 mm       −40 %
+ *   front boss  w      12 mm          11 mm        −8 %
+ *   front boss  d      30 mm          18 mm       −40 %
+ *   PROUD HEIGHT       12 mm          12 mm         0     (= lineY, deliberately frozen)
+ *   solid volume     23 040 mm³     13 824 mm³    −40 %
+ *
+ * Depth is where the money was. The complaint named it in the marksman's words — "30 mm fore-and-
+ * aft" — and nothing depends on it: sight radius is `frontZ − rearZ`, not blade length, and the
+ * ink line cares about cross-section, not run. `depthCompress` 0.66 then shrinks it again on the
+ * way out, so 30 mm drew as 19.8 and 18 mm draws as 11.9 — against 12 mm of proud height, the
+ * rear body is now SQUARE in profile where it was a 1.65:1 slab. It stopped being a block lying
+ * on the gun and became the cross-section of a slot.
+ *
+ * ─── WHERE THE THREE SOLIDS SIT, AND WHY NONE OF THEM STANDS ON ANYTHING ──────────────────
  * The slide is 30 mm wide, its top face is at y 0.049, and `bevelBox`'s 7 mm chamfer means that
  * top face is a 16 mm-wide FLAT (x ±0.008) with the corners falling away to the shoulder line at
- * (±0.015, 0.042). Those three numbers are what every placement below is measured against.
+ * (±0.015, 0.042). Every placement below is measured against those three numbers.
  *
- *   REAR — a 44 × 20 × 30 mm body with a 20 mm slot down the middle, and it is CUT INTO the
- *   slide rather than parked on it. Its top is `lineY` 0.061, i.e. 12 mm proud (was 17), and its
- *   bottom is 0.041 — ONE MILLIMETRE BELOW the slide's shoulder line and 1.3 mm below the top of
- *   the cocking serrations. That is the whole subtractive trick: the body's underside does not
- *   rest on the slide's top face, it passes THROUGH it and terminates on the widest line the
- *   slide has, so there is no base, no seam and no gap for the ink pass to find — the two masses
- *   interpenetrate and merge. The slot between the walls is 20 mm wide and 12 mm deep with the
- *   slide's own top face as its floor: a MILLED NOTCH, which is exactly the read a competitive
- *   iron rear sight has.
+ *   REAR — a 36 × 20 × 18 mm body with a 14 mm slot down the middle, CUT INTO the slide rather
+ *   than parked on it. Its top is `lineY` 0.061 (12 mm proud) and its bottom is 0.041 — ONE
+ *   MILLIMETRE BELOW the slide's shoulder line and 1.4 mm below the top of the cocking
+ *   serrations. That is the whole subtractive trick: the body's underside does not rest on the
+ *   slide's top face, it passes THROUGH it and terminates on the widest line the slide has, so
+ *   there is no base, no seam and no gap for the ink pass to find. At 36 mm it overhangs each
+ *   flank by 3 mm — under the ink band at this range, i.e. flush to look at — where the 44 mm
+ *   body overhung by 7 mm and read as a plate bolted on top. The slot is 14 mm wide and 12 mm
+ *   deep with the slide's own top face as its floor: a MILLED NOTCH.
  *
- *   FRONT — a 12 × 24 × 30 mm boss, 12 mm proud and 12 mm BURIED, and at x ±0.006 it sits wholly
- *   inside the slide's 16 mm flat. It therefore grows straight out of the flat with no chamfer
+ *   FRONT — an 11 × 24 × 18 mm boss, 12 mm proud and 12 mm BURIED, and at x ±0.0055 it sits
+ *   wholly inside the slide's 16 mm flat. It grows straight out of the flat with no chamfer
  *   valley beside it and no visible root, which is the difference between a boss and a post: a
- *   post has a bottom edge you can see, this does not. Thirty millimetres along the gun against
- *   twelve proud — it is a rib on the slide's nose, not a pin in it.
+ *   post has a bottom edge you can see, this does not.
  *
- * ─── WHAT LOWERING THE LINE COST, MEASURED RATHER THAN ASSUMED ────────────────────────────
- * `lineY` 0.066 → 0.061 is the number that deletes 5 mm of stalk from all three solids at once,
- * and it is the only number in the aim solve that moved. At ADS the eye sits
- * `view.adsSightDistance` = 0.235 m from the socket, so an object `Δy` below the line at range
- * `d` closes the picture at `Δy / d` radians:
+ * ─── THE SIGHT PICTURE, RE-DERIVED FROM SCRATCH FOR THE NARROWER NOTCH ────────────────────
+ * The eye sits `view.adsSightDistance` 0.235 m from the socket, which is at gun-space `rearZ`, so
+ * anything at gun-space `z` is at `d(z) = 0.235 + (0.002 − z) × 0.66` and subtends `x / d` rad.
  *
- *   occluder            was (lineY 0.066)          now (lineY 0.061)
- *   RUST rib   top 0.052, d 0.236   59.2 mrad      38.1 mrad
- *   hammer     top 0.0529, d 0.219  59.8 mrad      37.0 mrad   ← binds, by 1 mrad, in both
+ *   notch window   ±0.007 at d 0.2350   = ±29.8 mrad
+ *   front post     ±0.0055 at d 0.3089  = ±17.8 mrad
+ *   LIGHT BAR                             12.0 mrad each side
+ *   hammer spur    top 0.0529, d 0.2192  → closes the picture below 37.0 mrad
  *
- * The two were already co-binding to within 1 %, and they still are — which is why NEITHER the
- * rib NOR anything else in this profile had to move to pay for the lower line. The picture is
- * 37 mrad of clear post instead of 59, and at the post's range (0.235 + 0.112 × 0.66 = 0.310 m)
- * 37 mrad is 11.5 mm of post against 12 mm of proud post. The player sees the WHOLE post and
- * nothing wasted — the same ratio the 0.066 line had, scaled down with it.
+ * Narrowing the notch from ±0.010 to ±0.007 costs 11 mrad of bar (23.0 → 12.0) and buys 8 mm of
+ * body width. That is the trade this pass is making and it is the right way round: 12 mrad is
+ * still two thirds of a post-width of daylight either side, and the human has never once
+ * complained that the notch was tight — they have complained six times that it was big.
  *
- * LIGHT BARS, which are the half of the picture that is easy to lose. Notch window ±0.010 at
- * 0.236 m = ±42.3 mrad; post half-width 0.006 at 0.310 m = ±19.3 mrad. The bars are 23.0 mrad
- * each, up from 19.8 at `bladeW` 0.014 — narrowing the post BOUGHT sight picture. The rib's
- * ±29.6 mrad never enters the usable band because it only starts occluding 38 mrad down, one
- * millirad below where the hammer has already closed it.
+ * THE RIB HAD TO COME WITH IT, and this is the part that would have shipped as a bug. The RUST
+ * rib runs forward from inside the notch, so it is nearer the eye than the post at every ray
+ * under the line, and at its old 14 mm it was ±0.007 — EXACTLY the new notch's inner faces. The
+ * slot's floor would have been rib, wall to wall, and the light bars would have closed to nothing:
+ * the "orange mass filling the notch" bug, walked into from the other side. So `rib.w` 0.014 →
+ * 0.010, and the result is better than what it replaces rather than merely survivable:
  *
- * ─── THE THING THE VOCABULARY CANNOT DO, STATED PLAINLY ───────────────────────────────────
- * `SightSpec` builds the rear from TWO boxes at `x = ±(notchHalfGap + bladeW/2)`, so the body's
- * width is not authorable — it is forced to `2 × (notch + wall)`. With the notch pinned at 20 mm
- * by the RUST rib (14 mm wide, and it must leave light bars) and the wall pinned at ≥ 10 mm by
- * `INK_FLOOR`, the narrowest legal rear body on this gun is 40 mm against a 30 mm slide. It is
- * built at 44 and it overhangs each flank by 7 mm; it cannot be built flush. See the note on
- * `sight` in the profile for the part spec that would fix it. What this build CAN do is make the
- * overhang land where the gun is already widest — the ejection-port deflector's outer face is at
- * x 0.023, one millimetre outboard of the rear body's 0.022, and the two interpenetrate, so on
- * the right-hand side the sight body has a visible base that is another part of the gun.
+ *   rib z      d        half-angle    starts occluding at
+ *   0.000    0.2363     ±21.2 mrad        38.1 mrad   ← behind the hammer, never seen
+ *   −0.052   0.2706     ±18.5 mrad        33.3 mrad
+ *   −0.104   0.3050     ±16.4 mrad        29.5 mrad   ← narrower than the post's ±17.8
+ *
+ * Above 29.5 mrad the picture is open sky. Between 29.5 and 32.0 the rib is INSIDE the post's own
+ * width and invisible behind it. Between 32.0 and 37.0 it peeks past the post by at most 2.8 mrad
+ * and still leaves a 9.3 mrad bar; below 37.0 the hammer has closed everything anyway. At the old
+ * 14 mm the same worst case left a **1.0 mrad** bar. The rib is now the one occluder that never
+ * enters the sight picture at all.
  *
  * ─── INK FLOOR (`INK_FLOOR` 0.010), EVERY SOLID, EVERY AXIS ───────────────────────────────
- * front boss 12 × 24 × 30 · rear walls 12 × 20 × 30. Smallest dimension anywhere in the assembly
- * is 12 mm, 20 % over the floor. These are built with `bevelBox`, which does NOT clamp and does
- * NOT warn — `inkChunk` is the part that does both and the sight solids do not go through it — so
- * this line is the only thing between the file and a black bar on the top edge.
+ * front boss 11 × 24 × 18 · rear walls 11 × 20 × 18 · rib 10 × 11 × 104. Smallest dimension
+ * anywhere is the rib's 10 mm, ON the floor; the sight solids are 11 mm, 10 % over. The sights
+ * are built with `bevelBox`, which does NOT clamp and does NOT warn — `inkChunk` is the part that
+ * does both and the sight solids do not go through it — so this line is the only thing between
+ * the file and a black bar on the top edge. It is affordable at 11 mm because the sights carry
+ * `view.sightOutlinePx` (3.5 px), half the silhouette's band, which is the whole reason that
+ * separate thinner hull exists.
  *
  * THE VOIDS, which a hull is blind to and which is how this project has already lost a trigger
- * guard: the notch is 20 mm of air (unchanged, and the number the light bars are derived from);
- * rear body front face −0.013 to front boss rear face −0.095 is 82 mm; and the one that had to be
- * designed rather than checked — the rear body's underside at 0.041 against the serration tops at
- * 0.0424 is NOT a 1.4 mm gap, it is a 1.4 mm INTERPENETRATION. A gap there would have printed the
- * rear of the slide as one black band under a 3.5 px `sightOutlinePx` line. Solids that touch are
- * safe; solids that nearly touch are not.
+ * guard:
+ *   · the notch is 14 mm of air — 40 % over the floor, and the number the light bars come from;
+ *   · rear body front face −0.007 to front boss rear face −0.101 is 94 mm of clear air, up from
+ *     82, because both solids got shorter and neither moved;
+ *   · the rear body's underside at 0.041 against the serration tops at 0.0424 is NOT a 1.4 mm
+ *     gap, it is a 1.4 mm INTERPENETRATION. A gap there would have printed the rear of the slide
+ *     as one black band. Solids that touch are safe; solids that nearly touch are not;
+ *   · the boss's rear face is at −0.101 and the rib's front end at −0.104, so those two
+ *     INTERPENETRATE by 3 mm as well. That is why `frontZ` did NOT move forward to chase the
+ *     shorter boss back out to the slide's nose: at `bladeD` 0.018 a `frontZ` of −0.116 would
+ *     have left a 3 mm GAP there instead of a 3 mm overlap, and the two hulls would have merged
+ *     into one black smear across the front of the slide. The boss now terminates the warm spine
+ *     instead — dark iron capping RUST, one continuous mass;
+ *   · the rib's flank at ±0.005 against the notch's inner faces at ±0.007 is a 2 mm lateral gap,
+ *     under the band, so it will ink shut. That is DESIGNED: it lies at the very back of the slot
+ *     and only becomes visible below 38.1 mrad, which is a millirad past where the hammer has
+ *     already closed the picture. At hip it reads as the shadow line of a milled slot, which is
+ *     what it is.
+ *
+ * ─── IF "THREE" SURVIVES THIS BUILD, THE NEXT LEVER IS `lineY`, AND HERE IS ITS PRICE ─────
+ * `lineY` 0.061 → 0.058 takes the proud height of both solids from 12 mm to 9 mm in one number.
+ * It costs the sight picture: the rib's far end starts occluding at (0.058 − 0.052) / 0.305 =
+ * 19.7 mrad instead of 29.5 and becomes the binding occluder ahead of the hammer's 23.3, so the
+ * clear post drops from 29.5 mrad to 19.7 — 6.1 mm of visible post against 9 mm of proud post,
+ * where today it is 9.1 of 12. It also moves `aimSocketOf()` and therefore the whole ADS
+ * translation on the gun every other gun's feel is measured against. Do it deliberately, with the
+ * human watching, and lower the rib with it — not as a side effect of a width pass.
  *
  * NO WINGS, NO RAIL TEETH, EVER. Both were pale bars added ON TOP of the top edge — the additive
- * answer to an additive problem — and they are not coming back. The part count is still three.
+ * answer to an additive problem — and they are not coming back.
  * ═════════════════════════════════════════════════════════════════════════════════════════════
  */
 const SIGHT = {
@@ -115,49 +170,73 @@ const SIGHT = {
    */
   lineY: 0.061,
   /**
-   * Rear notch centre and front boss centre, along the slide. `rearZ` is the aim socket's z and
-   * is UNCHANGED, so the ADS translation moves only in y. `frontZ` is sight RADIUS, not sight
-   * LINE — the socket does not read it and the boss's top sits on `lineY` at any z — and it is
-   * set so the boss's front face lands at −0.125, two millimetres BEHIND the slide's nose
-   * (−0.127) rather than coplanar with it. Coplanar faces on two meshes are a z-fight waiting
-   * for a depth-precision change; 2 mm is under the ink band, so the step costs nothing to look
-   * at and it buys 2 mm of forward clearance back.
+   * Rear notch centre and front boss centre, along the slide. BOTH UNCHANGED, and `frontZ` is
+   * unchanged ON PURPOSE rather than by omission.
+   *
+   * `rearZ` is the aim socket's z, so it cannot move without moving the ADS solve. `frontZ` is
+   * sight RADIUS, not sight LINE — the socket does not read it and the boss's top sits on `lineY`
+   * at any z — and the obvious move when `bladeD` came down from 30 to 18 was to push it forward
+   * to −0.116 so the boss's front face stayed at −0.125 (two millimetres behind the slide's nose
+   * at −0.127, where it was). That would have been a bug. The boss's REAR face is the load-bearing
+   * end: the RUST rib's front end is at −0.104, and at `frontZ` −0.110 the shortened boss reaches
+   * back to −0.101 and still INTERPENETRATES the rib by 3 mm. At −0.116 it would reach back only
+   * to −0.107 and leave a 3 mm GAP — two solids a hull's width apart, which prints as one black
+   * smear. Solids that touch are safe; solids that nearly touch are not.
+   *
+   * Leaving it put also refunds 6 mm of forward clearance: the boss's front face retreats from
+   * −0.125 to −0.119, and the reach budget is quoted from the muzzle can at −0.153 regardless.
    */
   rearZ: 0.002,
   frontZ: -0.110,
   /**
-   * Wall thickness and post width — the builder feeds one number to both. 0.014 → 0.012: it
-   * narrows the rear body by 4 mm (the overhang the vocabulary forces on us, see above) and it
-   * widens the ADS light bars from 19.8 to 23.0 mrad. 12 mm is 20 % over `INK_FLOOR`, which is
-   * where a part that is never allowed to print black should sit.
+   * Wall thickness and post width — the builder feeds one number to both. 0.012 → 0.011, which is
+   * 2 mm off the rear body's outer width and 1 mm off the post's.
+   *
+   * 11 mm is 10 % over `INK_FLOOR` rather than the 20 % this file used to insist on, and the
+   * margin is affordable for exactly one reason: the sights are drawn with
+   * `view.sightOutlinePx` (3.5 px), half the silhouette band the floor was derived against. That
+   * thinner hull exists so interior detail can be finer than the outline; this is the file
+   * finally spending it. Do not take it to 0.010 — `bevelBox` neither clamps nor warns, so the
+   * floor here is enforced by this comment and nothing else.
    */
-  bladeW: 0.012,
+  bladeW: 0.011,
   /**
-   * How far each solid reaches DOWN from the line, and both are now sized to a LANDMARK on the
-   * slide rather than to a clearance:
+   * How far each solid reaches DOWN from the line. NEITHER IS A VISIBLE HEIGHT — the visible
+   * height of both solids is `lineY − 0.049` = 12 mm, and these numbers only say how deep the
+   * root is buried. Both are sized to a LANDMARK on the slide rather than to a clearance, and
+   * both are unchanged, because burying more is free and burying less is how a boss turns back
+   * into a post:
    *   rearH  0.020 → bottom 0.041, one millimetre below the slide's shoulder line (±0.015,
    *          0.042) and 1.4 mm below the serration tops. The body passes through the slide's
    *          top instead of resting on it — no base, no seam, no gap.
    *   frontH 0.024 → bottom 0.037, twelve millimetres inside a slide whose own underside is at
-   *          0.011. At x ±0.006 the boss is inside the 16 mm top flat, so every millimetre of
+   *          0.011. At x ±0.0055 the boss is inside the 16 mm top flat, so every millimetre of
    *          that root is buried and invisible and the boss has no bottom edge to read as a neck.
    */
   rearH: 0.020,
   frontH: 0.024,
   /**
-   * Fore-and-aft length, 26 → 30 mm, on both solids. Against 12 mm of proud height that is 2.5:1
-   * landscape — a machined boss lying along the gun. It is also what lets the rear read as ONE
-   * body with a slot in it rather than two walls beside a gap.
+   * Fore-and-aft length on both solids, 30 → 18 mm, and this is where most of the "too huge" is
+   * paid off. Depth is the one axis nothing else depends on — sight radius is `frontZ − rearZ`,
+   * not blade length, and the ink line cares about cross-section, not run — and `depthCompress`
+   * 0.66 shrinks it again on the way out, so 30 mm DREW as 19.8 and 18 mm draws as 11.9. Against
+   * 12 mm of proud height the rear body is now square in profile where it was a 1.65:1 slab: the
+   * cross-section of a slot rather than a block lying on the gun.
    */
-  bladeD: 0.030,
+  bladeD: 0.018,
   /**
-   * Half the notch gap. PINNED, and not by the walls: the RUST rib is 14 mm wide (±0.007) and
-   * runs forward from the notch, so it is nearer the eye than the post at every ray under the
-   * line, and ±0.010 is what leaves a light bar either side of it. Measured off the framebuffer
-   * after the "orange mass filling the notch" bug. It is also, via the builder's `±(notchHalfGap
-   * + bladeW/2)` placement, half the reason the rear body cannot be slide-width.
+   * Half the notch gap, 0.010 → 0.007. Via the builder's `±(notchHalfGap + bladeW/2)` placement
+   * this is the OTHER half of the rear body's outer width, and the pair takes it from 44 mm to
+   * 36 mm on a 30 mm slide — 3 mm of overhang per flank, under the ink band, instead of 7 mm of
+   * plate hanging over each side.
+   *
+   * It costs 11 mrad of light bar (23.0 → 12.0 either side of the post) and it is the reason
+   * `rib.w` had to come down to 0.010 in the same pass: at 14 mm the rib was ±0.007, exactly the
+   * new notch's inner faces, and the slot's floor would have been rib from wall to wall. The full
+   * derivation is in the SIGHT block above. Do not narrow this further without re-deriving it —
+   * the post is ±17.8 mrad and the bars vanish at ±0.0055.
    */
-  notchHalfGap: 0.010,
+  notchHalfGap: 0.007,
 } as const;
 
 /**
@@ -199,16 +278,16 @@ const SIGHT = {
  * only extents that changed at all are in the muzzle group, and both of them retreat — see the
  * `muzzle` note. Every other part on this gun is either behind the hand, inward, or vertical.
  *
- * AND THE SIGHT REBUILD BUYS RATHER THAN SPENDS, on all three axes the walk measures:
- *   · outboard  rear body |x| 0.024 → 0.022. −2 mm off the assembly's widest vertex. (It was
+ * AND THE SIGHT SHRINK BUYS ON EVERY AXIS THE WALK MEASURES, WITHOUT SPENDING ON ANY:
+ *   · outboard  rear body |x| 0.022 → 0.018. −4 mm off the assembly's widest vertex. (It was
  *               never the binding one — the fist is ±0.031 — but nothing gets wider.)
- *   · forward   front boss face −0.127 → −0.125. −2 mm of reach, and it was 26 mm behind the
- *               muzzle core at −0.155 that the budget is actually quoted from.
- *   · vertical  the whole assembly drops 5 mm. `reach` is `hypot(x, z)` and ignores y — but the
- *               walk applies the sway PITCH first, which rotates y into z, so the top of the gun
- *               is a lever arm under pitch and shortening it is a straight refund.
- *   · rearward  rear body +z 0.015 → 0.017, toward the eye. The `near` metric is the forearm,
- *               ~60 mm further back again; the sights cannot become the nearest vertex.
+ *   · forward   front boss face −0.125 → −0.119. −6 mm of reach, and it was already 28 mm behind
+ *               the muzzle can at −0.153 that the budget is actually quoted from.
+ *   · rearward  rear body +z 0.017 → 0.011, AWAY from the eye. The `near` metric is the forearm,
+ *               ~60 mm nearer again; the sights cannot become the nearest vertex either way.
+ *   · vertical  nothing moved. `sight.lineY` is frozen at 0.061 on purpose — it is the aim
+ *               socket, and this is the gun the ADS solve is the reference for.
+ * Every extent this pass touches retreats. It cannot fail the walk, only pass it by more.
  */
 const PROFILE: GunProfile = {
   id: 'inkslinger',
@@ -216,35 +295,31 @@ const PROFILE: GunProfile = {
   restDz: 0,
   /**
    * A SLOT IN THE SLIDE AND A BOSS ON ITS NOSE — see the SIGHT block, which is the argument.
-   * Three solids and one mesh, unchanged; what changed is that none of them stands on anything.
+   * Same three solids in the same three places at the same height, 40 % less material in them.
    *
-   * ─── THE PART SPEC THIS FILE WANTED AND DOES NOT HAVE ──────────────────────────────────
-   * This got ~80 % of the way there. The last 20 % is not authorable from `SightSpec` and was NOT
-   * hacked out of the blades, because the hack has a name and it is "a wide plate on top".
+   * ─── THE PART SPEC THIS FILE ASKED FOR, WHICH NOW EXISTS AND IS STILL NOT USED HERE ────
+   * The previous build ended with a request: a bored/slotted block as its own part, `w` authored
+   * independently of the slot, so the rear sight could stop being a part sitting on the gun and
+   * become a cut in it. That part shipped — `OpticBlockSpec` / `opticFront` in `./types.ts`, one
+   * machined ring with the bore centred ON `sight.lineY` and solid material above and below it,
+   * which is the only construction that reads as one object rather than two walls.
    *
-   * `SightSpec` builds the rear as two boxes at `x = ±(notchHalfGap + bladeW/2)`. The body's
-   * OUTER width is therefore a consequence of the notch width and the wall thickness, and both of
-   * those are pinned from elsewhere: the notch by the 14 mm RUST rib that has to show light bars
-   * through it, the wall by `INK_FLOOR`. The narrowest legal rear body on a 30 mm slide is 40 mm.
-   * It cannot be flush, so it overhangs, so it reads as a base plate — which is a weaker version
-   * of the same complaint this build exists to answer.
+   * THE PISTOL DOES NOT TAKE IT, AND THE REASON IS A FORMULA RATHER THAN A PREFERENCE. A ring's
+   * proud height is `(lineY − slideTop) + boreR + topWall`; `topWall ≥ INK_FLOOR` and
+   * `boreR ≥ INK_FLOOR / 2` or the hole inks shut. On this gun that floors at **27 mm proud**
+   * against the 12 mm that is here now. The complaint being answered is "too huge" — shipping a
+   * part 2.25× taller to fix the other half of it is not a trade, and the marksman, whose line
+   * sits far higher over a far deeper receiver, is where that part belongs.
    *
-   * WHAT WOULD CLOSE IT — a bored/slotted block as its own part, e.g.
+   * What the pistol does instead is the subtractive version of the same idea: the notch's floor
+   * IS the slide's top face, the body's underside passes a millimetre THROUGH the slide's shoulder
+   * line, and the body is now 36 mm on a 30 mm slide instead of 44. A 3 mm overhang is under the
+   * ink band; the read is a slot milled down into the slide, which is a hole in one part even
+   * though the geometry is two.
    *
-   *     rearNotch?: { w; h; d; y; z; slotW; slotDepth } | null
-   *
-   * built by the runtime as one solid with the slot subtracted (or as left wall + right wall +
-   * a bridge under the slot, which is the same silhouette and needs no CSG). `w` authored
-   * independently of `slotW` is the entire point: the pistol would take `w` 0.030 — dead flush
-   * with the slide's flanks — with a 14 mm slot, and the rear sight would stop being a part
-   * sitting on the gun and become a cut in it. The same spec is what a front APERTURE would need
-   * (`boreR` in a block, ring wall ≥ 0.010 m on every side), which no gun in the arsenal can
-   * express today either.
-   *
-   * NOTE THE SECOND-ORDER CONSTRAINT, so nobody adds the spec and then trips over it: a 14 mm
-   * slot needs the RUST rib narrowed from 14 mm to ~10 mm or the light bars close. The rib is in
-   * this file (`rib`, below) and it is one millimetre off the floor already, so that is a change
-   * to make deliberately with the framebuffer open, not a free consequence.
+   * `opticBlock` and `opticFront` are therefore deliberately absent, not merely unset. If they
+   * are ever added here, `lineY` has to come down with them and the RUST rib has to come down
+   * with `lineY` — all three in one deliberate pass, with the human watching.
    *
    * NO SIGHT WINGS, NO RAIL TEETH. Both were pale bars added ON TOP of the top edge — the
    * additive answer to an additive problem — and neither is coming back.
@@ -334,21 +409,30 @@ const PROFILE: GunProfile = {
    */
   stock: { w: 0.028, h: 0.018, d: 0.036, y: 0.002, z: 0.030, skeleton: false },
   /**
-   * THE WARM SPINE. Do not widen it and do not raise it: at w 0.014 it is ±0.007 against the
-   * notch's ±0.010 window, which is what leaves a light bar either side of it at the near end
-   * of the sight picture, and at a top of 0.052 it clears ~34 px of a 38 px front post. Both
-   * numbers were measured off the framebuffer after the "orange mass filling the notch" bug and
-   * both are one millimetre from failing again.
+   * THE WARM SPINE, NARROWED TO 10 mm WITH THE NOTCH — 0.014 → 0.010, and this is not a styling
+   * change, it is the notch pass finishing itself.
    *
-   * IT DID NOT MOVE WHEN `sight.lineY` CAME DOWN TO 0.061, AND THAT WAS CHECKED, NOT ASSUMED.
-   * The rib now sits 9 mm under the line and starts occluding at 38.1 mrad; the hammer spur
-   * (top 0.0529, hard-coded in the builder, nearer the eye at 0.219 m) starts at 37.0 and so
-   * still closes the picture first, exactly as it did at `lineY` 0.066 — the two have been
-   * co-binding to within a millirad through both builds. Lower the line any further and the rib
-   * becomes the binding occluder and has to come down with it. `guardSightLine` does not police
-   * this part, so there is no warning to catch it: it is arithmetic or nothing.
+   * The rib runs FORWARD out of the notch, so it is nearer the eye than the front post at every
+   * ray under the sight line, and its half-width is measured against the notch's window. At 14 mm
+   * it was ±0.007 — which is EXACTLY where `notchHalfGap` 0.007 puts the slot's inner faces. The
+   * slot's floor would have been rib from wall to wall and the light bars would have closed to
+   * zero: the "orange mass filling the notch" bug, walked into from the other side. The previous
+   * build wrote this consequence down before the notch was narrowed and it was right.
+   *
+   * AT 10 mm THE RIB LEAVES THE SIGHT PICTURE ENTIRELY, which is better than what it replaces:
+   * its front end (d 0.305) is ±16.4 mrad, narrower than the post's own ±17.8, so it hides behind
+   * the post from 29.5 mrad down; the worst ray, at 37.0 mrad where the hammer spur (top 0.0529,
+   * hard-coded in the builder, nearer the eye at d 0.219) closes everything anyway, leaves a
+   * 9.3 mrad bar. At 14 mm that same worst case left 1.0 mrad. Full derivation in the SIGHT block.
+   *
+   * DO NOT RAISE IT AND DO NOT WIDEN IT BACK. 10 mm is ON `INK_FLOOR` and the top at 0.052 is
+   * 3 mm proud of the slide — take either one further and the part is gone, as ink or as a
+   * silhouette. And if `sight.lineY` is ever lowered, this comes down with it in the same commit:
+   * at `lineY` 0.058 the rib's far end starts occluding at 19.7 mrad and becomes the binding
+   * occluder ahead of the hammer. `guardSightLine` does not police this part, so there is no
+   * warning to catch it: it is arithmetic or nothing.
    */
-  rib: { w: 0.014, h: 0.011, d: 0.104, y: 0.0465, z: -0.052 },
+  rib: { w: 0.010, h: 0.011, d: 0.104, y: 0.0465, z: -0.052 },
 
   /**
    * THE EJECTION PORT — §1's "single most gun-like detail", with the front wall doing the
