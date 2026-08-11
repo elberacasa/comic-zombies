@@ -70,6 +70,20 @@ export interface ControllerDeps {
 }
 
 export class PlayerController {
+  /**
+   * FROZEN — the run is over, but the body is not a ghost.
+   *
+   * On death the player could still walk around behind the INKED OUT card, which reads as the
+   * game not having noticed it killed you. Look was already gated on `_dead` in `PlayerSystem`;
+   * movement was not, because the controller reads `input.moveAxis` itself.
+   *
+   * This zeroes INTENT only — gravity, collision and the ground solve keep running, so the body
+   * falls and settles like a dropped object instead of freezing mid-stride or mid-air. Set by
+   * `PlayerSystem` from `_dead`, and deliberately NOT from `_down`: the down state is a crawl
+   * (GAME_BIBLE §7) and crawling is the whole point of it.
+   */
+  frozen = false;
+
   // ── transform ────────────────────────────────────────────────────────────────────────────
   /** FEET position. The capsule spans [y+radius, y+height-radius]. */
   readonly position = new Vector3();
@@ -291,6 +305,7 @@ export class PlayerController {
     this.edgeFrame = frame;
     // OR, never assign — see the block comment on the fields. A press latched on a frame that
     // ran no fixed step is still waiting here when one finally runs.
+    if (this.frozen) { this.edgeJump = false; this.edgeCrouch = false; return; }
     if (this.input.pressed('jump')) this.edgeJump = true;
     if (this.input.released('jump')) this.edgeJumpUp = true;
     if (this.input.pressed('crouch')) this.edgeCrouch = true;
@@ -349,6 +364,7 @@ export class PlayerController {
 
   /** `_wish` = normalised world-space move intent on the XZ plane (zero length if no input). */
   private buildWishDir(): void {
+    if (this.frozen) { _wish.set(0, 0, 0); return; }
     const ax = this.input.moveAxis.x;
     const ay = this.input.moveAxis.y;
     const s = Math.sin(this.yaw);

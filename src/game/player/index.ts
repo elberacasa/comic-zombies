@@ -436,6 +436,11 @@ export class PlayerSystem implements System, PlayerService {
     if (this._dead) return;
     this._dead = true;
     this._down = false;
+    // The run is over — stop taking movement input. `consumeLook` was already gated on `_dead`,
+    // but the controller reads `input.moveAxis` itself, so the player could still walk around
+    // behind the INKED OUT card. Gravity and collision keep running (see `frozen`), so the body
+    // settles rather than freezing mid-stride.
+    this.controller.frozen = true;
     this.ctx?.events.emit('player:died', {});
   }
 
@@ -443,6 +448,8 @@ export class PlayerSystem implements System, PlayerService {
   respawn(): void {
     this._dead = false;
     this._down = false;
+    // Must be cleared here or "RUN IT BACK" hands you a game you cannot move in.
+    this.controller.frozen = false;
     this._downTimer = 0;
     this._sinceDamage = 999;
     this._kills = 0;

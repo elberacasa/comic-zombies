@@ -581,6 +581,15 @@ const PROFILES: readonly GunProfile[] = [
     id: 'inkslinger',
     depthCompress: 0.66,
     restDz: 0,
+    /**
+     * NO SIGHT WINGS, NO RAIL TEETH. Both were added for "reads military" and both were wrong:
+     * the wings are BONE (0.73 luma, the brightest value on the gun) and the teeth are steel
+     * (0.57), so every weapon ended up wearing a stack of pale bars along its top edge. The
+     * playtester: "all the guns have like gray lines on top of it, they look bad". They were
+     * right — 400-500 of the vertices in each gun's top 18 mm were this, on all four weapons,
+     * which is also why the guns looked alike from the one angle you always see them from.
+     * The front post and rear notch STAY: those are the sight picture and ADS needs them.
+     */
     sight: SIGHT,
     receiver: { w: 0.030, h: 0.038, d: 0.150, y: 0.030, z: -0.052 },
     serrations: 4,
@@ -692,7 +701,6 @@ const PROFILES: readonly GunProfile[] = [
      * the outline crosses on the way up. They are in `sightParts`, so they ride the slide and
      * carry `view.sightOutlinePx` rather than the 7 px silhouette line.
      */
-    sightWings: { rise: 0.001, thick: 0.011, gap: 0.017, d: 0.014 },
     /**
      * TWO STAMPED CUTS, LEFT ONLY, IN THE DUST COVER — the one panel of the frame that is
      * forward of the hand and therefore actually visible in the rest pose. Two and not three:
@@ -721,7 +729,6 @@ const PROFILES: readonly GunProfile[] = [
      * forward of the rear notch and occludes the front post from below. The pistol's top is
      * spoken for.
      */
-    railTeeth: null,
   },
   /**
    * RATATAT — long, low and skeletal. Reads as *fast* before it fires: a slim receiver, a
@@ -873,7 +880,6 @@ const PROFILES: readonly GunProfile[] = [
      * window by 3.4 mm and take away none of the light bars. `rise` 0.001 keeps their tops a
      * hair above the sight line so they are the last thing the outline crosses on the way up.
      */
-    sightWings: { rise: 0.001, thick: 0.011, gap: 0.017, d: 0.014 },
     /**
      * THREE BOLD STAMPED CUTS, LEFT ONLY, IN THE LOWER'S FLANK — §1's vent group, on the mass
      * that can actually carry it (see the header note about the reciprocating shroud).
@@ -902,7 +908,6 @@ const PROFILES: readonly GunProfile[] = [
      * with the RUST showing through the 15 mm gaps between them. Steel, so they ride the slide —
      * as does the rib underneath them, which is the only reason the pair can share a face.
      */
-    railTeeth: { count: 4, w: 0.026, h: 0.011, d: 0.012, y: 0.0535, z: -0.030, step: 0.026 },
   },
   /**
    * BOOMSTICK — short, fat and top-heavy. Everything about it is BORE: the widest muzzle in the
@@ -1124,7 +1129,6 @@ const PROFILES: readonly GunProfile[] = [
      * thing the outline crosses on the way up, and they run from the receiver's 0.054 top face,
      * so they read as forged out of it rather than perched on it.
      */
-    sightWings: { rise: 0.002, thick: 0.012, gap: 0.020, d: 0.016 },
     /**
      * THE SHIELD'S TWO CUTOUTS — and they are hosted on the BARREL, which is the whole trick.
      *
@@ -1165,7 +1169,6 @@ const PROFILES: readonly GunProfile[] = [
      * 0.056. This gun's top is spoken for, and it is spoken for by the one warm mark that leads
      * the eye to the bead.
      */
-    railTeeth: null,
   },
   /**
    * LONGSHOT — the longest thing in the game, and the only one with a full stock. A raised
@@ -1458,7 +1461,6 @@ const PROFILES: readonly GunProfile[] = [
      * than the 7 px silhouette line — 44 mm of blade either side of the post would otherwise be
      * the heaviest ink on the gun.
      */
-    sightWings: { rise: 0.001, thick: 0.012, gap: 0.019, d: 0.014 },
     /**
      * TWO BOLD FLUTES PER FLANK, HOSTED ON THE BARREL — §1's fluted barrel, in the 51 mm window
      * the shortened receiver and the pulled-back handguard opened between them.
@@ -1513,7 +1515,6 @@ const PROFILES: readonly GunProfile[] = [
      * receiver, as do the sights bolted to it and the warm rib underneath — the only reason the
      * three can share a face.
      */
-    railTeeth: { count: 5, w: 0.046, h: 0.014, d: 0.018, y: 0.062, z: 0.014, step: 0.0365 },
   },
 ];
 
