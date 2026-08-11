@@ -245,7 +245,6 @@ function styleSheet(): string {
 .cz-card-stack {
   position: absolute; left: .5rem; top: 2rem; z-index: 3;
   letter-spacing: .16em; font-size: .54rem; opacity: .45;
-  transform: rotate(-2deg);
 }
 .cz-card-stack span { opacity: .62; }
 .cz-card-key {
@@ -328,8 +327,6 @@ function styleSheet(): string {
   background: ${paper}; border: 5px solid ${ink}; box-shadow: 6px 6px 0 ${css('INK', 0.85)};
   padding: .3rem .5rem .45rem; text-align: center;
 }
-.cz-stat:nth-child(odd) { transform: rotate(-1.1deg); }
-.cz-stat:nth-child(even) { transform: rotate(1.3deg); }
 .cz-stat b { display: block; font-size: clamp(1.5rem, 3.4vw, 2.5rem); line-height: 1; }
 .cz-stat span { display: block; letter-spacing: .2em; font-size: .66rem; opacity: .7; padding-top: .22rem; }
 .cz-stat[data-best="1"] { background: ${gold}; }
@@ -355,7 +352,7 @@ function styleSheet(): string {
   margin: .55rem auto 0; width: fit-content;
   background: ${ink}; color: ${paper}; border: 5px solid ${gold};
   box-shadow: 7px 7px 0 ${css('INK', 0.8)};
-  padding: .35rem 1.5rem .5rem; letter-spacing: .18em; transform: rotate(1.1deg);
+  padding: .35rem 1.5rem .5rem; letter-spacing: .18em;
   font-size: clamp(.95rem, 1.6vw, 1.3rem);
 }
 .cz-over-cta b { color: ${gold}; }

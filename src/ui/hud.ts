@@ -320,9 +320,20 @@ function styleSheet(): string {
   line-height: 1;
 }
 .cz-badge > * { position: relative; z-index: 1; }
+/* The small caption over each gauge ("ROUND", "POINTS", "AMMO").
+ *
+ * Was .72rem / .2em tracking / .72 opacity — three legibility taxes stacked on the same element,
+ * which is the other half of "some things are a bit blurry". Impact is a CONDENSED face: it is
+ * already narrow, so wide tracking at a small size pulls the letters apart until the word loses
+ * its shape and you are reading glyph by glyph. And .72 opacity over a halftone panel drops the
+ * contrast right where the strokes are thinnest.
+ *
+ * Bigger, tighter, and more opaque. Still clearly subordinate to the value it labels — that is
+ * what the size step and the remaining opacity are for — but now readable at a glance mid-fight,
+ * which is the only moment it is ever read. */
 .cz-label {
-  font-size: .72rem; letter-spacing: .2em; color: ${ink};
-  opacity: .72; padding-bottom: .28rem; white-space: nowrap;
+  font-size: .8rem; letter-spacing: .12em; color: ${ink};
+  opacity: .86; padding-bottom: .28rem; white-space: nowrap;
 }
 .cz-value {
   font-size: 2.5rem; letter-spacing: .01em; display: inline-block;
@@ -331,12 +342,38 @@ function styleSheet(): string {
 }
 .cz-value.sm { font-size: 1.55rem; }
 
-.cz-round  { top: 26px; left: 28px;  transform: rotate(-2.2deg); }
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * NOTHING THE PLAYER READS IS ROTATED. Do not re-add a tilt to a panel below this line.
+ *
+ * Every persistent panel used to carry one — round -2.2deg, points 1.7, health 1.1, ammo -1.5,
+ * combo 2.4, the buff and deck chips, the toasts, and (worst) the run-summary CARD at -2deg,
+ * which rotated every stat row inside it regardless of the row's own transform.
+ *
+ * The playtester filed two separate notes: "some things are a bit blurry" and "what if we mde
+ * everything straight instead of to a side". They are ONE defect. A rotated DOM element cannot
+ * rasterise its glyphs onto the pixel grid — the browser renders the text and then resamples it
+ * along a non-axis-aligned axis, so every stem picks up subpixel antialiasing it would not
+ * otherwise have. 1-2 degrees is the worst possible amount: enough to destroy grid alignment,
+ * too little to read as a deliberate angle. It looked blurry because it WAS blurry.
+ *
+ * THE RULE: the tilt moves from the TYPE to the FRAME, and from the PERSISTENT to the TRANSIENT.
+ *   · Instruments you read mid-fight — round, points, health, ammo, combo, buffs, toasts, the
+ *     run summary — are axis-aligned. They are gauges, and a gauge must be crisp.
+ *   · The comic character is carried by the things that do not hold type: the heavy ink borders,
+ *     the hard offset drop shadows (flat INK, never a blur), the halftone fills, the letterforms
+ *     themselves. A straight panel with a hand-inked border still reads as a comic panel.
+ *   · Deliberate BEATS keep their kinetics, because those are drawings, not instruments — the
+ *     round title card, the SURGE sticker, and every popup/onomatopoeia animation below. You
+ *     feel those; you do not read them character by character.
+ *
+ * The test for anything new: is the player READING it, or FEELING it? Reading wins → straight.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+.cz-round  { top: 26px; left: 28px; }
 .cz-round .cz-value { color: ${ink}; }
-.cz-points { top: 26px; right: 28px; transform: rotate(1.7deg); background: ${gold}; }
+.cz-points { top: 26px; right: 28px; background: ${gold}; }
 .cz-points .cz-value { color: ${ink}; }
-.cz-health { bottom: 30px; left: 28px;  transform: rotate(1.1deg); flex-direction: column; align-items: flex-start; gap: .3rem; }
-.cz-ammo   { bottom: 30px; right: 28px; transform: rotate(-1.5deg); }
+.cz-health { bottom: 30px; left: 28px; flex-direction: column; align-items: flex-start; gap: .3rem; }
+.cz-ammo   { bottom: 30px; right: 28px; }
 .cz-ammo .cz-value { color: ${ink}; }
 .cz-ammo .cz-reserve { font-size: 1.15rem; color: ${ink}; opacity: .6; padding-bottom: .35rem; }
 /* Value contrast does the warning, never a blink: an animation that loops while the player
@@ -352,7 +389,7 @@ function styleSheet(): string {
   background: ${hot}; color: ${paper}; border: 4px solid ${ink};
   box-shadow: 6px 6px 0 ${shadow};
   padding: .18rem .8rem .26rem; font-size: 1.05rem; letter-spacing: .18em;
-  transform: rotate(2.4deg); transform-origin: 100% 50%;
+  transform-origin: 100% 50%;
   display: none; white-space: nowrap;
 }
 .cz-reload-tag[data-on="1"] { display: block; }
@@ -457,7 +494,7 @@ function styleSheet(): string {
    rather than as another stat. Hidden outside an active round — an empty street says "0 LEFT"
    by not being there. */
 .cz-remain {
-  top: 116px; left: 28px; transform: rotate(1.5deg);
+  top: 116px; left: 28px;
   background: ${ink}; border-color: ${paper}; box-shadow: 6px 6px 0 ${css('INK', 0.75)};
   padding: .16rem .7rem .24rem;
 }
@@ -503,8 +540,6 @@ function styleSheet(): string {
   position: absolute; left: 0; right: 0; bottom: 0; height: 5px; display: block;
   background: ${ink}; transform-origin: 0 50%;
 }
-.cz-buff:nth-child(odd) { transform: rotate(-1.4deg); }
-.cz-buff:nth-child(even) { transform: rotate(1.6deg); }
 
 /* ── THE DECK ────────────────────────────────────────────────────────────────
    Every boon you own, as a chip strip along the bottom edge. Rebuilt on boon:chosen and
@@ -525,8 +560,6 @@ function styleSheet(): string {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
   display: flex; align-items: flex-end; gap: 9px;
 }
-.cz-deck .cz-chip:nth-child(odd) { transform: rotate(-2.4deg); }
-.cz-deck .cz-chip:nth-child(even) { transform: rotate(2.1deg); }
 .cz-deck:empty { display: none; }
 
 /* ── DOWN ────────────────────────────────────────────────────────────────────
@@ -548,12 +581,12 @@ function styleSheet(): string {
 .cz-down-panel {
   position: relative; text-align: center;
   background: ${hot}; border: 8px solid ${ink}; box-shadow: 16px 16px 0 ${ink};
-  padding: .3rem 2.6rem 1rem; transform: rotate(-2.4deg);
+  padding: .3rem 2.6rem 1rem;
 }
 .cz-down-lab {
   display: inline-block; background: ${ink}; color: ${paper};
   letter-spacing: .3em; font-size: clamp(.85rem, 1.8vw, 1.3rem);
-  padding: .22rem 1.2rem .3rem; transform: rotate(1.8deg);
+  padding: .22rem 1.2rem .3rem;
 }
 .cz-down-num {
   font-size: clamp(4rem, 15vw, 11rem); line-height: .92; color: ${paper};
@@ -661,8 +694,6 @@ function styleSheet(): string {
   padding: .26rem 1.05rem .34rem; font-size: 1.05rem; letter-spacing: .13em;
   white-space: nowrap;
 }
-.cz-toast:nth-child(odd)  { transform: rotate(-1.6deg); }
-.cz-toast:nth-child(even) { transform: rotate(1.9deg); }
 
 /* ── title card ──────────────────────────────────────────────────────────── */
 .cz-title {
