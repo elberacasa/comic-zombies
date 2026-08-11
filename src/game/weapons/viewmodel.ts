@@ -63,7 +63,7 @@ import {
   type InkMaterial, type InkMaterialOptions,
 } from '@/render/materials/index';
 import { DEG2RAD, Spring, SpringVec3, TAU, clamp, clamp01, damp, lambdaFromHalfLife, lerp } from '@/core/mathx';
-import { CAMERA, MOVE, WEAPON } from '@/game/tuning';
+import { CAMERA, MOVE, WEAPON, sustainedFireWeight } from '@/game/tuning';
 /**
  * THE ARSENAL. One file per weapon, listed in `models/index.ts`; this file never names a gun.
  * `types.ts` holds the contract those files are written against — the profile, the four colour
@@ -73,6 +73,9 @@ import {
   WEAPON_MODELS, weaponModelFor,
   type FieldSet, type GunProfile, type MatKey, type Skin,
 } from './models';
+// Pure content, same module, no behaviour — the mount needs one bit off the def (`auto`) and
+// `equip` is already handed the id that resolves it. See `Viewmodel.autoFire`.
+import { getWeaponDef } from './defs';
 
 const V = WEAPON.view;
 
@@ -259,6 +262,32 @@ function kickAmpFor(floorHz: number, zeta: number, gap: number, exponent: number
 }
 
 /**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE SUSTAINED BAND CEILING, for AUTOMATIC weapons only. `WEAPON.view.kickAutoBackBand` carries
+ * the derivation and the measurement that forced it; this is the one line of maths.
+ *
+ * The two rules above key on the gap at which the kick spring settles, a threshold that came out
+ * of the SPRING tuning — which is why a 520 rpm automatic sat on the slow side of it and got no
+ * position damping at all. This one keys on `WeaponDef.auto` and states the outcome directly:
+ * the displacement a sustained shot is allowed to produce.
+ *
+ *     authoredPeak · amp · (floorHz / effectiveHz)  =  band
+ *
+ * `floorHz/effectiveHz` is the shrink the frequency rule has already applied, so the two compose
+ * rather than stack blindly, and every automatic lands on the same excursion whatever its rate.
+ *
+ * Returns EXACTLY 1 when the sustained weight is 0 — the first shot of a burst, a tapped shot,
+ * or any semi-auto (which never reaches here) — so the authored transient is never flattened.
+ * The caller `min`s it with the rate rule above, so this can only ever tighten.
+ */
+function kickAmpAuto(band: number, authoredPeak: number, hzFactor: number, gap: number): number {
+  if (band <= 0 || authoredPeak <= 0) return 1;
+  const w = sustainedFireWeight(gap);
+  if (w <= 0) return 1;
+  return lerp(1, clamp01(band / (authoredPeak * Math.max(hzFactor, 1e-3))), w);
+}
+
+/**
  * The safety net (`kickPosMax` / `kickRotMaxDeg`). Scales value AND velocity by the same factor
  * so the clamp contracts the spring's whole state rather than pinning a position against a
  * velocity that is still winding outward — a spring held at a wall would release as a snap.
@@ -308,6 +337,112 @@ function settleSpringVec(s: SpringVec3, eps: number): void {
 
 /** Overall model scale. One number to make the gun bigger or smaller on screen. */
 const MODEL_SCALE = 1;
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE HAND ASSEMBLY IS NOT PART OF THE GUN, AND UNTIL NOW IT WAS SCALED LIKE ONE.
+ *
+ * `depthCompress` is a per-weapon foreshortening: a long gun is drawn with its z squashed so the
+ * 78° lens does not stretch it. It was applied to EVERY group on the way out of the builder,
+ * including the twelve parts the builder hard-codes because they are the same on every weapon —
+ * the grip, the heel, the taped backstrap, and the fist, fingers, thumb, wrist and forearm
+ * holding them. That is a category error with a measurable price, and the price is the reason
+ * seven consecutive passes could not make a gun look long:
+ *
+ *   · IT IS THE HAND, NOT THE GUN, THAT SETS THE NEAR PLANE. Measured over all six weapons ×
+ *     seven poses × five sway corners × the flourishes: the nearest vertex to the eye is a
+ *     forearm corner in 40 of the 42 rows. The two exceptions are REDLINE's and the longshot's
+ *     butt pads, and only under recoil. `view.nearClearance` (0.07 m) is therefore a budget the
+ *     hand spends and the gun pays for.
+ *   · AND IT SCALED THE WRONG WAY. The forearm's rear corner sits at gun-space z 0.1545. At
+ *     `depthCompress` 0.66 it draws at 0.102; at 1.0 it would draw at 0.1545, i.e. **52 mm
+ *     closer to the eye**, which forces `restDz` to about −0.053 to buy the near plane back —
+ *     and pushing the pose 53 mm forward spends 53 mm of the reach budget at the muzzle. So the
+ *     one field a weapon has for saying "I am a rifle" was, past ~0.66, buying nothing but a
+ *     bigger forearm. REDLINE proved that arithmetically and then measured the consequence:
+ *     drawn length is INVARIANT under `depthCompress`, ~211 mm across the field's whole legal
+ *     range, and with the builder's own 175 mm height floor that is an arsenal-wide ceiling of
+ *     **L:H 1.21** — short of a real pistol (1.6), let alone the rifle it was drawn as.
+ *
+ * SO THE HAND ASSEMBLY GETS ITS OWN FIXED DEPTH AND THE GUN KEEPS `depthCompress`. It is not a
+ * workaround, it is the correct model: **it is the same player's hand on every weapon**, and a
+ * hand that changed size when you swapped guns would be the bug. One number, every gun, forever.
+ *
+ * WHY 0.50 AND NOT THE 0.62–0.66 THE HAND HAS BEEN DRAWN AT.
+ *   · It is the SHALLOWEST FACTOR ALREADY SHIPPING (the longshot's), so no weapon in the game
+ *     gets a deeper hand than it has today — which is what makes this change unable to regress
+ *     anyone's near-plane margin. Every gun's margin moves the safe way or not at all.
+ *   · DEPTH IS EXPENSIVE IN BUDGET AND NEARLY FREE IN THE IMAGE, and that asymmetry is the
+ *     whole argument. At the rest pose the gun is yawed 14° off the view axis, so a millimetre
+ *     of gun-space z projects to sin(14°) = 0.24 mm of SCREEN WIDTH but a full millimetre of
+ *     DEPTH. Taking the fist from 42 mm deep to 34 mm costs ~2 mm of its ~64 mm screen
+ *     footprint and hands 8 mm straight back to the near plane. At ADS, where the pose rotation
+ *     is identity, the screen cost is exactly zero.
+ *   · Optically it is also the right direction: `depthCompress` counteracts perspective stretch,
+ *     which goes as 1/distance, and the hand is the CLOSEST thing to the eye in the frame. It
+ *     wants MORE compression than the gun mass 0.2–0.35 m beyond it, not the same amount.
+ *
+ * WHAT IS IN THE ASSEMBLY, AND WHY IT IS NOT JUST `hand`. The fist WRAPS the grip: at equal
+ * scale it encloses it with 4.8 mm of clearance at the front and 12.8 mm at the back. Leave the
+ * grip on `depthCompress` and that enclosure is a function of the profile — at dc 1.0 the grip
+ * would stand 7.3 mm out of the front of the fist and 19.3 mm out of the back, i.e. a gun held
+ * beside a hand rather than in it, on exactly the weapons this change exists to make possible.
+ * So the grip, the heel and the three taped bands wrapped round the backstrap travel with the
+ * hand, and the enclosure is invariant by construction.
+ *
+ * The trigger guard deliberately does NOT: it is a hole the finger goes through rather than a
+ * shape wrapped round the hand, and it grows FORWARD (its rear bar sits 1 mm off the top
+ * finger at every dc). A longer weapon with a larger trigger guard is a rifle; a longer weapon
+ * whose grip has slid out of its own fist is a bug.
+ *
+ * ─── WHAT IT BOUGHT, MEASURED ON THE REAL BUILT GEOMETRY OVER ALL SEVEN POSES ────────────────
+ * 1 · NEAR-PLANE MARGIN, ON EVERY WEAPON, FOR FREE. Nobody's reach or swayed reach moves by a
+ *     bit — the hand has never been a reach-binding vertex on any gun — and the near margin:
+ *
+ *       inkslinger 0.0783 → 0.0941   press 0.0783 → 0.0941   ratatat 0.0803 → 0.0841
+ *       boomstick  0.0735 → 0.0851   longshot 0.0781 → 0.0781   redline 0.0742 → 0.0741
+ *
+ *     The two that do not move are the two already at `HAND_DEPTH` (the longshot) or bound by
+ *     their own butt pad rather than by the hand (REDLINE).
+ * 2 · `depthCompress` IS NOW A UNITS FIELD AND NOT A BUDGET. Re-measured by rescaling every
+ *     authored z on REDLINE by 0.62/dc, so the DRAWN gun is held constant and only the field
+ *     moves — which is the honest form of the question the last pass asked:
+ *
+ *       dc         0.62     0.80     1.00     1.20        before this change, at dc 1.00:
+ *       reach     0.3952   0.3955   0.3959   0.3963       reach 0.424 — over by 24 mm
+ *       near      0.0741   0.0741   0.0741   0.0740       near forced restDz to −0.053
+ *
+ *     1.1 mm of reach and 0.1 mm of near across the whole range, against "arithmetically
+ *     impossible". A profile may now pick dc for how it wants to AUTHOR (1.0 = real metres)
+ *     rather than for what it can afford.
+ * 3 · AND THE CEILING MOVES, BUT NOT AS FAR AS THE LAST PASS HOPED. Probing the pose stack for
+ *     the legal DRAWN z window a profile may put geometry in — front bound by reach ≤ 0.400 and
+ *     swayed ≤ 0.420, rear by near ≥ 0.070 — the window is **228.8 mm** and it is nearly flat in
+ *     `restDz` (226–229 mm from −0.03 to +0.02: sliding the pose trades front for rear 1:1). It
+ *     is also flat in the gun's width (a 6 mm-wide muzzle buys 0.7 mm over a 28 mm receiver).
+ *     With the height floor unchanged at grip bottom −0.1209 to hammer top +0.0514 = 172.3 mm:
+ *
+ *         **ARSENAL CEILING ON DRAWN L:H = 1.33**, up from 1.21. REDLINE measures 1.221, i.e.
+ *         it was already at 96 % of a ceiling nobody had measured.
+ *
+ *     SO THE HAND WAS NOT THE WHOLE STORY, AND THE REST OF IT IS THE HAND'S **Y**. 172.3 of
+ *     those millimetres are 120.9 mm of grip and heel hanging below the origin against 51.4 mm
+ *     of gun above it — the hand assembly is 70 % of the height floor. It is drawn at ~0.73 of
+ *     life while the gun is drawn at ~0.22 of life along its axis, and that anisotropy IS the
+ *     "every weapon is taller than it is long" complaint, stated as a ratio. Scaling the hand
+ *     assembly (all of it — grip, heel, fist, fingers, thumb, wrist, forearm, and the tape) is
+ *     the next lever and it is worth more than this one was:
+ *
+ *         hand Y at   100%    85%     70%     60%     50%
+ *         H floor    172.3   154.2   136.0   123.9   111.9  mm
+ *         L:H         1.33    1.48    1.68    1.85    2.05
+ *
+ *     70 % is a real pistol. It is deliberately NOT done here: it changes the size of the thing
+ *     in the middle of the screen on all six weapons at once, and that is a call for the human's
+ *     eye and its own pass, not a side effect of a depth fix.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const HAND_DEPTH = 0.50;
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -671,6 +806,49 @@ function inkChunk(
 }
 
 /**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE INK FLOOR ON **Z** IS A DIFFERENT NUMBER, BECAUSE Z IS THE ONE AXIS THE BUILDER SHRINKS.
+ *
+ * `inkChunk` compares against the AUTHORED dimension, and `depthCompress` then multiplies z on
+ * the way out of the builder. So a part authored at exactly the 10 mm floor draws at 5.0–6.6 mm
+ * across this arsenal and the guard was never guarding anything on that axis. Measured on the
+ * shipped models, every one of these is a builder-hard-coded number, i.e. wrong on every weapon
+ * in the game at once rather than in one profile:
+ *
+ *     muzzle fin   11 mm authored →  5.5 mm drawn (longshot) … 7.3 (inkslinger)
+ *     trigger      11 mm authored →  5.5 … 7.3 mm drawn
+ *     stock pad    16 mm authored →  8.0 … 10.6 mm drawn
+ *
+ * `inkDepth` states the floor in the space the eye is in: give it the depth you want and it
+ * returns the authored depth that DRAWS at least `INK_FLOOR`. It is a `max`, so a part already
+ * thick enough is returned untouched and no shipped proportion moves for the sake of the rule.
+ *
+ * AND IT DOES A SECOND JOB, WHICH IS WHY IT IS WORTH A FUNCTION. A hard-coded z is a fixed
+ * feature of the weapon — a trigger blade, a butt pad — and it has no business changing size
+ * when a profile changes its foreshortening. Routing it through here pins its drawn size to the
+ * floor from below, which is most of what stops `depthCompress` from silently spending the near
+ * plane: measured on REDLINE with every authored z rescaled so the DRAWN gun is unchanged, the
+ * butt pad alone took the near margin from 0.0742 at dc 0.62 to 0.0683 at dc 1.0, i.e. through
+ * the budget, purely by growing its own thickness.
+ *
+ * WHAT IT CANNOT FIX, STATED HERE SO THE NEXT PASS DOES NOT TRY. A STACK of parts needs the GAP
+ * to clear the floor as well as the tooth, so it needs a drawn pitch of 2 × `INK_FLOOR` = 20 mm.
+ * The muzzle fin pitch is 13 mm authored, i.e. 6.5–8.6 mm drawn — under the floor on its own,
+ * before a tooth is cut out of it. No value of this function fixes a multi-fin can: the profile
+ * has to ask for ONE fin, which is what REDLINE already did and why it is the only weapon whose
+ * muzzle device reads as a device. The DEV warning below says so by name.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+/** A z dimension stated in DRAWN metres — it comes out of the builder at `m`, at any dc. */
+function drawnZ(P: GunProfile, m: number): number {
+  return m / Math.max(P.depthCompress, 1e-3);
+}
+
+function inkDepth(P: GunProfile, d: number): number {
+  return Math.max(d, drawnZ(P, INK_FLOOR));
+}
+
+/**
  * Anything standing on top of the receiver runs FORWARD from the rear notch and is therefore
  * NEARER the eye than the front post at every ray below the sight line — so it occludes the sight
  * picture from the inside. This is the rib bug, generalised into a check.
@@ -870,6 +1048,18 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   const handParts: BufferGeometry[] = [];
   const magParts: BufferGeometry[] = [];
 
+  /**
+   * PUT A PART IN HAND SPACE — it draws at `HAND_DEPTH` whatever the profile's `depthCompress`
+   * is. See the block above `HAND_DEPTH` for why the hand assembly is not the gun.
+   *
+   * It pre-divides so the ONE global scale at the bottom of this function stays the only place z
+   * is touched: `d · (HAND_DEPTH / dc) · dc` is `d · HAND_DEPTH`, exactly, for every dc. Call it
+   * LAST on a part — after its `rx` and its translate — because the global pass scales about the
+   * gun origin and this has to be the same transform to compose with it.
+   */
+  const handSpace = (geo: BufferGeometry): BufferGeometry =>
+    place(geo, { sz: HAND_DEPTH / P.depthCompress });
+
   // ── lower frame ────────────────────────────────────────────────────────────────────────
   const body = bevelBox(0.028, 0.030, 0.112, 0.006, 11);
   place(body, { y: -0.004, z: -0.044 });
@@ -883,15 +1073,19 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // ── grip: raked back, tapered, with a flared heel ──────────────────────────────────────
   // POLYMER, not frame grey. The hand touches it, so it is the dark end of the value ladder —
   // and a dark grip under a TEAL glove is what stops the two masses fusing into one blob.
+  //
+  // AND IT IS IN HAND SPACE (`handSpace`), not gun space: it is the one part of the weapon that
+  // is inside the fist, and an enclosure that depends on `depthCompress` is an enclosure that
+  // breaks on the first gun that uses the field for what it is for.
   const grip = bevelBox(0.030, 0.098, 0.044, 0.008, 13);
   place(grip, { rx: 0.30 });
   place(grip, { y: -0.062, z: 0.016 });
-  polymerParts.push(grip);
+  polymerParts.push(handSpace(grip));
 
   const heel = bevelBox(0.033, 0.014, 0.050, 0.005, 14);
   place(heel, { rx: 0.30 });
   place(heel, { y: -0.108, z: 0.030 });
-  polymerParts.push(heel);
+  polymerParts.push(handSpace(heel));
 
   // ── trigger guard: three bars, faceted like an inked curve ─────────────────────────────
   // 0.008 → 0.014: under the ink band the whole guard printed solid black, which is why the
@@ -970,8 +1164,19 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
       place(body, { y: st.y, z: st.z });
       polymerParts.push(body);
     }
-    const pad = bevelBox(st.w + 0.006, st.h + 0.010, 0.016, 0.004, 94);
-    place(pad, { y: st.y, z: st.z + st.d * 0.5 + 0.008 });
+    // THE BUTT PAD IS THE REARMOST THING ON A STOCKED GUN — i.e. it is the vertex spending the
+    // near plane — and it was 16 mm AUTHORED, so it drew 8.0 mm on the longshot and 10.6 on the
+    // pistol: under the ink floor on the two weapons that most need a butt to read, and growing
+    // with `depthCompress` on a part that has no business caring about it. Measured on REDLINE
+    // with every profile z rescaled so the DRAWN gun is unchanged, this one number took the
+    // near margin from 0.0742 at dc 0.62 to 0.0683 at dc 1.0 — through the budget, on its own.
+    //
+    // So it is stated in DRAWN metres and it is exactly one floor thick: 10 mm on every weapon,
+    // at every `depthCompress`, forever. Costs the four stocked guns between −0.6 and +2.0 mm
+    // of drawn length and nothing measurable in clearance.
+    const padD = drawnZ(P, INK_FLOOR);
+    const pad = bevelBox(st.w + 0.006, st.h + 0.010, padD, 0.004, 94);
+    place(pad, { y: st.y, z: st.z + st.d * 0.5 + padD * 0.5 });
     polymerParts.push(pad);
   }
 
@@ -1291,9 +1496,25 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   place(can, { y: P.receiver.y, z: P.muzzle.z });
   trimParts.push(can);
 
+  // A SINGLE FIN GETS THE DRAWN INK FLOOR; A STACK CANNOT HAVE IT AND THE PROFILE HAS TO KNOW.
+  // The pitch is 13 mm authored — 6.5 mm drawn at `depthCompress` 0.50, 8.6 at 0.66 — so a stack
+  // has to fit BOTH a tooth and a gap inside less than one floor's width. There is no fin depth
+  // that fixes that; two fins on this pitch are one black lump whatever they are made of. So the
+  // lone fin is floored in drawn metres and the stack keeps its authored 11 mm and says so.
+  const finPitch = 0.013;
+  const finD = P.muzzle.fins > 1 ? 0.011 : inkDepth(P, 0.011);
+  if (import.meta.env?.DEV && P.muzzle.fins > 1 && finPitch * P.depthCompress < 2 * INK_FLOOR) {
+    console.warn(
+      `[weapons/viewmodel] ${P.id}: ${P.muzzle.fins} muzzle fins on a ` +
+      `${(finPitch * P.depthCompress * 1000).toFixed(1)} mm drawn pitch. A tooth AND its gap both ` +
+      `need ${(INK_FLOOR * 1000).toFixed(0)} mm, so the stack prints as one solid ` +
+      `${((P.muzzle.fins - 1) * finPitch * P.depthCompress * 1000 + 7).toFixed(0)} mm block. ` +
+      'Set `muzzle.fins: 1` — one fin proud of the can reads as a device, a stack reads as a lump.',
+    );
+  }
   for (let i = 0; i < P.muzzle.fins; i++) {
-    const fin = bevelBox(P.muzzle.finW, 0.010, 0.011, 0.002, 32 + i);
-    place(fin, { y: P.receiver.y, z: P.muzzle.z + P.muzzle.len * 0.4 - i * 0.013 });
+    const fin = bevelBox(P.muzzle.finW, 0.010, finD, 0.002, 32 + i);
+    place(fin, { y: P.receiver.y, z: P.muzzle.z + P.muzzle.len * 0.4 - i * finPitch });
     trimParts.push(fin);
   }
 
@@ -1303,6 +1524,15 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // `steel` rides the slide: a trigger that travelled the slide's 14 mm on every shot would end
   // the stroke inside the rear bar of its own guard. `polymer` is static and dark, which is what
   // a trigger is, and it separates hard against the mid-grey frame right behind it.
+  //
+  // ITS 11 mm DEPTH IS **NOT** ROUTED THROUGH `inkDepth`, AND THAT IS A MEASUREMENT, NOT AN
+  // OVERSIGHT. It draws 5.5–7.3 mm on z, under the floor — but the floor is a law about SCREEN
+  // WIDTH, and at the hip pose the gun is yawed 14° off the view axis, so a box of width w and
+  // depth d prints `w·cos14° + d·sin14°` = 10.7 + 1.6 = 12.3 mm here. The axis that could erase
+  // this part is X, and X is already AT the floor. Meanwhile the guard's own opening is 17.7 mm
+  // authored (guardFront rear face −0.0403, guardBack front face −0.0226) and this blade is
+  // 15.2 mm of it: `inkDepth` would take it to 20.2 mm, i.e. WELDED to both bars, which is the
+  // "no trigger guard" bug the 0.008 → 0.014 note above was written about. Nothing to fix.
   const trigger = inkChunk(0.011, 0.022, 0.011, 0.002, 37, 'trigger');
   place(trigger, { rx: 0.2 });
   place(trigger, { y: -0.032, z: -0.032 });
@@ -1315,12 +1545,13 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // buried in the middle of a face. At rest, at ADS and mid-recoil there is always at least one
   // warm mark on the outline, which is what stops the object reading as a plumbing fixture.
 
-  // Taped grip: three bands wrapped round the backstrap.
+  // Taped grip: three bands wrapped round the backstrap. HAND SPACE — they are wrapped round the
+  // grip, so they have to be scaled by whatever the grip is scaled by or they slide off it.
   for (let i = 0; i < 3; i++) {
     const band = bevelBox(0.034, 0.013, 0.048, 0.003, 71 + i);
     place(band, { rx: 0.30 });
     place(band, { y: -0.034 - i * 0.027, z: 0.008 + i * 0.008 });
-    accentParts.push(band);
+    accentParts.push(handSpace(band));
   }
 
   // Slide top rib — a warm line running the length of the upper, between the sights. It is its
@@ -1358,29 +1589,32 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   // corner. Without it the weapon floats in the corner of the frame like a UI element; with it
   // the player is holding something. All of it is inside the `maxEyeDistance` clipping budget —
   // `assertClearance()` checks that in dev and it is measured in the note above it.
+  //
+  // EVERY PART BELOW IS IN HAND SPACE. It is the same player's hand on every weapon, so it is
+  // drawn at one fixed depth instead of at the profile's `depthCompress` — see `HAND_DEPTH`.
   const fist = bevelBox(0.062, 0.080, 0.068, 0.013, 61);
   place(fist, { rx: 0.30 });
   place(fist, { x: -0.002, y: -0.054, z: 0.020 });
-  handParts.push(fist);
+  handParts.push(handSpace(fist));
 
   // Four finger ridges curling round the FRONT of the grip.
   for (let i = 0; i < 4; i++) {
     const finger = bevelBox(0.068, 0.018, 0.019, 0.004, 62 + i);
     place(finger, { rx: 0.30 });
     place(finger, { x: -0.004, y: -0.024 - i * 0.020, z: -0.014 - i * 0.005 });
-    handParts.push(finger);
+    handParts.push(handSpace(finger));
   }
 
   // Thumb, laid up the left side of the frame — the read that says "right hand".
   const thumb = bevelBox(0.020, 0.022, 0.056, 0.005, 66);
   place(thumb, { rx: 0.18 });
   place(thumb, { x: -0.030, y: -0.020, z: -0.008 });
-  handParts.push(thumb);
+  handParts.push(handSpace(thumb));
 
   const wrist = bevelBox(0.062, 0.060, 0.058, 0.011, 67);
   place(wrist, { rx: 0.42 });
   place(wrist, { x: 0.004, y: -0.100, z: 0.052 });
-  handParts.push(wrist);
+  handParts.push(handSpace(wrist));
 
   // MEASURED AGAINST THE NEAR PLANE, not just against `maxEyeDistance`. `CAMERA.near` is
   // 0.05 m; a first pass put the back of the forearm at 0.056 m from the eye, i.e. 6 mm of
@@ -1388,7 +1622,7 @@ function buildGunGeometry(P: GunProfile = PROFILES[0] as GunProfile): GunGeometr
   const forearm = bevelBox(0.070, 0.070, 0.100, 0.014, 68);
   place(forearm, { rx: 0.42 });
   place(forearm, { x: 0.008, y: -0.142, z: 0.100 });
-  handParts.push(forearm);
+  handParts.push(handSpace(forearm));
 
   // ── magazine ───────────────────────────────────────────────────────────────────────────
   // This group is what the reload animation drops and re-seats, so the SHOTGUN puts its PUMP
@@ -1818,6 +2052,14 @@ export class Viewmodel {
    */
   private kickClock = 0;
   private lastShotAt = -1e9;
+  /**
+   * Is the equipped weapon automatic? Resolved from the def id in `equip()` rather than plumbed
+   * through `fire()`, because `service.ts` is not ours to change and `equip` is already handed
+   * the id — the same seam the aim-solve rebind uses. It gates the sustained band ceiling
+   * (`kickAmpAuto`) and nothing else, so a def the registry does not know simply keeps the
+   * rate rules it always had.
+   */
+  private autoFire = false;
   /** Slide reciprocation, metres. Fired only, never idle. */
   private readonly slideSpring = new Spring(14, 0.5);
   /** Landing dip, metres. Causal (the player jumped), so ART §10 tolerates it. */
@@ -2448,6 +2690,17 @@ export class Viewmodel {
    * the method it always was, to the bit, on every gun but the ratatat — and on the ratatat's
    * FIRST shot, whose gap is effectively infinite. The transient is never flattened.
    *
+   * ─── AND BOTH OF THOSE RULES KEY ON THE WRONG VARIABLE (`kickAmpAuto`) ───────────────────
+   * Their reference is the gap at which the kick spring settles: 542 rpm on position, 438 on
+   * rotation. Those are facts about the SPRING, not about the gun, and REDLINE at 520 rpm fell
+   * between them — no position damping at all, 60.6 mm of push-back peak-to-peak against the
+   * ratatat's 14.4, eight and a half times a second. The distinction that matters is
+   * `WeaponDef.auto`: a finger cannot deliver more than ~5 shots a second, a held trigger
+   * delivers them forever. So an automatic weapon takes the STRICTER of the rate rule and a
+   * flat ceiling on the excursion a sustained shot may produce (`V.kickAutoBackBand`), which
+   * lands every automatic on the same band whatever its rate. `Math.min` of two factors that
+   * are both ≤ 1 — the clearance ceiling and the hip:ADS ratio below are unaffected.
+   *
    * And because both factors only ever shrink the result, the authored `kickBack` /
    * `kickPitchDeg` stay a true upper bound — the clearance pose table above still holds.
    */
@@ -2462,13 +2715,27 @@ export class Viewmodel {
 
     // Re-tuning a spring mid-flight is safe: `SpringVec3` re-derives its matrix every step, and
     // position and velocity are continuous across the change — only the acceleration steps.
-    this.kickPos.frequency = kickHzFor(V.kickPosHz, V.kickPosDamping, gap);
-    this.kickRot.frequency = kickHzFor(V.kickRotHz, V.kickRotDamping, gap);
+    const posHz = kickHzFor(V.kickPosHz, V.kickPosDamping, gap);
+    const rotHz = kickHzFor(V.kickRotHz, V.kickRotDamping, gap);
+    this.kickPos.frequency = posHz;
+    this.kickRot.frequency = rotHz;
 
     // Both are exactly 1 at and below the reference rate, and `x * 1` is exact in IEEE 754, so
     // every gun that does not outrun its own spring keeps the impulse it always had, to the bit.
-    const sp = s * kickAmpFor(V.kickPosHz, V.kickPosDamping, gap, V.kickAmpRateExpPos);
-    const sr = s * kickAmpFor(V.kickRotHz, V.kickRotDamping, gap, V.kickAmpRateExpRot);
+    // An AUTOMATIC weapon additionally takes the stricter of that rule and the sustained band
+    // ceiling, which is the one that catches a gun sitting on the slow side of the reference
+    // rate — 520 rpm REDLINE, which the rate rules were letting through untouched.
+    const auto = this.autoFire;
+    const ampPos = Math.min(
+      kickAmpFor(V.kickPosHz, V.kickPosDamping, gap, V.kickAmpRateExpPos),
+      auto ? kickAmpAuto(V.kickAutoBackBand, V.kickBack * kickScale, V.kickPosHz / posHz, gap) : 1,
+    );
+    const ampRot = Math.min(
+      kickAmpFor(V.kickRotHz, V.kickRotDamping, gap, V.kickAmpRateExpRot),
+      auto ? kickAmpAuto(V.kickAutoPitchBandDeg, V.kickPitchDeg * kickScale, V.kickRotHz / rotHz, gap) : 1,
+    );
+    const sp = s * ampPos;
+    const sr = s * ampRot;
 
     this.kickPos.impulse(
       0,
@@ -2494,6 +2761,10 @@ export class Viewmodel {
    */
   equip(defId?: string): void {
     if (defId) {
+      // Pack-a-Punch derives its id as `${base.id}+` and keeps every handling number, so the
+      // base weapon's entry is the right one to read.
+      const base = defId.endsWith('+') ? defId.slice(0, -1) : defId;
+      this.autoFire = getWeaponDef(base)?.auto ?? false;
       const next = this.models.get(defId);
       if (next && next !== this.active) {
         if (this.active) this.active.group.visible = false;

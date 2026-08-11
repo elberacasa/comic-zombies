@@ -1067,6 +1067,125 @@ export const WEAPON = {
   /** First shot out of a rest state gets this much extra kick — the "crack" of the opener. */
   recoilFirstShotMult: 1.18,
 
+  // ── SUSTAINED AUTOMATIC FIRE (the camera half; the mount half is `view.kickAuto*`) ───────
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════════════════
+   * WHAT "SUSTAINED" MEANS, ONCE, FOR BOTH KICK LAYERS.
+   *
+   * BUILD 0xx+2, the playtester on REDLINE: *"redline also jumps way too much when shooted
+   * auto, making it unplayable to shoot, make this much smoother almost unoticible but still
+   * pro looking"*.
+   *
+   * The mount had already been made rate-aware twice (`view.kickSettleResidual`,
+   * `view.kickAmpRateExpPos`) — but both rules key on the gap at which the *kick spring*
+   * happens to settle (542 rpm on position, 438 on rotation), a number that came out of the
+   * spring tuning rather than out of the gun. REDLINE fires at 520, so it slipped between
+   * them and got no position damping at all: measured, 60.6 mm of push-back peak-to-peak
+   * against the ratatat's 14.4, eight and a half times a second.
+   *
+   * THE VARIABLE BOTH RULES SHOULD HAVE KEYED ON IS `WeaponDef.auto`. A semi-auto is gated by
+   * a human finger — about five rounds a second, and every one of them a decision. An
+   * automatic delivers impulses for as long as the trigger is down, so its recoil is not a
+   * series of events, it is a TEXTURE, and a texture has to sit inside a band you can aim
+   * through. Rate decides how fast the gun gets there; it does not decide what is acceptable
+   * once it is there.
+   *
+   * These two gaps are how a held trigger is told apart from a tapped one, and they are
+   * deliberately shared by the camera rule below and the mount rule in `view`, so the two
+   * layers can never disagree about what a burst is:
+   *   · at or below `recoilSustainHoldGap` (0.18 s = 333 rpm — slower than any weapon anyone
+   *     would call automatic) the trigger is being HELD and the sustained rules are at full
+   *     strength;
+   *   · at or above `recoilSustainTapGap` (0.28 s = 214 rpm — comfortably slower than the ~5
+   *     rounds a second a human sustains on a semi-auto) the shot is a deliberate tap and
+   *     keeps the weapon's full authored punch;
+   *   · in between they blend on a smoothstep, so feathering the trigger never flickers
+   *     between two different guns.
+   *
+   * THE FIRST SHOT OF A BURST IS UNTOUCHED BY CONSTRUCTION: its gap is the time since the
+   * *previous* engagement, effectively infinite, so the weight is exactly 0 and every
+   * sustained rule multiplies by exactly 1.
+   */
+  recoilSustainTapGap: 0.28,
+  recoilSustainHoldGap: 0.18,
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════════════════
+   * THE CAMERA'S CLIMB CEILING FOR AN AUTOMATIC WEAPON, in radians of pitch per SECOND.
+   *
+   * **This is the number that made REDLINE unplayable, and nothing in the codebase was
+   * watching it.** `WeaponDef.cameraKick` is a per-CARTRIDGE number, and until now the camera
+   * applied it with no idea how many cartridges a second the gun sends. What the player
+   * actually fights is the product:
+   *
+   *     climb per second = mean(recoilPattern pitch) · cameraKick / shot interval
+   *
+   * MEASURED on the shipped build, simulating this exact code path at 60 fps:
+   *
+   *     inkslinger  400 rpm  cameraKick 1.00   0.144 rad/s   8.3 °/s   (semi — a finger caps it)
+   *     ratatat     900 rpm  cameraKick 0.45   0.089 rad/s   5.1 °/s
+   *     redline     520 rpm  cameraKick 1.20   0.250 rad/s  14.5 °/s   ← 2.8× the SMG
+   *
+   * The ratatat only survives because somebody hand-tuned its `cameraKick` to 0.45; REDLINE's
+   * 1.2 was chosen because "it costs no viewmodel clearance", which is a clearance argument
+   * applied to a feel number. Neither author could have known — there was no rule to read.
+   *
+   * THE RULE. An automatic weapon's per-shot camera kick is scaled by
+   *
+   *     min(1, recoilAutoClimbMax · gap / (meanPatternPitch · cameraKick))
+   *
+   * blended in by the sustained-fire weight above. One scalar multiplies the whole pattern
+   * entry, pitch and yaw together, so **the pattern's SHAPE is untouched** — it is still the
+   * same deterministic, learnable path (GAME_BIBLE §3), drawn smaller. Nothing is flattened
+   * and nothing is randomised.
+   *
+   * The situational multipliers are deliberately OUTSIDE the cap: it is computed from the
+   * def's own numbers, and `WEAPON.adsRecoilMult`, `PlayerStats.recoilMult` and the
+   * Pack-a-Punch `UPGRADE.recoilMult` then compose on top exactly as before. Fold them in and
+   * ADS would be scaled *up* to the same climb as hip, which would delete the reason to aim.
+   *
+   * WHY 0.09 rad/s (5.16 °/s): it is the ratatat's own climb rate, rounded up. That gun is the
+   * one automatic the playtester has fired and accepted, so it becomes the law rather than an
+   * accident — and rounding up means its scale is exactly 1 and its camera is bit-identical to
+   * the build before this existed. REDLINE lands on 0.359 and every future automatic lands on
+   * the same 0.09 rad/s whatever its rate, which is the whole point.
+   */
+  recoilAutoClimbMax: 0.09,
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════════════════
+   * THE HOLE IN `recoilRecoverDelay`, AND WHY AN AUTOMATIC NEEDS ITS OWN.
+   *
+   * `recoilRecoverDelay` is 0.09 s, so the recovery is idle for 90 ms after every shot. That
+   * is a *fixed* time against a *variable* fire rate, and the consequence is not a tuning
+   * nuance, it is a class of weapon that never recovers at all:
+   *
+   *     any automatic whose shot interval is under 90 ms (i.e. faster than 667 rpm) re-arms
+   *     the delay before it has ever expired, so `update()` returns early on EVERY frame for
+   *     as long as the trigger is held and the debt integrates without limit.
+   *
+   * MEASURED, 6 s of held trigger with no player correction, before this constant existed:
+   *     ratatat  900 rpm    aim sat 4.03° above the pre-fire angle and was still climbing
+   *     a hypothetical 750 rpm rifle   **15.80°**, and 7.63° inside a single 30-round magazine
+   * A climb with no ceiling is not a learnable pattern — there is nothing to learn, because
+   * where the gun ends up depends on how long you held it.
+   *
+   * So an automatic's delay is additionally capped at this fraction of ITS OWN shot interval,
+   * measured (not read off `rpm`), which makes it automatically right for a fire-rate boon:
+   *
+   *     delay = min(recoilRecoverDelay, lastGap · recoilRecoverAutoDuty)
+   *
+   * At 0.5 the recovery is idle for half of every cycle — the kick still gets a clear half
+   * cycle to be seen before anything hands it back — and running for the other half, which is
+   * what turns the climb into a real steady state you can learn one compensation for.
+   *
+   * SEMI-AUTOS ARE UNTOUCHED BY CONSTRUCTION: the cap is gated on `WeaponDef.auto`, so the
+   * inkslinger, THE PRESS, the boomstick and the longshot take the branch that returns
+   * `recoilRecoverDelay` unchanged, and are bit-identical to the build before this existed.
+   */
+  recoilRecoverAutoDuty: 0.5,
+
   // ── DAMAGE MODEL ────────────────────────────────────────────────────────────────────────
 
   /** Limb damage multiplier. Below 1 so aiming centre-mass is still the safe choice. */
@@ -1625,6 +1744,57 @@ export const WEAPON = {
     kickAmpRateExpPos: 1,
     kickAmpRateExpRot: 0.5,
     /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE SUSTAINED BAND — WHAT THE TWO RATE RULES ABOVE WERE ACTUALLY REACHING FOR.
+     *
+     * BUILD 0xx+2, the playtester on REDLINE: *"redline also jumps way too much when shooted
+     * auto"*. Both rules above key on `kickSettleGap` — 0.1106 s (542 rpm) on position, 0.1370 s
+     * (438 rpm) on rotation — thresholds that fell out of the SPRING tuning, derived from the
+     * 400 rpm pistol. REDLINE fires at 520 rpm. **It is on the slow side of the position
+     * threshold, so it received no position damping whatever.** Measured, hip, 6 s hold:
+     *
+     *                        push-back peak-to-peak      mount pitch peak-to-peak
+     *     ratatat  900 rpm          14.43 mm                    2.60°
+     *     redline  520 rpm        **60.63 mm**                **8.72°**
+     *
+     * 4.2× the band, at 8.7 Hz. That is the report, and no amount of re-tuning REDLINE's own
+     * numbers would have stopped the next 520 rpm weapon from landing in the same hole.
+     *
+     * THE ERROR WAS THE KEY, NOT THE THRESHOLD. Rate is not what separates these guns —
+     * `WeaponDef.auto` is. A semi-auto's mount excursion is a per-shot EVENT, delivered at most
+     * five times a second by a finger; an automatic's is a continuous TEXTURE, and a texture
+     * has to fit in a band you can hold a sight picture through. So an automatic weapon gets,
+     * on top of the rate rules above, a hard ceiling on the excursion a sustained shot may
+     * produce — expressed as the resulting displacement, because that is the thing the eye
+     * integrates and the thing the playtester described:
+     *
+     *     amp = min( rateRuleAbove , band / (authoredPeak · kickScale · floorHz/effectiveHz) )
+     *
+     * `floorHz/effectiveHz` is the shrink the frequency rule has already applied (a velocity
+     * sized to peak at the floor peaks at `floor/actual` of it in a stiffened spring), so the
+     * two rules compose instead of fighting, and the result is that EVERY automatic weapon
+     * lands on exactly this excursion per sustained shot whatever its rate. Verified at 520,
+     * 600, 750 and 900 rpm.
+     *
+     * WHY THESE TWO NUMBERS. They are the ratatat's own measured sustained excursion — the one
+     * automatic the playtester has fired and accepted after the last pass. Because they are a
+     * *ceiling* combined with `min`, the ratatat's own rate rule is the stricter of the two by
+     * a hair (0.6028 against 0.6033) and still wins, so **the ratatat is bit-identical** to the
+     * build before this existed and REDLINE comes down to meet it.
+     *
+     * AND EVERYTHING THE PREVIOUS PASS GUARANTEED STILL HOLDS. Both factors are ≤ 1 and the
+     * frequency is ≥ the floor, so the authored `kickBack` / `kickPitchDeg` stay a true upper
+     * bound and the clearance pose table in `viewmodel.ts` is still a valid worst case. The cap
+     * is computed from `kickScale` alone and never from the ADS blend, so the hip:ADS ratio is
+     * still exactly `kickAdsMult`. And the sustained-fire weight (`WEAPON.recoilSustainTapGap`)
+     * is 0 at an infinite gap, so the FIRST SHOT of a burst keeps its full authored punch to
+     * the bit — 54.69 mm / 9.48° hip on REDLINE, before and after.
+     *
+     * SET EITHER TO 0 TO DISABLE THAT AXIS' CEILING and fall back to the rate rules alone.
+     */
+    kickAutoBackBand: 0.014,
+    kickAutoPitchBandDeg: 2.26,
+    /**
      * HARD CEILING on the accumulated kick, metres and degrees, applied to the summed spring
      * every frame. Pure safety net — nothing in the shipped arsenal comes near it, and the rule
      * above is what actually fixes the ratatat. This is here so that no future combination of
@@ -1752,6 +1922,29 @@ export const WEAPON = {
     restEpsilon: 2e-5,
   },
 };
+
+/**
+ * HOW MUCH OF A SUSTAINED-FIRE RULE APPLIES TO A SHOT THAT LANDED `gap` SECONDS AFTER THE LAST.
+ * 0 = a tap or the first shot of an engagement (every sustained rule multiplies by exactly 1
+ * and the weapon keeps its full authored punch); 1 = the trigger is held.
+ *
+ * It lives here, next to its two constants, because BOTH kick layers use it — the camera's
+ * climb cap in `weapons/recoil.ts` and the mount's band ceiling in `weapons/viewmodel.ts`. If
+ * the two layers ever disagreed about where a burst starts, one of them would be damping shots
+ * the other was not, and the gun would read as two guns. One definition, no seam.
+ *
+ * The curve is the classic smoothstep: C¹ at both ends, so feathering a trigger across the
+ * blend never produces a step in the kick.
+ */
+export function sustainedFireWeight(gap: number): number {
+  if (!Number.isFinite(gap)) return 0;
+  const tap = Math.max(WEAPON.recoilSustainTapGap, 1e-4);
+  const hold = Math.min(Math.max(WEAPON.recoilSustainHoldGap, 1e-4), tap);
+  if (gap >= tap) return 0;
+  if (gap <= hold) return 1;
+  const t = (tap - gap) / (tap - hold);
+  return t * t * (3 - 2 * t);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // ENEMY — STUB (M2 owner: enemies agent). Per-kind data lives in `src/game/enemies/defs.ts`.

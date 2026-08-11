@@ -18,6 +18,14 @@
  *  either (you still have to fight the climb *during* the burst). We track a signed DEBT of
  *  un-corrected climb, subtract the player's own mouse movement from it every frame, and only
  *  ever hand back what is left.
+ *
+ *  AND A PATTERN IS A PER-CARTRIDGE PROMISE, WHICH MAKES THE RATE THE OTHER HALF OF IT. An
+ *  automatic weapon spends that promise as many times a second as its cyclic rate says, and
+ *  nothing here used to be watching the product. Two rules fix that and both are gated on
+ *  `WeaponDef.auto`, so every semi-auto in the arsenal takes the identical code path it always
+ *  did: `autoClimbScale` caps the climb per SECOND (`WEAPON.recoilAutoClimbMax`) and
+ *  `recoverDelay` stops a fast weapon from re-arming the recovery delay forever
+ *  (`WEAPON.recoilRecoverAutoDuty`). Neither one touches the pattern's shape.
  * ═══════════════════════════════════════════════════════════════════════════════════════════
  *
  * THE CAMERA SEAM. `player/camera.ts` owns a dedicated recoil spring and exposes exactly one
@@ -32,8 +40,8 @@
 
 import type { RNG, WeaponDef } from '@/core/types';
 import type { Vector3 } from 'three';
-import { TAU, clamp, clamp01 } from '@/core/mathx';
-import { CAMERA, WEAPON } from '@/game/tuning';
+import { TAU, clamp, clamp01, lerp } from '@/core/mathx';
+import { CAMERA, WEAPON, sustainedFireWeight } from '@/game/tuning';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // The camera seam, structurally typed.
@@ -121,6 +129,55 @@ function maxReturnRate(perm: number): number {
   return (WEAPON.recoilRecoverTransientMax * perm * omega * gain) / auto;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// SUSTAINED AUTOMATIC FIRE — the rate awareness the camera never had.
+//
+// `WEAPON.recoilAutoClimbMax` carries the whole derivation and the measurements that forced it.
+// This is the arithmetic: a pattern's mean pitch entry is what the burst adds to the view per
+// SHOT, and dividing by the measured shot interval turns it into the thing the player actually
+// fights — degrees of climb per SECOND.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Mean pitch entry of a recoil pattern, cached per pattern.
+ *
+ * A def's pattern is a frozen literal that lives for the process, so this is at most one small
+ * allocation per weapon that has ever been fired and exactly zero per shot after that. Keyed on
+ * the pattern rather than the def so a Pack-a-Punch form (`upgradedDef` spreads the same array)
+ * shares its base weapon's entry instead of paying for a second one.
+ */
+const _patternMeanPitch = new WeakMap<object, number>();
+
+function meanPatternPitch(pattern: WeaponDef['recoilPattern']): number {
+  const key = pattern as unknown as object;
+  const hit = _patternMeanPitch.get(key);
+  if (hit !== undefined) return hit;
+  let sum = 0;
+  for (let i = 0; i < pattern.length; i++) sum += pattern[i][0];
+  const mean = pattern.length > 0 ? sum / pattern.length : 0;
+  _patternMeanPitch.set(key, mean);
+  return mean;
+}
+
+/**
+ * The scale a sustained shot's camera kick is multiplied by so the weapon's climb per second
+ * lands on `WEAPON.recoilAutoClimbMax`. Exactly 1 for a semi-auto, for the first shot of an
+ * engagement (infinite gap ⇒ zero weight), for a tapped automatic, and for any automatic already
+ * inside the ceiling — `x * 1` is exact in IEEE 754, so those cases are bit-identical.
+ *
+ * ONE scalar for the whole pattern entry, pitch and yaw together: the path stays the path.
+ */
+function autoClimbScale(def: WeaponDef, gap: number): number {
+  if (!def.auto) return 1;
+  const w = sustainedFireWeight(gap);
+  if (w <= 0) return 1;
+  const climb = meanPatternPitch(def.recoilPattern) * def.cameraKick;
+  if (climb <= 0) return 1;
+  // `climb / gap` is rad/s; the cap is the same. Guard the divide, then clamp to a shrink.
+  const capped = clamp01((WEAPON.recoilAutoClimbMax * Math.max(gap, 1e-4)) / climb);
+  return lerp(1, capped, w);
+}
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // RecoilController
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -146,13 +203,35 @@ export class RecoilController {
   debtPitch = 0;
   debtYaw = 0;
 
+  /**
+   * The interval between the last two shots, seconds — the weapon's MEASURED cadence. Read by
+   * the sustained-fire rules instead of `def.rpm` so a fire-rate boon, `WEAPON.fireRateScale`
+   * and a feathered trigger are all automatically accounted for, exactly as the viewmodel's
+   * kick clock already does it. 999 until a burst has two shots in it.
+   */
+  private lastGap = 999;
+
   private readonly kick: RecoilKick = { pitch: 0, yaw: 0, index: 0 };
 
   reset(): void {
     this.shotIndex = 0;
     this.sinceShot = 999;
+    this.lastGap = 999;
     this.debtPitch = 0;
     this.debtYaw = 0;
+  }
+
+  /**
+   * Seconds after a shot before the recovery is allowed to run. See
+   * `WEAPON.recoilRecoverAutoDuty`: a fixed 90 ms delay silently disabled the recovery
+   * ENTIRELY for any automatic faster than 667 rpm, so an automatic's delay is additionally
+   * capped at half of its own measured cycle. A semi-auto takes the first return and is
+   * bit-identical.
+   */
+  private recoverDelay(def: WeaponDef | null): number {
+    const base = WEAPON.recoilRecoverDelay;
+    if (!def?.auto || !Number.isFinite(this.lastGap)) return base;
+    return Math.min(base, this.lastGap * Math.max(WEAPON.recoilRecoverAutoDuty, 0));
   }
 
   /**
@@ -163,6 +242,11 @@ export class RecoilController {
    * applied here so a weapon's whole recoil personality lives in its def.
    */
   fire(def: WeaponDef, mult: number, rig: RecoilRig | null): RecoilKick {
+    // The gap since the previous shot, before the clock is reset. Same quantity the viewmodel
+    // measures off its own clock, and the input to every sustained-fire rule.
+    const gap = this.sinceShot;
+    this.lastGap = gap;
+
     const pattern = def.recoilPattern;
     if (pattern.length === 0) {
       this.kick.pitch = 0;
@@ -180,7 +264,10 @@ export class RecoilController {
     const entry = pattern[i];
     // The opener gets a little extra — the crack that says a fight just started.
     const opener = this.shotIndex === 0 ? WEAPON.recoilFirstShotMult : 1;
-    const scale = def.cameraKick * mult * opener;
+    // ...and a HELD trigger gets less, on an automatic, so the climb per second lands in a band
+    // the player can aim through however fast the weapon cycles. Exactly 1 on a semi-auto, on
+    // the opener and on a tapped shot. `WEAPON.recoilAutoClimbMax` carries the derivation.
+    const scale = def.cameraKick * mult * opener * autoClimbScale(def, gap);
 
     const pitch = entry[0] * scale;
     const yaw = entry[1] * scale;
@@ -235,7 +322,7 @@ export class RecoilController {
     else if (this.debtYaw < 0 && lookDx < 0) this.debtYaw = Math.min(0, this.debtYaw - lookDx);
 
     // ── 2. return what is left ────────────────────────────────────────────────────────────
-    if (this.sinceShot < WEAPON.recoilRecoverDelay) return;
+    if (this.sinceShot < this.recoverDelay(def)) return;
     if (Math.abs(this.debtPitch) < 1e-6 && Math.abs(this.debtYaw) < 1e-6) {
       this.debtPitch = 0;
       this.debtYaw = 0;
