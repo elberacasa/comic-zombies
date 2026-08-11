@@ -26,7 +26,7 @@
 
 import {
   BackSide, Color, DoubleSide, FrontSide, Mesh, ShaderMaterial, SphereGeometry, Vector2, Vector3,
-  type BufferGeometry, type Object3D, type Texture,
+  type BufferGeometry, type Matrix4, type Object3D, type Texture,
 } from 'three';
 import { PALETTE, color } from '@/art/palette';
 import { makeHullGeometry } from '@/art/shapes';
@@ -151,6 +151,68 @@ export function updateInkGlobals(dt: number, width: number, height: number): voi
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE VIEW-SPACE KEY — for camera-attached geometry only (the viewmodel).
+//
+// `INK_GLOBALS.uKeyDir` is a WORLD direction and the shader dots it against a
+// WORLD normal, which is exactly right for the arena: a wall's shading depends
+// on which way the wall faces, and turning your head does not repaint it.
+//
+// It is exactly WRONG for a first-person weapon. The viewmodel's root matrix is
+// composed from the camera every frame, so the gun's normals rotate with the
+// player's heading — the dot product sweeps, the 3-band cel terminator flips
+// from one band to the next, and the gun visibly changes colour for a reason the
+// player did not cause. The playtester reported it as "they change colour
+// depending on where i move very wierd", and they were reading a real fact.
+//
+// Every FPS solves this by lighting the first-person weapon from a rig that is
+// PARENTED TO THE CAMERA, so the gun reads identically at any heading. That is
+// what this is: one fixed CAMERA-SPACE direction, rotated into world space once
+// per frame, shared by every material that opted in via
+// `InkMaterialOptions.viewSpaceKey`. Because they all reference this single
+// uniform OBJECT, the cost is one vector transform per frame — not per material
+// — and there is no allocation in that path.
+//
+// Nothing here writes `INK_GLOBALS.uKeyDir`, so the environment, the enemies and
+// the sky are untouched by construction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The key direction in CAMERA space, pointing FROM the surface TOWARD the light.
+ * Camera space is -Z forward, +X right, +Y up — so this lamp is slightly ABOVE,
+ * slightly LEFT and slightly TOWARD the viewer, three-quarter front-left.
+ *
+ * Chosen for what it does to a gun held in the lower-right of frame, under
+ * `bandify()`'s 0.30 / 0.66 band edges:
+ *   · top planes   (N = +Y)  → 0.81  the top band, so every horizontal face reads bright
+ *   · near flank   (N = +Z)  → 0.40  the mid band
+ *   · left flank   (N = -X)  → 0.45  the mid band
+ *   · right flank  (N = +X)  → 0.00  the shadow band, where the screen-tone lives
+ * i.e. the tops catch the light, the sides fall into tone, and the terminator
+ * sits on a vertical edge of the receiver where the ink line already is.
+ */
+const VIEW_KEY_CAMERA_SPACE = new Vector3(-0.45, 0.80, 0.40).normalize();
+
+/**
+ * The world-space key handed to every `viewSpaceKey` material. ONE uniform object,
+ * referenced (not copied) by all of them, rewritten once per frame.
+ */
+export const VIEW_SPACE_INK = {
+  uKeyDir: { value: VIEW_KEY_CAMERA_SPACE.clone() },
+};
+
+/**
+ * Rotate the camera-space key into world space. Call once per frame, from whoever
+ * owns the camera-attached geometry — `Viewmodel.compose()` does it, because that
+ * is the one place per frame the camera's world matrix is already in hand.
+ *
+ * `transformDirection` applies the upper 3×3 and renormalises in place: no
+ * allocation, no matrix inverse, no per-material work.
+ */
+export function updateViewSpaceInk(cameraWorldMatrix: Matrix4): void {
+  VIEW_SPACE_INK.uKeyDir.value.copy(VIEW_KEY_CAMERA_SPACE).transformDirection(cameraWorldMatrix);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Options
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -229,6 +291,16 @@ export interface InkMaterialOptions {
   bloom?: boolean;
   /** Vertex-baked AO strength — reads the geometry's `color` attribute if present. */
   vertexAo?: number;
+  /**
+   * LIGHT THIS MATERIAL IN VIEW SPACE. Opt in ONLY for geometry that is rigidly attached to the
+   * camera — i.e. the viewmodel. The material then takes `VIEW_SPACE_INK.uKeyDir` (a fixed
+   * camera-space direction, rotated to world once per frame) instead of the shared world-space
+   * `INK_GLOBALS.uKeyDir`, so turning the player cannot change the object's shading.
+   *
+   * Anything that lives in the world must NOT set this: a wall lit from the camera is a wall
+   * whose lighting follows you around, which is the same bug in the mirror.
+   */
+  viewSpaceKey?: boolean;
   /** Renderable name, for debugging. */
   name?: string;
 }
@@ -575,6 +647,10 @@ export function makeInkMaterial(opts: InkMaterialOptions): InkMaterial {
       uMapHalftone: { value: opts.mapHalftone ?? 0.35 },
       uVertexAo: { value: opts.vertexAo ?? 0 },
       ...INK_GLOBALS,
+      // LAST, so it OVERRIDES the world-space key this material would otherwise share. The
+      // uniform object is shared by reference with every other view-space material, which is
+      // what makes the per-frame cost one vector transform total. See `VIEW_SPACE_INK`.
+      ...(opts.viewSpaceKey ? VIEW_SPACE_INK : {}),
     },
   });
   (mat as unknown as { isInkMaterial: boolean }).isInkMaterial = true;
