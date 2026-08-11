@@ -29,53 +29,12 @@ const {
 } = await import('./rig');
 const { MOVE, ENEMY } = await import('@/game/tuning');
 const { NAV } = await import('@/game/enemies/defs');
+// The staircase table moved to `tools/routes.ts` when `tools/map.ts` started asserting the
+// COLLISION profile of the same nine flights. One table, two harnesses, no drift.
+const { STAIRS, DECK_Y, BLOCK_C } = await import('./routes');
+type StairCase = (typeof STAIRS)[number];
 
 type V3 = InstanceType<typeof Vector3>;
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-// Arena constants, mirrored from `world/arena.ts`.
-// ─────────────────────────────────────────────────────────────────────────────────────────────
-
-const STOREY = 3.4;
-const DECK_Y = STOREY * 2;          // 6.8
-const DECK2_Y = STOREY * 4;         // 13.6
-const BLOCK_C = 42;
-const FIRE_X = -26.4;               // west.cx + west.w/2 + 2.6
-const DOCK_Z = 26.4;                // south.cz - south.d/2 - 0.6 - 2.0
-
-interface StairCase {
-  id: string;
-  /** Foot of the flight, in world metres. */
-  bottom: [number, number, number];
-  /** Head of the flight. */
-  top: [number, number, number];
-  /** How far behind the foot the walk starts. */
-  back: number;
-  note: string;
-}
-
-const STAIRS: readonly StairCase[] = [
-  { id: 'plaza_stair', bottom: [17.4, 0, 22.4], top: [27.4, DECK_Y, 22.4], back: 2.2,
-    note: 'LOOP D — plaza up to the east gantry' },
-  { id: 'east_stair', bottom: [58.5, 0, -28.0], top: [58.5, DECK_Y, -44.0], back: 2.2,
-    note: 'LOOP D — ring boulevard up to the NE market roof' },
-  { id: 'fire_escape_1', bottom: [FIRE_X, 0, -16.0], top: [FIRE_X, DECK_Y, -8.0], back: 2.2,
-    note: 'LOOP F — west fire escape, flight 1' },
-  { id: 'fire_escape_2', bottom: [FIRE_X, DECK_Y, -5.2], top: [FIRE_X, DECK2_Y, 2.8], back: 2.0,
-    note: 'LOOP F — west fire escape, flight 2 (off a half-landing)' },
-  { id: 'west_high_s', bottom: [FIRE_X, DECK_Y, 28.0], top: [FIRE_X, DECK2_Y, 19.4], back: 2.0,
-    note: 'LOOP F — south flight back up to the 13.6 m catwalk' },
-  { id: 'west_low_s', bottom: [FIRE_X, 0, 39.4], top: [FIRE_X, DECK_Y, 30.8], back: 2.2,
-    note: 'LOOP F — south-west street mouth up to the half-landing' },
-  { id: 'dock_steps_w', bottom: [-22.5, 0, DOCK_Z], top: [-19.5, 1.2, DOCK_Z], back: 2.2,
-    note: 'LOOP G — west end of the south loading dock' },
-  { id: 'dock_steps_e', bottom: [10.5, 0, DOCK_Z], top: [7.5, 1.2, DOCK_Z], back: 2.2,
-    note: 'LOOP G — east end of the south loading dock' },
-  // Not a ramp: the dais is three DISCRETE 0.19 m collide-boxes on top of a 0.45 m plinth, so
-  // it is the only vertical route in the arena that can only be climbed by the step-up path.
-  { id: 'plaza_dais', bottom: [0, 0, 9.4], top: [0, 0.9, 4.0], back: 2.2,
-    note: 'plaza monument — DISCRETE steps, the pure step-up case' },
-];
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -377,7 +336,17 @@ function soak(count: number, seconds: number, camp: boolean): void {
     for (const e of bodies) {
       if (!e.alive) continue;
       feet.set(e.position.x, e.position.y, e.position.z);
-      const d = overlapAt(world, feet, ENEMY_SHAPE.height, ENEMY_SHAPE.radius);
+      // EACH BODY'S OWN CAPSULE, not the nominal one. `service.ts` scales every instance —
+      // `e.radius = BODY.radius * (e.height / BODY.height)` — and measured across 25 live
+      // shamblers that spans radius 0.325–0.428 and height 1.615–2.130. `moveBody` moves each
+      // body with ITS OWN capsule, so probing the nominal 0.37 × 1.84 measured a phantom up to
+      // 4 cm fatter and 20 cm taller than the thing it claimed to describe, reaching into
+      // geometry the real body clears.
+      //
+      // That was ~80% of this metric. At the instant of the old worst reading — 1.42 m at
+      // (-15.0, 0, -18.0) — that body is r=0.329 h=1.635 and its own capsule reports **0.00 m**.
+      // The gate could not have reached zero, and worse, it was insensitive to the real fix.
+      const d = overlapAt(world, feet, e.height, e.radius);
       if (d > 0.12) { insideIds.add(e.id); insideSamples++; if (d > maxDepth) maxDepth = d; }
 
       const prev = last.get(e.id) as V3;

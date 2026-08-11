@@ -97,6 +97,15 @@ const _poseArgs: PoseArgs = {
 const RESCUE_HEADINGS = 8;
 
 /**
+ * Hard cap on the depenetration a single climb step will accept, metres. A mantle is a controlled
+ * motion between two proven points, so anything the solver asks for beyond half a body-width is an
+ * escape rather than a contact and taking it would read as a teleport. Same argument as
+ * `motion/mover.ts::MotionParams.maxCorrection`, one order of magnitude tighter because a climb
+ * has nowhere legitimate to be flung to.
+ */
+const CLIMB_MAX_CORRECTION = 0.35;
+
+/**
  * Hitbox anchor slots, in the order `Enemy.hWorld` stores them.
  *
  * ═══ A LIMB IS TWO CAPSULES NOW, NOT ONE ═══
@@ -1112,6 +1121,39 @@ export class EnemySystem implements System, EnemyService {
     e.position.x = lerp(e.climbFrom.x, e.climbTo.x, over);
     e.position.z = lerp(e.climbFrom.z, e.climbTo.z, over);
     e.position.y = lerp(e.climbFrom.y, e.climbTo.y, rise);
+
+    /**
+     * ═══ WALLS ARE WALLS, EVEN MID-MANTLE (MAP INTEGRITY) ═══
+     *
+     * The arc above is a pure lerp through world space, and `beginClimb` proves only its
+     * DESTINATION. The path between is not proved by anything, and it cannot be: `rise` finishes
+     * at k ≈ 0.86 while `over` starts at k = 0.45, so for the middle third of every mantle the
+     * body is hauling itself sideways into the ledge it has not finished climbing.
+     *
+     * MEASURED, 25 bodies × 120 s: 15.0% of all climb time (roof camp) and 5.4% (spawn) was spent
+     * with the body's own capsule inside geometry, which was 71% and 73% of ALL embedded time in
+     * the respective soaks — and the two longest embedded episodes in the whole run, 0.48 s and
+     * 0.10 s, were 100% climb. It is the single largest remaining source once the solver stops
+     * flinging bodies.
+     *
+     * So the climb now moves AGAINST the world instead of through it. The arc is still the arc —
+     * where nothing is in the way this correction is exactly zero and the motion is bit-for-bit
+     * what it was — but where the lerp would bury the body in the lip, the solver holds it out on
+     * the face until the rise clears the top, which is what a mantle looks like anyway. It cannot
+     * drift, because the next step recomputes the position from `climbFrom`/`climbTo` absolutely
+     * rather than incrementally, and `k >= 1` still plants the body exactly on `climbTo`.
+     *
+     * The correction is clamped for the same reason the mover clamps its own: a correction longer
+     * than a body is an escape, not a contact, and a mantle must never read as a teleport.
+     */
+    _capA.set(e.position.x, e.position.y + e.radius, e.position.z);
+    _capB.set(e.position.x, e.position.y + Math.max(e.height - e.radius, e.radius + 0.01), e.position.z);
+    const contact = ctx.world.collideCapsule(_capA, _capB, e.radius);
+    if (contact.depth > 1e-4) {
+      const scale = contact.depth > CLIMB_MAX_CORRECTION ? CLIMB_MAX_CORRECTION / contact.depth : 1;
+      e.position.addScaledVector(contact.correction, scale);
+    }
+
     e.groundY = e.position.y;
     e.velocity.set(0, 0, 0);
 

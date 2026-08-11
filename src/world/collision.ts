@@ -59,6 +59,23 @@ const SKIN = 0.0015;
  * that it reads as being shoved out rather than as a teleport.
  */
 const DEEP_ESCAPE_CAP = 4;
+/**
+ * The escape marches out in steps of this many radii and takes the FIRST landing that is proven
+ * clear (see `collideCapsule`). A quarter-radius is ~9 cm on a shambler: fine enough that the
+ * body leaves by the smallest push that actually works, coarse enough that the whole march is at
+ * most 32 probes — and the march only ever runs on a capsule that is genuinely enclosed, which
+ * over a 120 s soak of 25 bodies is a few dozen steps out of 360 000.
+ */
+const DEEP_ESCAPE_STRIDE = 0.25;
+/**
+ * How far the march LOOKS, in radii, which is deliberately further than it will ever PUSH. A
+ * capsule inside a 2 m thick block still has to be told which way is out; capping the search at
+ * the same 4 radii it commits would make that case indistinguishable from "this normal is not an
+ * exit at all", and the second case is the one that used to fling bodies across the arena.
+ */
+const DEEP_ESCAPE_REACH = 8;
+/** Ordinary contact a proven escape landing may still have. Forgives resting on a floor. */
+const DEEP_LANDING_TOL = 0.02;
 /** How far the floor-rescue ray looks below the capsule. */
 const RESCUE_DEPTH = 3.0;
 /** AI steering probe length. Local avoidance, not pathfinding — arena scale does not move it. */
@@ -154,6 +171,10 @@ let _deepDepth = 0;
 let _deepCount = 0;
 const _deepN = new Vector3();
 const _deepSum = new Vector3();
+/** The chosen escape, held across the landing probe (which overwrites `_deepN`/`_deepDepth`). */
+const _escapeN = new Vector3();
+const _escapeA = new Vector3();
+const _escapeB = new Vector3();
 
 /**
  * Capsule vs triangle. Returns penetration depth (0 = no contact) and writes the
@@ -197,7 +218,31 @@ function capsuleTriangle(start: Vector3, end: Vector3, radius: number, tri: Tria
   _ip.copy(start).lerp(end, delta);
   if (tri.containsPoint(_ip)) {
     out.copy(_plane.normal);
-    return Math.abs(Math.min(d1, d2));
+    /**
+     * ═══ A TRIANGLE HAS NO THICKNESS, SO IT CANNOT PUSH FURTHER THAN A RADIUS ═══
+     *
+     * This used to be a bare `Math.abs(Math.min(d1, d2))` (the three.js Octree formula), which is
+     * only bounded while BOTH sphere centres are near the plane. The refusal above catches the
+     * case where both are more than a radius behind it — but not the STRADDLE, where one centre
+     * is metres behind the plane and the other is in front. There `min(d1, d2)` is the distance
+     * to the far centre, and the solver dutifully shoved the entire capsule that far along the
+     * face normal. That sphere is not touching the triangle at all; it is past it.
+     *
+     * MEASURED at the foot of `east_stair` (56, 0, -30), which is where the soak's worst readings
+     * and its longest stalls both live: a shambler standing on the PAVEMENT straddles the
+     * underside plane of the rotated stair slab — bottom sphere below it, head above it — and the
+     * solver returned depth 1.94 m along (0, -0.41, -0.91), i.e. "please move down and backwards
+     * by two metres". Bodies were landing at y = -0.28, under the deck. 24 samples at that one
+     * site in a 120 s soak, and it is the same shape at every flight in the arena.
+     *
+     * A radius is the true ceiling: it is the deepest a sphere can be inside an infinitely thin
+     * surface and still be in contact with it. This restores the contract this file's own header
+     * has always claimed ("depenetration never pushes further than `radius` past a face"). Genuine
+     * deep floor penetration is not this function's job and never was — the downward rescue ray
+     * below owns it, and the deep escape owns being properly enclosed.
+     */
+    const depth = Math.abs(Math.min(d1, d2));
+    return depth > radius ? radius : depth;
   }
 
   const r2 = radius * radius;
@@ -474,16 +519,52 @@ export class WorldCollision implements WorldService {
       // we are behind it and within its extent: we are INSIDE something. Leave by the nearest
       // face. Capped per pass so a body that is somehow inside a whole building walks out over
       // a few passes rather than teleporting across the map in one.
+      //
+      // ═══ WHERE IT LANDS IS NOT OPTIONAL (MAP INTEGRITY) ═══
+      // `_deepDepth` is the distance to the far side of ONE plane. It says nothing about what
+      // occupies the space along the way, so the escape used to be a blind shove of up to
+      // `radius * 4` = 1.48 m per pass — four passes of that is 5.9 m of unvalidated travel, and
+      // the mover then applies the sum (clamped at `MotionParams.maxCorrection`) in one step.
+      //
+      // MEASURED, 25 bodies × 120 s with the player camped: 27 of 31 clean→embedded transitions
+      // were this. The worst was id=16 at t=90.90 s — 0.000 → 0.343 m deep, displaced 3.195 m in
+      // a single step while travelling 0.0135 m, landing at y = -0.28 (below the deck). And the
+      // field this produces is not continuous: sampling a ±0.20 m box at 2 cm around a spot a
+      // body had been standing CLEAN in one step earlier, 180 of 441 cells reported over 1 m,
+      // worst 2.11 m. Bodies were not failing to leave walls — they were being thrown into them.
+      //
+      // So the escape now MARCHES and PROVES. It steps out along the chosen normal and commits
+      // at the first landing where the capsule genuinely fits, which is almost always a few
+      // centimetres rather than a metre; a capsule inside something genuinely thick still gets
+      // its full `DEEP_ESCAPE_CAP` shove, but only once the march has seen air on the far side.
       if (moved === 0 && _deepDepth > 0 && enclosed()) {
-        const push = Math.min(_deepDepth + SKIN, radius * DEEP_ESCAPE_CAP);
-        _capStart.addScaledVector(_deepN, push);
-        _capEnd.addScaledVector(_deepN, push);
-        moved = push;
-        if (_deepN.y >= this.groundNormalY) {
-          grounded = true;
-          if (_deepN.y > bestGroundY) { bestGroundY = _deepN.y; _groundN.copy(_deepN); }
+        // `_deepN` / `_deepDepth` are clobbered by every landing probe — take our copy first.
+        _escapeN.copy(_deepN);
+        const reach = Math.min(_deepDepth + SKIN, radius * DEEP_ESCAPE_REACH);
+        const stride = radius * DEEP_ESCAPE_STRIDE;
+        let clear = 0;
+        for (let d = stride; d <= reach; d += stride) {
+          _escapeA.copy(_capStart).addScaledVector(_escapeN, d);
+          _escapeB.copy(_capEnd).addScaledVector(_escapeN, d);
+          if (this.landingClear(_escapeA, _escapeB, radius)) { clear = d; break; }
         }
-        if (push > bestDepth) { bestDepth = push; _bestN.copy(_deepN); }
+        // NO PROVEN LANDING, NO ESCAPE. `enclosed()` is a heuristic over face normals and it does
+        // false-positive — measured at the foot of `plaza_stair` (17.5, 0.24, 21.7), where 150 of
+        // 441 cells in a ±0.20 m box around a spot bodies stand in CLEANLY reported over 1 m of
+        // solver depth. Every one of those was this escape firing its full cap into a direction
+        // that leads nowhere. If eight radii of march cannot find air, this normal is not an exit
+        // and the honest answer is the one the refusal already gives: report no contact.
+        if (clear > 0) {
+          const push = Math.min(clear, radius * DEEP_ESCAPE_CAP);
+          _capStart.addScaledVector(_escapeN, push);
+          _capEnd.addScaledVector(_escapeN, push);
+          moved = push;
+          if (_escapeN.y >= this.groundNormalY) {
+            grounded = true;
+            if (_escapeN.y > bestGroundY) { bestGroundY = _escapeN.y; _groundN.copy(_escapeN); }
+          }
+          if (push > bestDepth) { bestDepth = push; _bestN.copy(_escapeN); }
+        }
       }
 
       if (moved < SOLVER_EPS) break;
@@ -639,6 +720,38 @@ export class WorldCollision implements WorldService {
     }
     out.copy(near);
     return false;
+  }
+
+  /**
+   * Would a deep escape that ended here have actually got us OUT?
+   *
+   * Stricter than `capsuleFree` in the one way that matters to the escape: `capsuleTriangle`
+   * returns 0 for a face we are entirely BEHIND, so a capsule buried in the middle of another
+   * solid passes `capsuleFree` with flying colours. That is precisely the landing the escape must
+   * never take. So this asks both questions — no ordinary contact worth the name, AND not
+   * enclosed by the same test that authorised the escape in the first place.
+   *
+   * Runs only while a capsule is genuinely enclosed, so it costs nothing in the steady state.
+   */
+  private landingClear(bottom: Vector3, top: Vector3, radius: number): boolean {
+    this.capsule.start.copy(bottom);
+    this.capsule.end.copy(top);
+    this.capsule.radius = radius;
+    this.stamp++;
+    this.tris.length = 0;
+    this.gatherCapsule(this.octree, this.capsule);
+    _deepDepth = 0;
+    _deepCount = 0;
+    _deepSum.set(0, 0, 0);
+    let worst = 0;
+    for (let i = 0; i < this.tris.length; i++) {
+      const d = capsuleTriangle(bottom, top, radius, this.tris[i] as SurfTriangle, _n);
+      if (d > worst) {
+        if (d > DEEP_LANDING_TOL) return false;
+        worst = d;
+      }
+    }
+    return !enclosed();
   }
 
   /**

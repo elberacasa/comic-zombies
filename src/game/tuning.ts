@@ -1586,7 +1586,32 @@ export const ENEMY = {
   maxSubstepDistance: 0.2,
   /** Substep cap per step. A chase body moves 1.4 cm per step; 3 covers any knockback shove. */
   maxSubsteps: 3,
-  /** Depenetration iterations per substep. 3 clears a two-plane corner; the player pays for 4. */
+  /**
+   * Depenetration iterations per substep.
+   *
+   * WAS 3, AND 3 WAS THE BUG. `collideCapsule`'s depth field is not continuous: measured at the
+   * east stair foot, a 4 cm scan finds a clean band, then ~28 cm of honest contact (0.1→0.3 m),
+   * then a CLIFF straight past 1 m — 270 of 961 cells over a metre, worst 1.68. Cross that cliff
+   * and `depenetrate` applies up to `maxCorrection` (1.5 m) per iteration, and at 3 iterations it
+   * runs out of passes MID-FLIGHT and leaves the body wherever the last correction threw it —
+   * traced: one body moved **3.195 m in a single step** while travelling 0.0135 m. That landing
+   * is unvalidated, and sometimes it is inside something else. This is how bodies got into walls.
+   *
+   * 6 WAS TRIED AND REVERTED, and the measurement is why. It does converge — but with the
+   * honest per-body scoreboard in place it buys almost nothing (roof camp 2 bodies → 1, worst
+   * overlap 0.56 → 0.24 m; spawn is already 0.00 either way) and it costs TWO THIRDS of the
+   * conga queue gain in `tools/combat.mjs` (chain lengthening 19% → 6%). More depenetration
+   * passes separate bodies from each OTHER as well as from walls, which is precisely the force
+   * that holds a train together. Trading the core trainability skill — the one the playtester
+   * singled out with "i like how zombies behave" — for 30 cm on one body in one scenario is a
+   * bad trade. Left at 3.
+   *
+   * NOTE the thing this replaces. `mover.ts` justifies the horde's `maxCorrection` of 1.5 (vs the
+   * player's 0.5) as letting bodies "escape a wall they are genuinely inside". Measured, that
+   * wall does not exist: the longest embedded episode across 240 s of soak is 0.48 s and bodies
+   * are ejected within a frame or two. The old cap was not helping them escape — a 1.5 m
+   * correction is precisely what was launching them somewhere unvalidated in the first place.
+   */
   collisionIterations: 3,
 
   /**

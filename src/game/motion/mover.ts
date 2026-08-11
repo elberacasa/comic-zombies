@@ -63,6 +63,24 @@ const _guardFrom = new Vector3();
 const _down = new Vector3(0, -1, 0);
 const _corr = new Vector3();
 
+/**
+ * A ground snap shorter than this is taken on trust; anything longer is re-collided afterwards.
+ * See `snapToGround` and `moveBody`'s epilogue. 10 cm is well under the shallowest embedding this
+ * has ever caught (0.45 m) and far above the millimetre snaps a ramp or a stair nose produces
+ * thousands of times a minute.
+ */
+const SNAP_PROVE_DROP = 0.1;
+
+/**
+ * Overlap that counts as "the snap landed inside something". Below this is the grazing contact
+ * every body has with the floor it is standing on and with anything it is leaning against, and
+ * re-solving it would move bodies that are perfectly well placed.
+ */
+const SNAP_EMBED_TOL = 0.02;
+
+/** How far the last `snapToGround` teleported the body down. 0 when it declined to snap. */
+let _snapDrop = 0;
+
 /** Residual overlap left by the last `depenetrate()`. Module-level so nothing allocates. */
 let _residual = 0;
 /**
@@ -253,6 +271,15 @@ function depenetrate(world: WorldService, body: MotionBody, p: MotionParams): bo
     // ── TELEPORT CLAMP ──────────────────────────────────────────────────────────────────────
     // A correction longer than `maxCorrection` is not a contact, it is an escape (see the
     // `enclosed()` guard in `world/collision.ts`). Take the direction, refuse the magnitude.
+    //
+    // TRIED AND REJECTED, so nobody spends the tokens twice: refusing the move OUTRIGHT instead.
+    // The argument for it is good — an escape is now a PROVEN journey (`collideCapsule` marches
+    // out and commits only to a landing where the capsule demonstrably fits), so landing short of
+    // its endpoint puts the body somewhere nothing checked. The measurement disagrees. Roof camp
+    // was byte-identical (the clamp fires 0 times there), and the spawn soak went from 0 embedded
+    // body-steps and 0 entries to 10 and 1: a body reached a spot the solver valued at 1.53 m of
+    // escape, was refused its 1.50, and simply sat in it for 0.08 s. Getting 98% of the way out
+    // beats standing in the wall.
     _corr.copy(c.correction);
     const clen = _corr.length();
     if (clen > COUNTERS.worstCorrection) COUNTERS.worstCorrection = clen;
@@ -383,14 +410,41 @@ function snapToGround(world: WorldService, body: MotionBody, p: MotionParams): v
   _origin.set(body.position.x, body.position.y + 0.1, body.position.z);
   const hit = world.raycast(_origin, _down, p.groundSnapDistance + 0.1);
   if (!hit || !hit.hit || hit.normal.y < p.minGroundNormalY) return;
-  const drop = body.position.y - hit.point.y;
+  // Copied off the hit immediately: `WorldService` hands back records from a ring of 8 and the
+  // push-out below can spend several of them before we are done with this one.
+  const landY = hit.point.y;
+  const nx = hit.normal.x;
+  const ny = hit.normal.y;
+  const nz = hit.normal.z;
+  const drop = body.position.y - landY;
   if (drop < -0.01 || drop > p.groundSnapDistance) return;
 
+  // ── THE SNAP IS THE ONE TELEPORT IN THIS FILE THAT NEVER MET THE WORLD ──────────────────
+  // `raycast` reports the first walkable SURFACE under the feet and says nothing about the volume
+  // the body would then occupy, so a snap under a lip, an awning or the underside of a stair run
+  // seats the capsule inside a solid — and nothing downstream re-collides it, because the sweep
+  // and its depenetration are already finished by the time we get here.
+  //
+  // MEASURED, 25 bodies x 120 s at spawn: 17 of 19 clean -> embedded transitions were classified
+  // `walk` (no climb, no solver escape) and 9 of them pushed out along +Y — a body that had just
+  // been placed below something. The deepest was id=11 at (6.4, 0.00, 7.8): depth 0.000 -> 0.452 m
+  // in a single step, dy exactly -0.450, with the step's worst solver correction only 0.02 m.
+  // That is a 0.45 m snap, not a collision.
+  //
+  // The fix is to RE-COLLIDE, not to refuse. `attemptStep` and `tryStand` prove their landing and
+  // decline it, which is right for them because declining costs the body nothing. Declining a
+  // snap costs it everything: it stays airborne, so `ledgeGuard` sees a body that has just left
+  // the floor and reverts its horizontal step. MEASURED with the snap refused instead of
+  // re-collided — the conga harness's trained pack widened 3.63 -> 4.32 m at R1 and its unbroken
+  // queue fell 5.1 -> 4.2 bodies, at every tolerance from 1 mm to 15 cm. The horde's shape is the
+  // mode (GAME_BIBLE §4); trading it for a metric is not a trade. `moveBody`'s epilogue does the
+  // push-out, and only for snaps long enough to bury something.
   body.stepSmear -= drop;
-  body.position.y = hit.point.y;
+  body.position.y = landY;
   body.velocity.y = 0;
   body.grounded = true;
-  body.groundNormal.copy(hit.normal);
+  body.groundNormal.set(nx, ny, nz);
+  _snapDrop = drop;
 }
 
 /**
@@ -533,7 +587,15 @@ export function moveBody(
     }
   }
 
+  _snapDrop = 0;
   snapToGround(world, body, p);
+  // See `snapToGround`: a long snap is a teleport onto a SURFACE, and the volume above that
+  // surface is nobody's business until now. One depenetration pass costs a single capsule query,
+  // only on snaps of more than `SNAP_PROVE_DROP`, and it leaves a clean landing untouched.
+  if (_snapDrop > SNAP_PROVE_DROP
+    && capsuleOverlapDepth(world, body.position, body.height, body.radius) > SNAP_EMBED_TOL) {
+    depenetrate(world, body, p);
+  }
   if (p.ledgeGuard) ledgeGuard(world, body, p);
 
   // A body that was grounded, is grounded, and is being pulled down by gravity has no business
