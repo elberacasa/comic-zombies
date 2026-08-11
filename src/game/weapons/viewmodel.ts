@@ -224,6 +224,41 @@ function kickHzFor(floorHz: number, zeta: number, gap: number): number {
 }
 
 /**
+ * The reference gap: the shot interval at which the AUTHORED spring exactly settles, i.e. the
+ * exact gap where `kickHzFor` stops returning the floor. Both rate rules pivot on this one
+ * number, so they engage together and a weapon slower than it is untouched by either.
+ * 0.1106 s (542 rpm) for the position spring, 0.1370 s (438 rpm) for the rotation spring.
+ */
+function kickSettleGap(floorHz: number, zeta: number): number {
+  const z = Math.max(zeta, 0.05);
+  const r = clamp(V.kickSettleResidual, 1e-3, 0.99);
+  return -Math.log(r) / (TAU * z * floorHz);
+}
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE RATE-AWARE KICK AMPLITUDE. `WEAPON.view.kickAmpRateExpPos` carries the derivation, the
+ * measurement that forced it and why the two exponents differ; this is the one line of maths.
+ *
+ * Above the reference rate the per-shot impulse is scaled by `(gap / settleGap) ^ exponent`, so
+ * at exponent 1 the mount absorbs a constant MOMENTUM PER SECOND and at 0.5 a constant kinetic
+ * ENERGY PER SECOND, instead of a constant momentum per CARTRIDGE — which is what let a 900 rpm
+ * gun shake its mount 2.2× harder per second than the 400 rpm reference weapon.
+ *
+ * Returns EXACTLY 1 at and below the reference rate, so every gun in the arsenal except the
+ * ratatat multiplies by a hard 1.0 and is bit-identical to the build before this existed. The
+ * first shot of any burst has an effectively infinite gap and so is likewise exactly 1: the
+ * transient is never flattened, only the sustained case is.
+ */
+function kickAmpFor(floorHz: number, zeta: number, gap: number, exponent: number): number {
+  if (!Number.isFinite(gap) || exponent <= 0) return 1;
+  const ref = kickSettleGap(floorHz, zeta);
+  const g = Math.max(gap, 1e-4);
+  if (g >= ref) return 1;
+  return Math.pow(g / ref, exponent);
+}
+
+/**
  * The safety net (`kickPosMax` / `kickRotMaxDeg`). Scales value AND velocity by the same factor
  * so the clamp contracts the spring's whole state rather than pinning a position against a
  * velocity that is still winding outward — a spring held at a wall would release as a snap.
@@ -2388,18 +2423,32 @@ export class Viewmodel {
    * arsenal except the ratatat — and `kickHzFor` returns the authored floor and this method is
    * the method it always was, to the bit.
    *
-   * THE IMPULSE IS NOT SCALED, AND THAT IS THE WHOLE TRICK, so do not "fix" the `V.kickPosHz`
-   * below to match the frequency the spring is actually running at. `impulseFor` sizes a
-   * velocity to make a spring AT THE FLOOR peak at the authored displacement; drop that same
-   * velocity into a spring stiffened by 1/c and it peaks at `c ×` the authored displacement
-   * instead, and gets home `c ×` sooner. One number, both halves of the feel:
+   * DO NOT "fix" the `V.kickPosHz` in the `impulseFor` calls below to match the frequency the
+   * spring is actually running at. `impulseFor` sizes a velocity to make a spring AT THE FLOOR
+   * peak at the authored displacement; drop that same velocity into a spring stiffened by 1/c
+   * and it peaks at `c ×` the authored displacement instead, and gets home `c ×` sooner.
    *
    *     ratatat, 66.7 ms shots   rot 5.8 → 11.9 Hz, pitch peak 6.65° → 3.24° per shot
    *                              pos 6.5 → 10.8 Hz, push-back 38 mm → 23 mm per shot
    *
-   * It is also the physically honest version: a cartridge delivers the same momentum however
-   * fast you pull the trigger, and it is the MOUNT that has to be stiffer to eat fifteen of
-   * them a second. And because the excursion only ever shrinks, the authored `kickBack` /
+   * ─── AND THE GAP SIZES THE IMPULSE TOO (`kickAmpFor`) ────────────────────────────────────
+   * The frequency alone was not enough, and the measurement is in `WEAPON.view`
+   * `.kickAmpRateExpPos`: it shrank the per-shot PEAK by 1/c but left the BAND the model sweeps
+   * under sustained fire at 23.93 mm, one hair WIDER than the 22.65 mm it swept with no rate
+   * rule at all — the old spring oscillated in a narrow band parked 23 mm off rest, the new one
+   * slams the whole 24 mm from rest and back 15 times a second. Same "back and forth".
+   *
+   * So the impulse is scaled as well, as `(gap/settleGap)^exponent`: constant MOMENTUM per
+   * second on position (the axis the playtester named), constant ENERGY per second on rotation
+   * (which stays livelier, because a small pitch is what sells the shot). Momentum per CARTRIDGE
+   * is what the physics conserves, but the eye integrates per SECOND, and at 15 rounds/s the old
+   * behaviour was handing the mount 2.2× the momentum per second of the 400 rpm reference gun.
+   *
+   * Both rules return exactly 1 / the floor at and below the reference rate, so this method is
+   * the method it always was, to the bit, on every gun but the ratatat — and on the ratatat's
+   * FIRST shot, whose gap is effectively infinite. The transient is never flattened.
+   *
+   * And because both factors only ever shrink the result, the authored `kickBack` /
    * `kickPitchDeg` stay a true upper bound — the clearance pose table above still holds.
    */
   fire(kickScale: number, patternYaw: number, adsAmount: number): void {
@@ -2416,15 +2465,20 @@ export class Viewmodel {
     this.kickPos.frequency = kickHzFor(V.kickPosHz, V.kickPosDamping, gap);
     this.kickRot.frequency = kickHzFor(V.kickRotHz, V.kickRotDamping, gap);
 
+    // Both are exactly 1 at and below the reference rate, and `x * 1` is exact in IEEE 754, so
+    // every gun that does not outrun its own spring keeps the impulse it always had, to the bit.
+    const sp = s * kickAmpFor(V.kickPosHz, V.kickPosDamping, gap, V.kickAmpRateExpPos);
+    const sr = s * kickAmpFor(V.kickRotHz, V.kickRotDamping, gap, V.kickAmpRateExpRot);
+
     this.kickPos.impulse(
       0,
-      impulseFor(V.kickPosHz, V.kickPosDamping, V.kickUp * s),
-      impulseFor(V.kickPosHz, V.kickPosDamping, V.kickBack * s),
+      impulseFor(V.kickPosHz, V.kickPosDamping, V.kickUp * sp),
+      impulseFor(V.kickPosHz, V.kickPosDamping, V.kickBack * sp),
     );
     this.kickRot.impulse(
-      impulseFor(V.kickRotHz, V.kickRotDamping, V.kickPitchDeg * DEG2RAD * s),
-      impulseFor(V.kickRotHz, V.kickRotDamping, V.kickYawDeg * DEG2RAD * s * yawSign),
-      impulseFor(V.kickRotHz, V.kickRotDamping, -V.kickRollDeg * DEG2RAD * s),
+      impulseFor(V.kickRotHz, V.kickRotDamping, V.kickPitchDeg * DEG2RAD * sr),
+      impulseFor(V.kickRotHz, V.kickRotDamping, V.kickYawDeg * DEG2RAD * sr * yawSign),
+      impulseFor(V.kickRotHz, V.kickRotDamping, -V.kickRollDeg * DEG2RAD * sr),
     );
     // The slide is the one mechanical animation on this gun and it only ever runs on a shot.
     this.slideSpring.impulse(impulseFor(14, 0.5, 0.020 * V.depthCompress));

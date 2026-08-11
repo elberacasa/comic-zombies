@@ -1557,6 +1557,74 @@ export const WEAPON = {
      */
     kickHzMax: 30,
     /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE RATE-AWARE KICK *AMPLITUDE*, AND THE HALF OF THE BUG THE FREQUENCY RULE DID NOT FIX.
+     *
+     * BUILD 0xx+1, the playtester, AFTER the frequency rule above shipped: *"the smg still moves
+     * way too much in the screen **back and forth** when shooting automatic, we need cod like
+     * mechanics so it looks smoother and doesnt alter the way u shoot"*. And, deciding the
+     * priority: *"most people wont ads in this game i think and will shoot with normal aim"* —
+     * `kickAdsMult` already damps ADS by 0.55, so HIP is the loud case and it is the one nobody
+     * had tuned.
+     *
+     * WHY THE FREQUENCY RULE WAS NOT ENOUGH, MEASURED. The ratatat, 900 rpm, hip, steady state
+     * of a 6 s hold, `kickPos.z`:
+     *
+     *                              push-back MEAN      push-back PEAK-TO-PEAK
+     *     no rate rule at all          23.01 mm              22.65 mm
+     *     frequency rule only           7.77 mm              23.93 mm   ← unchanged. worse.
+     *
+     * The frequency rule shrank the per-shot PEAK as 1/Hz exactly as designed, and it deleted
+     * the permanent offset — the gun does return to rest now. But the *width of the band the
+     * model sweeps* did not move a millimetre, because the two effects cancel: the old spring
+     * oscillated inside a narrow band parked 23 mm off rest, the new one slams the full 24 mm
+     * from rest and back, fifteen times a second. The eye does not see the mean. It sees the
+     * band, and the band is the "back and forth". Fixing it needs the AMPLITUDE, not the rate.
+     *
+     * THE RULE. Above the same reference rate the frequency rule uses (the gap at which the
+     * authored spring exactly settles, `kickSettleResidual`), the per-shot impulse is scaled by
+     *
+     *     amp = (gap / settleGap) ^ exponent          , clamped to 1 at and below the reference
+     *
+     * so at `exponent` 1 the impulse falls as 1/rate and the mount absorbs a CONSTANT MOMENTUM
+     * PER SECOND. That is the number that was wrong: momentum per CARTRIDGE is what the physics
+     * conserves, but it is not what the eye integrates. At 900 rpm the ratatat delivers 15
+     * impulses/s against the pistol's 6.7 — with the impulse held constant it was shaking its
+     * mount **2.2× harder per unit time than the reference weapon, by design**. A real full-auto
+     * viewmodel does not reciprocate; the shot is sold by the muzzle flash, the sound and the
+     * CAMERA recoil, and the model just buzzes.
+     *
+     * WHY 1 ON POSITION AND 0.5 ON ROTATION, and both are derived, not picked:
+     *   · 1   = constant MOMENTUM per second (impulse ∝ 1/rate). Applied to the axis the
+     *           playtester actually named. Measured, it takes hip push-back peak-to-peak from
+     *           23.93 mm to 14.43 mm — which lands it on 13.16 mm, the band this project already
+     *           declares acceptable for a braced sight picture (the same gun's ADS band before
+     *           this rule, i.e. `kickAdsMult` × the old hip band). Hip full-auto is now as calm
+     *           as ADS was, which is exactly what "most people won't ADS" asks for.
+     *   · 0.5 = constant kinetic ENERGY per second (E ∝ v², so rate·v² constant ⇒ v ∝ rate^-½).
+     *           The weaker sibling, on the axis that sells the shot. It takes hip pitch peak-to-
+     *           peak 3.73° → 2.60°, still ABOVE the 2.05° ADS band; exponent 1 here would push
+     *           it to 1.81°, *below* the braced reference, which is over-damping the one thing
+     *           that makes a shot read. The pitch stays the livelier of the two axes on purpose.
+     *
+     * THE FIRST SHOT IS UNTOUCHED, BY CONSTRUCTION AND BY MEASUREMENT. `gap` on the opening shot
+     * of a burst is the time since the last shot of the *previous* one — effectively infinite —
+     * so `amp` is exactly 1 and the transient is bit-for-bit the authored punch: 38.28 mm /
+     * 6.637° hip, 21.06 mm / 3.650° ADS, before and after. A tap still feels like the gun fired.
+     *
+     * AND THE EXCURSION ONLY EVER SHRINKS: `amp ≤ 1` and the frequency is `≥` the floor, so the
+     * per-shot peak is `authored × (gap/settleGap)^(1+exponent) ≤ authored`. The clearance pose
+     * table in `viewmodel.ts` is still a valid worst case, and `kickAdsMult` still composes
+     * exactly — `amp` depends only on the gap, never on the scale, so the hip:ADS ratio is
+     * 0.5500 in every metric before and after. No double damping.
+     *
+     * SET EITHER TO 0 TO DISABLE THAT AXIS' RULE. At and below 542 rpm (pos) / 438 rpm (rot) it
+     * returns exactly 1 regardless, so the inkslinger, THE PRESS, the boomstick and the longshot
+     * are bit-identical to the build before this existed — verified frame by frame with `!==`.
+     */
+    kickAmpRateExpPos: 1,
+    kickAmpRateExpRot: 0.5,
+    /**
      * HARD CEILING on the accumulated kick, metres and degrees, applied to the summed spring
      * every frame. Pure safety net — nothing in the shipped arsenal comes near it, and the rule
      * above is what actually fixes the ratatat. This is here so that no future combination of
