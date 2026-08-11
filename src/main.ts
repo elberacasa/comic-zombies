@@ -39,7 +39,7 @@ import { INK_GLOBALS } from '@/render/materials/index';
 import { createRenderer } from '@/render/renderer';
 import { createWorld } from '@/world/index';
 import { createPlayer } from '@/game/player/index';
-import { createWeapons } from '@/game/weapons/index';
+import { createWeapons, STARTER_WEAPON_ID } from '@/game/weapons/index';
 import { createEnemies } from '@/game/enemies/index';
 import { createVfx } from '@/game/vfx/index';
 import { createAudio } from '@/audio/index';
@@ -852,6 +852,16 @@ async function boot(): Promise<void> {
   const spawner = new DebugSpawner(ctx);
   let postOn = true;
 
+  // The arsenal, in the debug panel. Both slots, which one is live, and the ammo — so a swap test
+  // does not need the console to answer "what am I actually holding".
+  debug.watch('weapon', () => {
+    const cur = ctx.weapons.current;
+    return cur ? `${cur.def.name} ${cur.ammo}/${cur.def.infiniteReserve ? '∞' : cur.reserve}` : '—';
+  });
+  debug.watch('slots', () => ctx.weapons.slots
+    .map((s, i) => (s ? `${i === 0 ? '1:' : '2:'}${s.def.id}` : `${i + 1}:—`))
+    .join(' · '));
+
   const onKey = (e: KeyboardEvent): void => {
     // Debug spawning is deliberately NOT gated on pointer lock: it has to work from a paused
     // screen and from an automated browser, which can never take the lock.
@@ -872,6 +882,27 @@ async function boot(): Promise<void> {
         e.preventDefault();
         ctx.enemies.killAll('debug');
         hud.toast('BLOCK CLEARED');
+        return;
+      }
+      // J CYCLES THE ARSENAL. Wall-buys do not exist yet, so until they do this is the only way
+      // to get a gun other than the starter into your hands — and typing `CZ.give('boomstick')`
+      // means leaving the game, which is exactly the friction that stops a weapon being
+      // feel-tested at all. `give` fills the first empty slot, so the pistol survives the first
+      // press and `swap` (Q / wheel) still flips between the two.
+      if (e.code === 'KeyJ') {
+        e.preventDefault();
+        // The STARTER IS SKIPPED. Cycling through it hands you a second inkslinger in slot 2 and
+        // you end the round carrying two identical pistols; worse, the gun you were comparing
+        // against is gone. Keeping it pinned in slot 1 means Q always flips back to the
+        // reference weapon, which is the whole point of a two-slot comparison.
+        const defs = ctx.weapons.allDefs.filter((d) => d.id !== STARTER_WEAPON_ID);
+        const held = ctx.weapons.current?.def.id;
+        const at = defs.findIndex((d) => d.id === held);
+        const next = defs[(at + 1) % defs.length];
+        if (next) {
+          ctx.weapons.give(next.id);
+          hud.toast(`${next.name} · ${next.archetype.toUpperCase()}  ·  Q FOR THE PISTOL`);
+        }
         return;
       }
     }
@@ -1008,6 +1039,10 @@ function printControls(quality: QualityTier, draws: number, tris: number, seed: 
   console.log(
     `%cFIRE%c  LMB   %cADS%c  RMB   %cRELOAD%c  R   %cACTIVE RELOAD%c  TAP R AGAIN IN THE GOLD ZONE`,
     key, txt, key, txt, key, txt, key, txt,
+  );
+  console.log(
+    `%cSWAP WEAPON%c  Q or MOUSE WHEEL   %cCYCLE THE ARSENAL%c  J  (debug — until wall-buys exist)`,
+    key, txt, key, txt,
   );
   console.log(
     `%cTAKE A BOON%c  1 / 2 / 3 (or aim and click)   %cRUN IT BACK%c  SPACE on the back cover`,
