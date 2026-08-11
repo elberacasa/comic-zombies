@@ -153,6 +153,20 @@ export const INKSLINGER: WeaponDef = {
   ammoCost: 250,
 };
 
+/**
+ * ═══ THE PRESS — the inkslinger's stats, in a different object ═══
+ *
+ * It is a LOOK, not a weapon: `models/press.ts` is a clean-sheet answer to
+ * `docs/WEAPON_REWORK.md`, and the only way to judge whether that answer is better is to hold
+ * the two guns one after the other and change nothing else. So the def is the pistol's, spread
+ * whole — damage, rpm, mag, both cones, the eight-row recoil pattern, both kick layers, the
+ * active-reload window, ADS time and FOV — with an id and a name over the top. Every difference
+ * the player can feel is zero by construction rather than by matching numbers in two files.
+ *
+ * If it wins, it stops being a clone and gets its own numbers. If it loses, it deletes cleanly.
+ */
+export const PRESS: WeaponDef = { ...INKSLINGER, id: 'press', name: 'THE PRESS' };
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // The registry
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -346,7 +360,7 @@ export const LONGSHOT: WeaponDef = {
  * (arc, splash, self-knockback), so it ships when that exists rather than as a def that silently
  * fires an invisible bullet.
  */
-export const WEAPON_DEFS: readonly WeaponDef[] = [INKSLINGER, RATATAT, BOOMSTICK, LONGSHOT];
+export const WEAPON_DEFS: readonly WeaponDef[] = [INKSLINGER, PRESS, RATATAT, BOOMSTICK, LONGSHOT];
 
 const _byId = new Map<string, WeaponDef>();
 for (const d of WEAPON_DEFS) _byId.set(d.id, d);

@@ -930,6 +930,23 @@ export function outlineGeometry(geo: BufferGeometry): BufferGeometry {
 /**
  * Build the backface hull mesh for `geometry`. Add it as a child of the source mesh.
  * The hull is placed on LAYER.OUTLINE so the normal/depth prepass never sees it.
+ *
+ * ── THIS IS THE SILHOUETTE HALF, AND IT IS THE HEAVY ONE ─────────────────────────────────
+ * There are two line mechanisms in this renderer and they are deliberately NOT the same
+ * weight (WEAPON_REWORK §1.2 — the reference's interior lines are about a QUARTER of its
+ * outer line, which is what lets a weapon carry detail without going to soot):
+ *
+ *   • THIS — an inverted hull inflated in SCREEN pixels. It is the OUTER contour and its
+ *     weights are a contract: enemy 8 > viewmodel 7 > heaviest prop 6
+ *     (`READABILITY.*_OUTLINE_PX`, ART §9). **Nothing may lighten these.** The interior-line
+ *     work changed no number here.
+ *   • the crease term in `passes/ink.ts` — the normal-Sobel pen line, now drawn at
+ *     `uInkInteriorWeight` (0.25) of the contour radius. That is the knob for interior
+ *     detail; this one is not.
+ *
+ * A caller wanting a LIGHT line on a small part does not thin this hull below its contract —
+ * it passes `WEAPON.view.sightOutlinePx` (the interior hull weight) and sizes the part against
+ * `INK_FLOOR_INTERIOR`, or gives the part no hull at all and lets the crease pass draw it.
  */
 export function buildOutlineHull(geometry: BufferGeometry, opts: OutlineOptions = {}): Mesh {
   const mat = new ShaderMaterial({

@@ -20,12 +20,15 @@
 import { BOOMSTICK } from './boomstick';
 import { INKSLINGER } from './inkslinger';
 import { LONGSHOT } from './longshot';
+import { PRESS } from './press';
 import { RATATAT } from './ratatat';
 import type { WeaponModelDef } from './types';
 
 /** Every weapon in the game, in equip order. One line per gun, and that is the whole list. */
 export const WEAPON_MODELS: readonly WeaponModelDef[] = [
   INKSLINGER,
+  // Second, so J's first press hands it over and Q flips straight back to the reference pistol.
+  PRESS,
   RATATAT,
   BOOMSTICK,
   LONGSHOT,

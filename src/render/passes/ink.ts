@@ -53,6 +53,32 @@
  *   uInkColorHold    0 = pure ink, 1 = the line fully takes the surface hue
  *   uInkBoil         hand-drawn wobble amplitude, in pixels
  *   uInkFarFade      distance (m) over which crease detail fades out
+ *   uInkInteriorWeight  crease stroke width as a fraction of the contour's (0.25 — see below)
+ *   uInkInteriorInk     crease stroke opacity as a fraction of the contour's
+ *
+ * ── THE LINE-WEIGHT HIERARCHY (added for the WEAPON REWORK) ──────────────────────────────
+ *
+ * WEAPON_REWORK §1.2, measured off the reference: **their outer silhouette carries a very
+ * heavy black line and their interior detail lines are roughly a QUARTER of it.** That single
+ * ratio is what lets them cover a gun in scribed grooves without it going to soot. Ours drew
+ * both at the same weight — the crease taps rode the contour's fully-weighted radius, so on
+ * the shadow side of a form a panel line was a ~6 px stroke against a 7 px silhouette hull.
+ * Every interior detail this project added therefore became a black blob, and parts had to be
+ * enormous to survive; that is the root cause behind six rejected weapon passes.
+ *
+ * There are two separate mechanisms and only ONE of them changed:
+ *   • the SILHOUETTE is the inverted hull in `materials/index.ts`, authored in screen px and
+ *     ordered by contract — enemy 8 > viewmodel 7 > heaviest prop 6 (READABILITY, ART §9).
+ *     **UNTOUCHED. Do not lighten it here or anywhere.**
+ *   • the INTERIOR is the normal-Sobel crease term in this pass. It now has its own radius
+ *     (`uInkInteriorWeight`) and its own opacity (`uInkInteriorInk`), and it no longer
+ *     inherits the contour's shadow-side or ground-contact widening.
+ * The depth-Laplacian term in this pass is a CONTOUR, not interior detail, and keeps its full
+ * weight — so a form's own depth discontinuities still print heavy.
+ *
+ * Model files opt small parts in through the matching floor, `INK_FLOOR_INTERIOR` in
+ * `game/tuning.ts`. `INK_FLOOR` in `weapons/viewmodel.ts` remains the SILHOUETTE floor and is
+ * the correct number for anything carrying the 7 px hull.
  *
  * ── ADDED IN THE M1 FIX PASS ─────────────────────────────────────────────────────────────
  *
@@ -109,6 +135,16 @@ export interface InkPassOptions {
   contact?: number;
   /** Low-frequency wobble on the stroke WIDTH. */
   boilWidth?: number;
+  /**
+   * ── THE LINE-WEIGHT HIERARCHY (WEAPON_REWORK §1.2) ──────────────────────────────────────
+   * Fraction of the CONTOUR radius the INTERIOR crease line is drawn at. The reference game's
+   * outer silhouette carries a very heavy black line and its interior detail lines are roughly
+   * a QUARTER of that weight; that hierarchy is the only reason a weapon can wear dozens of
+   * interior marks without turning to soot. See the note above the crease radius in BODY.
+   */
+  interiorWeight?: number;
+  /** Opacity multiplier on the crease-only half of the ink. 1 = as black as the contour. */
+  interiorInk?: number;
   /** Fraction of the boil the environment keeps (0..1). Enemies always boil in full. */
   boilEnv?: number;
   /**
@@ -162,6 +198,42 @@ export function makeInkUniforms(opts: InkPassOptions = {}): Uniforms {
     /** Weight breathing on the contour. Same reasoning as uInkBoil, and near-field gated too. */
     uInkBoilWidth: { value: opts.boilWidth ?? 0.028 },
     /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * 0.25 — THE INTERIOR LINE WEIGHT. WEAPON_REWORK §1.2, and the single highest-value
+     * change available to the weapons.
+     *
+     * MEASURED, at the viewmodel (z ≈ 0.30 m, 1600×821, 78° FOV ⇒ 1690 px/m, 1 px ≈ 0.59 mm):
+     *
+     *     radiusBase = uInkThickness(1.35) · mix(1,2,√dn)(1.039) · mix(0.75,1.35,strength)(1.35)
+     *                = 1.89 px
+     *
+     * The crease taps USED to ride the contour's fully-modulated radius, i.e. `radiusBase`
+     * times the light-direction weight (`uInkWeightShadow` 1.6 … `uInkWeightLit` 0.45) and the
+     * contact widening. On the shadow side of a form that is **3.03 px of sample radius — a
+     * ~6 px stroke, against the viewmodel's 7 px silhouette hull.** Interior and silhouette
+     * were the SAME WEIGHT. That is why every interior detail this project has ever added
+     * printed as a black blob, and why parts had to be enormous to survive at all.
+     *
+     * At 0.25 the crease radius is 1.89 · 0.25 = 0.47 px, which lands on the hard 1 px sampling
+     * floor (below one pixel the four taps share a texel and the line flickers along its own
+     * length — see the floor below). So creases draw a **flat ~2 px hairline**, i.e. 2/7 ≈ 0.29
+     * of the silhouette: "roughly a quarter", exactly as measured off the reference.
+     *
+     * The crease radius also no longer takes the shadow/contact widening at all. Those two are
+     * CONTOUR devices — an inker builds a form's brush line heavy on the shadow side and heavy
+     * where it meets the ground; they do not fatten the panel lines scribed across its face.
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     */
+    uInkInteriorWeight: { value: opts.interiorWeight ?? 0.25 },
+    /**
+     * The second axis of the hierarchy: VALUE, not width. The reference's interior lines are
+     * thin and near-black rather than grey, so this is only a touch under 1 — it takes the
+     * effective interior weight from 0.29 to ~0.25 of the silhouette without turning the pen
+     * work into a smudge. Drop it toward 0.5 if a gun still reads sooty; do NOT compensate for
+     * a sooty gun by raising `uInkThreshold`, which deletes detail instead of lightening it.
+     */
+    uInkInteriorInk: { value: opts.interiorInk ?? 0.85 },
+    /**
      * How much of the boil the ENVIRONMENT is allowed to keep inside the near-field
      * gate. Enemies always get 1.0 (see the acid term in BODY). Turn this to 0 and the
      * city is inked dead-still — which is a legitimate accessibility setting, and is
@@ -212,6 +284,8 @@ const DECLS = /* glsl */ `
   uniform float uInkContact;
   uniform float uInkBoilWidth;
   uniform float uInkBoilEnv;
+  uniform float uInkInteriorWeight;
+  uniform float uInkInteriorInk;
   uniform vec3 uInkKeyDirView;
   uniform vec3 uInkRimDirView;
   uniform vec3 uInkRimColor;
@@ -300,7 +374,10 @@ const BODY = /* glsl */ `
 
     // ── STROKE WEIGHT ───────────────────────────────────────────────────────
     // Thickness in SCREEN pixels, widened with distance so far contours stay bold.
-    float radius = max(1.0, uInkThickness * mix(1.0, 2.0, sqrt(dn)) * mix(0.75, 1.35, uInkStrength));
+    // This is the UNMODULATED base; the contour takes the lighting/contact weighting on top
+    // of it, the interior line deliberately does not (see the crease radius below).
+    float radiusBase = uInkThickness * mix(1.0, 2.0, sqrt(dn)) * mix(0.75, 1.35, uInkStrength);
+    float radius = max(1.0, radiusBase);
     // Heavy on the shadow side of a form, tapering to nothing on the lit side. This is the
     // single thing that separates a drawn contour from an edge-detect.
     float lit = max(dot(nC0, uInkKeyDirView), 0.0);
@@ -313,9 +390,17 @@ const BODY = /* glsl */ `
     // ink lines that flicker" in the playtest notes. One pixel is the floor for a filter
     // that is trying to detect a discontinuity.
     radius = max(radius, 1.0);
-    // The CREASE radius is the steady one. The CONTOUR radius additionally breathes in
-    // width on the 12fps boil, so the brush line varies in weight as well as position.
-    vec2 rn = radius * uTexel;
+    // ── THE HIERARCHY: THE INTERIOR LINE IS ITS OWN, MUCH LIGHTER STROKE ────
+    // WEAPON_REWORK §1.2. The pen line that scribes a panel across a flat face is a QUARTER
+    // of the brush line that goes around the form. It is the steady radius (no boil), it is
+    // taken off the UNMODULATED base (the shadow-side and ground-contact widening are contour
+    // devices, not pen devices), and it bottoms out on the same 1 px sampling floor — which,
+    // at every distance a crease is actually visible, is where it lands. So interior detail
+    // is a flat hairline and the silhouette keeps the whole of its weight.
+    float radiusN = max(radiusBase * uInkInteriorWeight, 1.0);
+    vec2 rn = radiusN * uTexel;
+    // The CONTOUR radius additionally breathes in width on the 12fps boil, so the brush line
+    // varies in weight as well as position.
     float radiusD = max(radius * (1.0 + (czVN2(uv * 2.5 + uBoil.zx * 13.0) - 0.5) * uInkBoilWidth * boilGate), 1.0);
     vec2 r = radiusD * uTexel;
 
@@ -352,8 +437,24 @@ const BODY = /* glsl */ `
     // background wash. Fade them out with distance; contours never fade.
     edgeN *= 1.0 - smoothstep(uInkFarFade * 0.35, uInkFarFade, dC0);
 
-    float edge = edgeD * uInkDepthSense + edgeN * uInkNormalSense;
-    edge = smoothstep(uInkThreshold, uInkThreshold + uInkSoftness, edge);
+    // ── COMPOSITING THE TWO WEIGHTS ─────────────────────────────────────────
+    // The two terms used to be SUMMED and thresholded once, which is what made them one
+    // uniform line: a crease and a contour were interchangeable inputs to a single stroke, so
+    // there was no width and no value to tell them apart with. They are thresholded
+    // SEPARATELY now and combined with an over/screen rather than an add, so a crease that
+    // lands on a contour still reinforces it and the pair saturates at 1 instead of clipping.
+    //
+    // WHAT THIS DOES AND DOES NOT CHANGE, because a threshold move is easy to be glib about:
+    //   · a pure panel line (edgeD ≈ 0) and a real contour (edgeD large, and the normal flips
+    //     across a silhouette so edgeN is large too) both cut in at exactly the same place as
+    //     before, and a real contour still saturates on inkD alone.
+    //   · what genuinely lightens is the MIXED MIDDLE — a shallow bevel where neither term
+    //     crosses 0.18 on its own but the sum did. Those used to print at contour weight; they
+    //     now print at crease weight or not at all. That is the intended half of this change:
+    //     a soft fold in a surface is pen work, not brush work.
+    float inkD = smoothstep(uInkThreshold, uInkThreshold + uInkSoftness, edgeD * uInkDepthSense);
+    float inkN = smoothstep(uInkThreshold, uInkThreshold + uInkSoftness, edgeN * uInkNormalSense);
+    float edge = 1.0 - (1.0 - inkD) * (1.0 - inkN * uInkInteriorInk);
     edge = clamp(edge * uInkStrength, 0.0, 1.0);
 
     // ── SCREEN-SPACE RIM LIGHT ──────────────────────────────────────────────

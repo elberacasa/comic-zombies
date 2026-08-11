@@ -867,6 +867,78 @@ export function comfortScales(): ComfortScales {
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE INK FLOORS — HOW SMALL A PART MAY BE BEFORE THE LINE EATS IT.
+ *
+ * A part is legal when, after every line drawn over it has taken its band, there is still
+ * albedo left in the middle. Under that, the two inflated faces meet and the part prints as
+ * one solid black lump — which is the whole reason weapon detail on this project has always
+ * had to be enormous.
+ *
+ * THE MEASURING STICK, and it is exact rather than a feel number. The hull inflates in SCREEN
+ * space, so metres-per-pixel at the viewmodel is
+ *
+ *     m/px = (1 / H) · 2 · tan(fov/2) · z
+ *          = (1 / 821) · 2 · tan(39°) · 0.30      ⇒ 5.92e-4 m,  i.e. 1690 px/m
+ *
+ * (H 821 and z ≈ 0.30 m are the window and the eye distance every other measurement in this
+ * project's weapon files was taken at — `CAMERA.fovBase` 78°. The same formula is quoted at
+ * `view.nearClearance`.) One pixel is 0.59 mm on the gun. Everything below is that, times a
+ * count of pixels.
+ *
+ * THERE ARE THREE FLOORS BECAUSE THERE ARE THREE WAYS TO DRAW A PART, and the difference
+ * between them is a factor of THREE in how small the part is allowed to be. Picking the right
+ * one is the cheapest detail this project has available.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+
+/**
+ * **SILHOUETTE FLOOR — a part carrying the 7 px viewmodel hull.** 16.9 px wide: 7 px of hull a
+ * side (14 px) plus 2.9 px of surviving albedo. This is the existing, unchanged number — it is
+ * duplicated as `INK_FLOOR` inside `weapons/viewmodel.ts`, where `inkChunk()` enforces it, and
+ * it is the correct floor for any structural mass that reads against the world.
+ *
+ * **DO NOT LOWER IT.** The 7 px is `READABILITY.VIEWMODEL_OUTLINE_PX` and it is contractual
+ * (enemy 8 > viewmodel 7 > heaviest prop 6, ART §9). The hierarchy work did not touch it.
+ */
+export const INK_FLOOR_SILHOUETTE = 0.010;
+
+/**
+ * **INTERIOR FLOOR — a part drawn ONLY with the light interior line: its own mesh on the thin
+ * `view.sightOutlinePx` hull, never on the 7 px silhouette hull.** 7 mm.
+ *
+ *     3.5 px hull a side                                   7.0 px
+ *     interior crease stroke, ~1 px in from each edge      2.0 px   (see below)
+ *     surviving albedo, same as the silhouette floor       2.9 px
+ *                                                        ───────
+ *                                                         11.9 px  ⇒ 11.9 · 5.92e-4 = 0.0070 m
+ *
+ * The crease term is 2 px because that is what the new hierarchy draws it at: the interior
+ * radius is `radiusBase · uInkInteriorWeight` = 1.89 · 0.25 = 0.47 px, which lands on the ink
+ * pass's hard 1 px sampling floor, so a crease is a flat ~2 px hairline at any distance it is
+ * visible at. Before the hierarchy it was up to 3.03 px of radius — a ~6 px stroke — and this
+ * floor would have had to be 0.0094, i.e. indistinguishable from the silhouette floor. That is
+ * the arithmetic behind "every interior detail we ever added became a blob".
+ *
+ * A part sized between this and `INK_FLOOR_SILHOUETTE` is legal **only** on the thin hull. Put
+ * it on the 7 px hull and it prints solid.
+ */
+export const INK_FLOOR_INTERIOR = 0.007;
+
+/**
+ * **CREASE FLOOR — a detail with NO hull of its own at all**, merged into a parent mesh so the
+ * only thing that draws it is the ink pass's crease term. 3 mm: 2 px of crease stroke plus the
+ * same 2.9 px of albedo ⇒ 4.9 px ⇒ 0.0029 m.
+ *
+ * This is WEAPON_REWORK §1.3 as a number — *"stop adding geometry, draw lines"*. A groove
+ * scribed into a big slab, a step in a face, a chamfer: geometry that only ever needs to
+ * announce itself as a normal discontinuity is legal down to a THIRD of the silhouette floor,
+ * because it pays for no hull. Merging a small feature into its parent is not a cheat to dodge
+ * the floor — it is the reason the reference can carry dozens of interior marks.
+ */
+export const INK_FLOOR_CREASE = 0.003;
+
 export const WEAPON = {
   /** Global damage scalar — the fastest way to retune the whole game's TTK in one number. */
   damageScale: 1,
@@ -1517,6 +1589,11 @@ export const WEAPON = {
      * `minThickness` every other hull on this model falls back to) and leaves a measured ~19 px
      * of post and ~13 px of light bar either side at 1600×821. Do not raise this to "match" the
      * body: the hierarchy that matters here is post-vs-notch, not gun-vs-world.
+     *
+     * IT IS NO LONGER JUST FOR SIGHTS. This is the **interior hull weight** for the whole
+     * viewmodel — any part that is detail rather than mass belongs on it, together with
+     * `INK_FLOOR_INTERIOR` (0.007) rather than `INK_FLOOR` (0.010). See WEAPON_REWORK §1.2 and
+     * the ink floors above `WEAPON`. Parts that need no hull at all get `INK_FLOOR_CREASE`.
      */
     sightOutlinePx: 3.5,
     /**
