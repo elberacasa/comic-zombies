@@ -32,6 +32,19 @@ export interface GameEventMap {
   'player:landed': { impactSpeed: number; position: THREE.Vector3 };
   'player:footstep': { position: THREE.Vector3; surface: SurfaceKind; sprinting: boolean };
   'player:points': { total: number; delta: number; reason: string; worldPos?: THREE.Vector3 };
+  /**
+   * A `PlayerService.spend()` that went through — the purchase beat. `total` is the balance AFTER
+   * the deduction, `cost` is what was taken (always ≥ 0). A matching `player:points` with a
+   * negative `delta` is emitted alongside it, so anything that only tracks the balance already
+   * works and does not need to listen here.
+   */
+  'player:spent': { total: number; cost: number; reason: string };
+  /**
+   * A `spend()` refused for want of points — the "can't afford" beat. Nothing was deducted.
+   * `shortfall` is `cost - total`, always ≥ 1. Not emitted for malformed prices (negative, NaN,
+   * infinite): those are caller bugs, not affordability failures.
+   */
+  'player:denied': { total: number; cost: number; shortfall: number; reason: string };
   'player:statsChanged': Record<string, never>;
 
   // ── weapons ────────────────────────────────────────────────────────────────

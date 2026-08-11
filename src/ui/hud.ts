@@ -27,6 +27,7 @@ import type { BoonDef, GameCtx, HudService, System, WeaponInstance } from '@/cor
 import { PALETTE, css } from '@/art/palette';
 import { ROUND } from '@/game/tuning';
 import { FALLBACK_ICON, iconSvg, isIconId } from '@/ui/icons';
+import { NavPanels } from '@/ui/minimap';
 
 /** Module scratch — the HUD allocates nothing inside a handler or a frame. */
 const _toSrc = new Vector3();
@@ -867,6 +868,13 @@ export class HudSystem implements System, HudService {
   private readonly downNum: HTMLDivElement;
   private readonly downFill: HTMLDivElement;
 
+  /**
+   * The compass strip and the minimap. Public so whatever owns an objective next — wall-buys,
+   * the mystery box, a downed team-mate — can call `hud.nav.beacon(id, x, z)` without this file
+   * growing a pass-through method per feature.
+   */
+  readonly nav: NavPanels;
+
   // state
   private health = 100;
   private maxHealth = 100;
@@ -1185,6 +1193,13 @@ export class HudSystem implements System, HudService {
     this.downEl.append(div('cz-down-scrim'), downPanel);
     this.root.appendChild(this.downEl);
 
+    // ── compass + minimap ────────────────────────────────────────────────────
+    //
+    // Canvas, not DOM, and it owns its own <style> — see `ui/minimap.ts` for why. Mounted HERE,
+    // before the prompt/toast/title layer, so a title card or the boon draw always paints over
+    // the navigation furniture rather than under it.
+    this.nav = new NavPanels(this.root);
+
     // ── prompt / toasts / title ──────────────────────────────────────────────
     this.promptEl = div('cz-prompt cz-tone');
     const promptSpan = document.createElement('span');
@@ -1217,6 +1232,9 @@ export class HudSystem implements System, HudService {
 
     this.measure();
     window.addEventListener('resize', this.onResize);
+
+    // Owns its own event subscriptions and its own teardown; the HUD only mounts and ticks it.
+    this.nav.init(ctx);
 
     this.setRound(ctx.rounds.round);
     this.setPoints(ctx.player.points);
@@ -1327,9 +1345,15 @@ export class HudSystem implements System, HudService {
       if (this.titleTimer <= 0) this.dismissTitle();
     }
     this.stepActiveReload(dt, ctx);
+
+    // Compass + minimap. `visible && !modal` is the "is anyone looking at this" gate; the widget
+    // applies its own second gate (no redraw unless gameplay time advanced or the player turned),
+    // which is what makes a paused or hitstopped frame cost a float compare.
+    this.nav.update(dt, ctx, this.visible && !this.modal);
   }
 
   dispose(): void {
+    this.nav.dispose();
     window.removeEventListener('resize', this.onResize);
     for (const off of this.offs) off();
     this.offs.length = 0;

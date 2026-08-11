@@ -45,6 +45,8 @@ import { createVfx } from '@/game/vfx/index';
 import { createAudio } from '@/audio/index';
 import { createRounds } from '@/game/rounds/index';
 import { createBoons } from '@/game/boons/index';
+import { createWallBuys } from '@/game/economy/wallbuys';
+import { createEconomyExtras } from '@/game/economy/box';
 import { CAMERA, MOVE, TUNING } from '@/game/tuning';
 import type { NavGraph } from '@/world/nav';
 
@@ -641,6 +643,12 @@ async function boot(): Promise<void> {
   // — with no host every stat boon in the pool is silently inert.
   const rounds = createRounds();
   const boons = createBoons(player);
+  // `createEconomyExtras(player)` is load-bearing for the identical reason `createBoons(player)`
+  // is: the four perk machines push permanent stat modifiers, `PlayerService` has no way to write
+  // to that stack, and `PlayerSystem` satisfies `PerkStatHost` structurally. With no host every
+  // perk in the game buys you a bottle and changes nothing.
+  const economy = createEconomyExtras(player);
+  const wallbuys = createWallBuys();
 
   // The card layers: the boon draw and the run summary. They need two things the frozen
   // interfaces cannot carry — the finished run's POINTS (`game:over` has no slot for it) and the
@@ -708,6 +716,19 @@ async function boot(): Promise<void> {
   // BOONS AFTER ROUNDS: the boon layer's slide-contact damage must see the position the player
   // reached THIS step, and its behavioural tickers read the round the director just published.
   loop.add(boons);
+  // WALL-BUYS AFTER PLAYER AND WEAPONS, and they need both: the proximity test reads the position
+  // the player reached THIS frame, and a purchase calls `weapons.give` / `refillAmmo` after the
+  // gun has already had its own frame. It finds its own spots by probing `WorldService` in
+  // `init()`, so it must also run after `world` — which registration order already guarantees.
+  loop.add(wallbuys);
+  // THE MACHINES (mystery box · 4 perks · Pack-a-Punch) AFTER THE WALL-BUYS, and the order is
+  // load-bearing for exactly one thing: both layers answer the same `interact` key and both write
+  // the same `ui:prompt` channel, and on the shipped arena a perk machine lands 1.11 m from a
+  // wall-buy. `economy/claim.ts` arbitrates (nearest wins, machines take ties); registering the
+  // wall-buys FIRST is what lets them publish their distance in the fixed step before the machine
+  // layer reads it in the same step, so neither side ever compares against a stale pose. Same
+  // reasons as the wall-buys for needing `player` and `weapons` ahead of it.
+  loop.add(economy);
   loop.add(vfx);
   loop.add(audioSys);
   loop.add(hud);

@@ -31,6 +31,20 @@ const _eye = new Vector3();
 const _hurtDir = new Vector3();
 
 /**
+ * Prices in, whole points out — the single place `spend()` and `canAfford()` agree on what a
+ * number of points means, so a prompt can never say AFFORDABLE about a cost the transaction then
+ * rejects.
+ *
+ * Returns `-1` for anything that is not a spendable price (negative, NaN, ±Infinity); callers
+ * treat that as an unconditional refusal. Rounding matches `addPoints`, which also rounds, so the
+ * two halves of the economy cannot disagree about a fractional value. Branch-only, no allocation.
+ */
+function normalizeCost(amount: number): number {
+  if (!Number.isFinite(amount) || amount < 0) return -1;
+  return Math.round(amount);
+}
+
+/**
  * COMFORT TOGGLE KEY (ART_DIRECTION §10 wants this reachable, and reachable *live* — the whole
  * point of a comfort preset is that the person who needs it is already feeling sick).
  *
@@ -269,6 +283,53 @@ export class PlayerSystem implements System, PlayerService {
     const delta = amount > 0 ? Math.round(amount * this._stats.pointsMult) : Math.round(amount);
     this._points = Math.max(0, this._points + delta);
     this.ctx?.events.emit('player:points', { total: this._points, delta, reason });
+  }
+
+  /**
+   * THE SINK. Every wall-buy, box spin, perk and Pack-a-Punch is one call to this
+   * (BO2_MECHANICS §1.1 — "nothing else is possible without it").
+   *
+   * Atomicity is the whole point: a purchase must never half-happen. We test the normalized cost
+   * against the balance and only then touch `_points`, so there is no intermediate state a
+   * listener could observe and no path that can drive the balance below zero.
+   *
+   * `pointsMult` is deliberately NOT applied. It is an INCOME multiplier — a boon that pays 1.4×
+   * must not silently inflate every price by 1.4× too, which would make it a no-op.
+   *
+   * Not a hot path — a purchase is one keypress, a handful per round — so the two small event
+   * payloads are allocated fresh, exactly like `addPoints`/`heal`/`takeDamage` above. The
+   * per-frame side of this API is `canAfford()`, which allocates nothing and emits nothing.
+   */
+  spend(amount: number, reason = 'unknown'): boolean {
+    const cost = normalizeCost(amount);
+    // A malformed price (negative / NaN / Infinity) is a caller bug, not a poor player. Refuse it
+    // silently: firing the "can't afford" beat here would send the human hunting for points they
+    // already have.
+    if (cost < 0) return false;
+
+    if (cost > this._points) {
+      this.ctx?.events.emit('player:denied', {
+        total: this._points, cost, shortfall: cost - this._points, reason,
+      });
+      return false;
+    }
+
+    this._points -= cost;
+    // The HUD counter only refreshes on `player:points`, so a spend that skipped it would leave
+    // the badge printing a balance the player no longer has — the same class of lie as the
+    // vitals-badge bug in `tickHealth`. `hud.floatPoints` already ignores non-positive deltas, so
+    // this updates the number without popping a floating "+" over a purchase.
+    if (cost > 0) {
+      this.ctx?.events.emit('player:points', { total: this._points, delta: -cost, reason });
+    }
+    this.ctx?.events.emit('player:spent', { total: this._points, cost, reason });
+    return true;
+  }
+
+  /** Pure query — safe to call every frame from a buy prompt. See `PlayerService.canAfford`. */
+  canAfford(amount: number): boolean {
+    const cost = normalizeCost(amount);
+    return cost >= 0 && cost <= this._points;
   }
 
   takeDamage(info: DamageInfo): void {

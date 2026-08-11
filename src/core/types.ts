@@ -336,6 +336,32 @@ export interface PlayerService extends Damageable {
   heal(amount: number): void;
   addPoints(amount: number, reason?: string): void;
   readonly points: number;
+
+  /**
+   * ATOMIC SPEND — the foundation the whole economy stands on (BO2_MECHANICS §1.1). Wall-buys,
+   * the mystery box, perks and Pack-a-Punch are all one call to this.
+   *
+   * Deducts `amount` and returns `true` ONLY if it was affordable; deducts NOTHING and returns
+   * `false` otherwise. There is no partial spend and no path to negative points. `amount` is the
+   * literal price — unlike `addPoints`, it is NOT scaled by `stats.pointsMult`, because a boon
+   * that pays you more must not also make everything cost more.
+   *
+   * Emits `player:spent` on success (with `player:points` carrying a negative delta so the HUD
+   * counter stays honest) and `player:denied` on refusal, so the UI has a beat for both. Costs
+   * that are negative, NaN or infinite are a caller bug: they return `false` and emit nothing at
+   * all, because a "can't afford" beat for a malformed price would be a lie.
+   *
+   * Applies NO policy of its own — it does not care whether you are downed, dead or mid-reload.
+   * The system that owns the purchase decides who may buy; this only moves the number.
+   */
+  spend(amount: number, reason?: string): boolean;
+
+  /**
+   * Non-mutating affordability test. This is the one to call every frame while deciding whether
+   * to show a buy prompt — it allocates nothing, emits nothing and touches no state. Use it for
+   * the prompt, then call `spend()` once on the actual press.
+   */
+  canAfford(amount: number): boolean;
   /** Recompute stats from baseStats + boon modifier stack. Called by BoonService. */
   recomputeStats(): void;
   teleport(position: THREE.Vector3, yaw?: number): void;
