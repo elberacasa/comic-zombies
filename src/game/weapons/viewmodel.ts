@@ -201,6 +201,42 @@ function impulseFor(hz: number, zeta: number, peak: number): number {
   return (peak * omega) / springPeakGain(zeta);
 }
 
+/**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE RATE-AWARE KICK SPRING. `WEAPON.view.kickSettleResidual` carries the full derivation and
+ * the measurement that forced it; this is the two lines of maths.
+ *
+ * A damped spring's envelope decays as `exp(-ζ·ω·t)`, so the time to fall to residual `r` is
+ * `-ln(r)/(ζ·ω)`. Invert it: given the gap until the next shot, this is the SLOWEST frequency
+ * that is substantially home before that shot lands. The authored `kickPosHz`/`kickRotHz` are a
+ * floor, so any weapon whose shots are further apart than its own settle time gets exactly the
+ * authored spring and is untouched by this function to the last bit.
+ */
+function kickHzFor(floorHz: number, zeta: number, gap: number): number {
+  if (!Number.isFinite(gap)) return floorHz;
+  const z = Math.max(zeta, 0.05);
+  const r = clamp(V.kickSettleResidual, 1e-3, 0.99);
+  // `max(gap, 1e-4)` is only a divide-by-zero guard — the trigger fires at most once per frame
+  // and the clock advances every frame, so a real gap is never zero. `kickHzMax` is the one that
+  // does work: past it the spring is faster than the display and the kick would simply vanish.
+  const need = -Math.log(r) / (TAU * z * Math.max(gap, 1e-4));
+  return clamp(need, floorHz, Math.max(floorHz, V.kickHzMax));
+}
+
+/**
+ * The safety net (`kickPosMax` / `kickRotMaxDeg`). Scales value AND velocity by the same factor
+ * so the clamp contracts the spring's whole state rather than pinning a position against a
+ * velocity that is still winding outward — a spring held at a wall would release as a snap.
+ * Allocation-free: `Vector3.length` and `multiplyScalar` both work in place.
+ */
+function clampSpringVec(s: SpringVec3, max: number): void {
+  const len = s.value.length();
+  if (len <= max || len <= 0) return;
+  const k = max / len;
+  s.value.multiplyScalar(k);
+  s.velocity.multiplyScalar(k);
+}
+
 /** Exponential approach that actually ARRIVES. The `eps` snap is the §4.1 guarantee. */
 function settle(current: number, target: number, halfLife: number, dt: number, eps = 1e-4): number {
   const v = damp(current, target, lambdaFromHalfLife(halfLife), dt);
@@ -1731,9 +1767,22 @@ export class Viewmodel {
   /** Look-lag sway. Position in metres, rotation in radians (x=pitch, y=yaw, z=roll). */
   private readonly swayPos = new SpringVec3(V.swayHz, V.swayDamping);
   private readonly swayRot = new SpringVec3(V.swayHz, V.swayDamping);
-  /** Recoil kick — separate springs, deliberately softer and slower than the camera's. */
+  /**
+   * Recoil kick — separate springs, deliberately softer and slower than the camera's, and the
+   * only springs on this model whose FREQUENCY is not constant: `fire()` raises it to whatever
+   * the weapon's own rate of fire needs. The constructor value is the floor.
+   */
   private readonly kickPos = new SpringVec3(V.kickPosHz, V.kickPosDamping);
   private readonly kickRot = new SpringVec3(V.kickRotHz, V.kickRotDamping);
+  /**
+   * The viewmodel's own monotonic clock, seconds, advanced by `update()` — and the timestamp of
+   * the last shot on it. Their difference is the MEASURED shot interval that sizes the kick
+   * spring. Measured rather than read off the def on purpose: it costs no plumbing through
+   * `service.ts`, and it is automatically right for a fire-rate boon, `WEAPON.fireRateScale`, a
+   * Pack-a-Punch variant and any weapon that does not exist yet.
+   */
+  private kickClock = 0;
+  private lastShotAt = -1e9;
   /** Slide reciprocation, metres. Fired only, never idle. */
   private readonly slideSpring = new Spring(14, 0.5);
   /** Landing dip, metres. Causal (the player jumped), so ART §10 tolerates it. */
@@ -2332,12 +2381,40 @@ export class Viewmodel {
    * A shot. `kickScale` is the def's `weaponKick`; `patternYaw` is the sign of this shot's
    * lateral recoil so the model twists the same way the camera does — the two layers must
    * disagree in MAGNITUDE and TIMING, never in direction.
+   *
+   * ─── THE KICK SPRING IS RE-TUNED HERE, EVERY SHOT ───────────────────────────────────────
+   * The gap since the previous shot sizes the spring (`kickHzFor`, and the derivation in
+   * `WEAPON.view.kickSettleResidual`). Fire slower than the spring settles — every gun in the
+   * arsenal except the ratatat — and `kickHzFor` returns the authored floor and this method is
+   * the method it always was, to the bit.
+   *
+   * THE IMPULSE IS NOT SCALED, AND THAT IS THE WHOLE TRICK, so do not "fix" the `V.kickPosHz`
+   * below to match the frequency the spring is actually running at. `impulseFor` sizes a
+   * velocity to make a spring AT THE FLOOR peak at the authored displacement; drop that same
+   * velocity into a spring stiffened by 1/c and it peaks at `c ×` the authored displacement
+   * instead, and gets home `c ×` sooner. One number, both halves of the feel:
+   *
+   *     ratatat, 66.7 ms shots   rot 5.8 → 11.9 Hz, pitch peak 6.65° → 3.24° per shot
+   *                              pos 6.5 → 10.8 Hz, push-back 38 mm → 23 mm per shot
+   *
+   * It is also the physically honest version: a cartridge delivers the same momentum however
+   * fast you pull the trigger, and it is the MOUNT that has to be stiffer to eat fifteen of
+   * them a second. And because the excursion only ever shrinks, the authored `kickBack` /
+   * `kickPitchDeg` stay a true upper bound — the clearance pose table above still holds.
    */
   fire(kickScale: number, patternYaw: number, adsAmount: number): void {
+    const gap = this.kickClock - this.lastShotAt;
+    this.lastShotAt = this.kickClock;
+
     const s = kickScale * lerp(1, V.kickAdsMult, clamp01(adsAmount));
     if (s <= 0) return;
 
     const yawSign = patternYaw === 0 ? 0 : Math.sign(patternYaw);
+
+    // Re-tuning a spring mid-flight is safe: `SpringVec3` re-derives its matrix every step, and
+    // position and velocity are continuous across the change — only the acceleration steps.
+    this.kickPos.frequency = kickHzFor(V.kickPosHz, V.kickPosDamping, gap);
+    this.kickRot.frequency = kickHzFor(V.kickRotHz, V.kickRotDamping, gap);
 
     this.kickPos.impulse(
       0,
@@ -2380,10 +2457,22 @@ export class Viewmodel {
       }
     }
     this.equipT = 0;
-    this.kickPos.reset();
-    this.kickRot.reset();
+    this.resetKick();
     this.swayPos.reset();
     this.swayRot.reset();
+  }
+
+  /**
+   * Kick springs back to rest AND back to the authored floor frequency. A swap must forget the
+   * outgoing gun's rate of fire, or the first shot out of an SMG-into-shotgun swap would land on
+   * the SMG's stiff spring.
+   */
+  private resetKick(): void {
+    this.kickPos.reset();
+    this.kickRot.reset();
+    this.kickPos.frequency = V.kickPosHz;
+    this.kickRot.frequency = V.kickRotHz;
+    this.lastShotAt = -1e9;
   }
 
   /** Active reload nailed — a snap of the wrist. */
@@ -2407,8 +2496,7 @@ export class Viewmodel {
   reset(): void {
     this.swayPos.reset();
     this.swayRot.reset();
-    this.kickPos.reset();
-    this.kickRot.reset();
+    this.resetKick();
     this.slideSpring.reset();
     this.landSpring.reset();
     this.bobWeight = 0;
@@ -2427,6 +2515,12 @@ export class Viewmodel {
 
   update(dt: number, d: ViewmodelDrive): void {
     const eps = V.restEpsilon;
+
+    // The clock `fire()` measures its shot interval against. Advanced BEFORE anything else, and
+    // read by `fire()` on the following frame's step 3 — `service.update()` runs the trigger and
+    // this method on the same frame at the same wall clock, so the gap it reads is exactly the
+    // accumulated frame time between two shots, with no extra frame of lag either way.
+    this.kickClock += dt;
 
     // ── pose blends ───────────────────────────────────────────────────────────────────────
     this.adsPose = settle(this.adsPose, clamp01(d.adsAmount), V.adsPoseHalfLife, dt, 1e-4);
@@ -2470,6 +2564,11 @@ export class Viewmodel {
     // ── springs ───────────────────────────────────────────────────────────────────────────
     this.kickPos.step(dt);
     this.kickRot.step(dt);
+    // The net. Nothing in the arsenal reaches it (the boomstick, the heaviest gun we have, peaks
+    // at 0.149 m / 29.7° against a 0.20 m / 40° ceiling) — it is here so no future combination of
+    // rate, `weaponKick` and boons can walk the model off the screen. See `WEAPON.view.kickPosMax`.
+    clampSpringVec(this.kickPos, V.kickPosMax);
+    clampSpringVec(this.kickRot, V.kickRotMaxDeg * DEG2RAD);
     settleSpringVec(this.kickPos, eps);
     settleSpringVec(this.kickRot, eps);
 

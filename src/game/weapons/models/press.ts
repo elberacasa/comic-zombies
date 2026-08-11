@@ -60,18 +60,18 @@ import { PALETTE, hexMix } from '@/art/palette';
  * so what the builder merges into `sightParts` is one closed volume with no gap anywhere in it.
  * There is nothing to count.
  *
- *   right rear   x  [−0.003, +0.013]      ← `notchHalfGap` is NEGATIVE, and that is the trick
- *   left  rear   x  [−0.013, +0.003]         (6 mm of overlap on the centreline)
- *   union        x  [−0.013, +0.013]  = 26 mm, on a 34 mm slab: inset 4 mm per flank
+ *   right rear   x  [−0.002, +0.010]      ← `notchHalfGap` is NEGATIVE, and that is the trick
+ *   left  rear   x  [−0.010, +0.002]         (4 mm of overlap on the centreline)
+ *   union        x  [−0.010, +0.010]  = 20 mm, on a 34 mm slab: inset 7 mm per flank
  *
- *   rear pair    z  [−0.043, +0.019]      ← 62 mm at the full 26 mm width
- *   front        z  [−0.093, −0.031]      ← 62 mm at 16 mm, overlapping the pair by 12 mm
+ *   rear pair    z  [−0.043, +0.019]      ← 62 mm at the full 20 mm width
+ *   front        z  [−0.093, −0.031]      ← 62 mm at 12 mm, overlapping the pair by 12 mm
  *   union        z  [−0.093, +0.019]  = 112 mm authored, 74 mm drawn after `depthCompress`
  *
- * The result is a two-tier plate: a wide breech section that steps in by 5 mm per side to a
- * narrower forward tongue. That step is 8.5 px against a 3.5 px hull, so it survives as a real
- * step in the outline rather than closing into a seam — a comic-legible shape, and the one
- * silhouette event on the top of this gun.
+ * The result is a two-tier plate: a wide breech section that steps in by 4 mm per side to a
+ * narrower forward tongue. That step is 6.8 px against a 3.5 px hull, so ~3.3 px of lit shoulder
+ * survives outboard of the tongue's own line — a real step in the outline rather than a seam, and
+ * the one silhouette event on the top of this gun.
  *
  * ─── WHY IT READS AS PART OF THE SLIDE AND NOT AS A BLOCK PARKED ON IT ──────────────────────
  * Aspect and burial, the two things the inkslinger's last pass identified and could not afford:
@@ -82,8 +82,35 @@ import { PALETTE, hexMix } from '@/art/palette';
  *     Its underside sits at y 0.034 — six millimetres below the receiver's chamfer shoulder
  *     (±0.017, 0.040) and thirteen below its top face — so the plate passes THROUGH the top of
  *     the slide and terminates deep inside it. No base, no seam, no gap for the ink to find.
- *   · 26 mm wide on a 34 mm slab leaves 4 mm of slide showing either side: the plate is inset,
+ *   · 20 mm wide on a 34 mm slab leaves 7 mm of slide showing either side: the plate is inset,
  *     not overhanging. A plate that overhangs is a plate somebody bolted on.
+ *
+ * ─── AND WHY IT IS 20 MM WIDE AND NOT 26 (BUILD 0xx) ────────────────────────────────────────
+ * The playtester, on the shipped 26 mm plate: *"we can still make a bit smaller the sight so its
+ * better visually to aim"*. WIDTH is the only axis that answers that, and it is worth writing
+ * down why the other two were left alone rather than shaved along with it:
+ *
+ *   · WIDTH is what the player actually looks past. At ADS the eye is ON the top face, so the
+ *     plate is edge-on and its two flanks converge to the crosshair — the width is the whole
+ *     visible mass of it and the whole occlusion under the aim point. 26 → 20 mm is 23% off both.
+ *   · HEIGHT is `lineY`, and `lineY` is the aim socket. Lowering it does shrink the plate, and it
+ *     also rides the ENTIRE GUN 2 mm higher in the sight picture (the socket is pinned to the
+ *     camera axis, so the body moves, not the eye) — the receiver top would occlude more, not
+ *     less. It is floored by the hammer besides. Wrong axis for this complaint.
+ *   · LENGTH is the converging line the player aims along. Shortening the forward tongue shortens
+ *     the one cue this sightless gun gives, so the tongue keeps every millimetre it had — and at
+ *     20 mm wide the plan-view aspect goes 2.85:1 → 3.7:1, i.e. narrowing alone makes it read
+ *     MORE like a rail and less like a block, which is the same direction §1.1 was pushing.
+ *
+ * Nothing measured moved: `lineY`, `rearZ`, the ADS solve, the near-plane column, the hammer
+ * interpenetration and every row of the clearance walk below are untouched by construction —
+ * none of them reads `bladeW` or `notchHalfGap`, and narrowing can only pull ±x inboard.
+ *
+ * A BUG WENT WITH IT. At 26 mm the two rear boxes' top FLATS (each 2 mm inboard of its own edge,
+ * `bevelBox`'s chamfer) overlapped by 2 mm — two coplanar faces both at exactly `lineY`, i.e. 3.4
+ * px of z-fight down the centreline of the sight the player stares at. At 20 mm they abut at
+ * x 0 instead of overlapping: one continuous 16 mm flat, no coplanar pair anywhere, and the
+ * chamfers that used to fight are now interior surfaces inside the solid.
  *
  * ─── AND WHAT THE PLAYER SIGHTS WITH ────────────────────────────────────────────────────────
  * The plate's top face IS the sight line — the eye sits exactly on it, so at ADS it is edge-on
@@ -143,11 +170,18 @@ const SIGHT = {
   rearZ: -0.012,
   frontZ: -0.062,
   /**
-   * Blade width and, via `notchHalfGap` below, half of the plate's width. 16 mm is 2.3×
-   * `INK_FLOOR_INTERIOR` and 1.6× the silhouette floor, so the forward tongue is legal on either
-   * hull — which matters, because a 16 mm-wide part is the narrowest thing on this gun.
+   * Blade width, and with `notchHalfGap` below it sets the plate's width: `union = 2 ×
+   * (notchHalfGap + bladeW)` = 20 mm, `tongue = bladeW` = 12 mm, `step per side = notchHalfGap +
+   * bladeW/2` = 4 mm. WAS 0.016 — see "AND WHY IT IS 20 MM WIDE" at the top of this file.
+   *
+   * 12 mm is **1.7× `INK_FLOOR_INTERIOR`** (0.007) and 1.2× the silhouette floor. It is legal on
+   * the interior hull, which is the one it rides (`view.sightOutlinePx` 3.5 px), and that is
+   * precisely what the interior floor was added for: 12 mm is 20.4 px raw and keeps 13.4 px of
+   * albedo after both bands. It is the narrowest part on this gun and it does not need to get
+   * narrower — under 10 mm it would also stop being expressible through `inkChunk`, which still
+   * clamps to `INK_FLOOR` unconditionally for every part that is not a sight blade.
    */
-  bladeW: 0.016,
+  bladeW: 0.012,
   /**
    * How far each box reaches DOWN from the line. NEITHER IS A VISIBLE HEIGHT: the plate stands
    * `lineY − 0.047` = 13 mm proud and these say only how deep the root goes. At 26 mm the
@@ -173,15 +207,21 @@ const SIGHT = {
   /**
    * **NEGATIVE, AND THAT IS THE POINT.** The builder places the rear pair at
    * `±(notchHalfGap + bladeW/2)`, so this number is the x of each box's INNER face. At 0 they
-   * abut on the centreline (two coplanar faces, which z-fight); at −0.003 they OVERLAP BY 6 MM
-   * and the pair is a single 26 mm solid with no notch, no gap and no seam.
+   * abut on the centreline (two coplanar faces, which z-fight); at −0.002 they OVERLAP BY 4 MM
+   * and the pair is a single 20 mm solid with no notch, no gap and no seam.
+   *
+   * FOUR MILLIMETRES IS THE FLOOR, NOT A ROUNDING. `bevelBox` chamfers each inner face by 2 mm,
+   * so an overlap of 2 mm or less would leave the two chamfers meeting instead of one box
+   * cutting through the other — a hairline V down the middle of the plate, which is the notch
+   * this design exists to not have. 4 mm is 2× the bevel, and it is why `bladeW` stopped at 12
+   * rather than going lower: `step` is held at 4 mm, so `overlap = bladeW − 8 mm`.
    *
    * There is no sight picture to lose by closing it: this gun has no front element to frame, and
    * `sightWings` — the one other consumer of this field — is deliberately null. Do not take it
    * back to a positive number without re-reading the block at the top of this file; a gap here is
    * how "one mass" becomes "two walls" and the playtester starts counting again.
    */
-  notchHalfGap: -0.003,
+  notchHalfGap: -0.002,
 } as const;
 
 /**

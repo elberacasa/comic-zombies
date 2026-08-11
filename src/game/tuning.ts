@@ -1479,17 +1479,28 @@ export const WEAPON = {
 
     // ── RECOIL KICK (the model layer — bigger and slower than the camera's, always) ────────
 
-    /** Metres the model punches back / up per unit of the def's `weaponKick`. */
+    /**
+     * Metres the model punches back / up per unit of the def's `weaponKick`, **at or below the
+     * reference rate** — see `kickSettleResidual`. A weapon that fires faster than its own kick
+     * spring can settle gets a stiffer spring and therefore a proportionally SMALLER excursion
+     * from the same impulse; these numbers stay the authored ceiling, which is what the pose
+     * table in `viewmodel.ts` checks clearance against.
+     */
     kickBack: 0.055,
     kickUp: 0.016,
-    /** Degrees the model pitches up / yaws / rolls per unit of `weaponKick`. */
+    /** Degrees the model pitches up / yaws / rolls per unit of `weaponKick`. Same ceiling rule. */
     kickPitchDeg: 9.5,
     kickYawDeg: 3.2,
     kickRollDeg: 5.5,
     /**
-     * The model's kick springs. `CAMERA.recoilHz` is 9 Hz at ζ0.55; these are deliberately
-     * LOWER and BOUNCIER so the gun is still settling after the camera has finished. If the two
-     * layers ever end up with the same numbers, delete one — you no longer have two layers.
+     * The model's kick springs — and these are a **FLOOR**, not a fixed frequency.
+     * `CAMERA.recoilHz` is 9 Hz at ζ0.55; these are deliberately LOWER and BOUNCIER so the gun
+     * is still settling after the camera has finished. If the two layers ever end up with the
+     * same numbers, delete one — you no longer have two layers.
+     *
+     * At 6.5 / 5.8 Hz these settle in ~111 ms / ~137 ms (`kickSettleResidual` below), which is
+     * one shot every ~542 / ~438 rpm. Every gun slower than that runs on exactly these numbers.
+     * A faster gun raises its own frequency instead — see `kickSettleResidual`.
      */
     kickPosHz: 6.5,
     kickPosDamping: 0.42,
@@ -1497,6 +1508,66 @@ export const WEAPON = {
     kickRotDamping: 0.38,
     /** Kick multiplier while aiming. A braced gun moves less in the sight picture. */
     kickAdsMult: 0.55,
+    /**
+     * ═══════════════════════════════════════════════════════════════════════════════════════
+     * THE RATE-AWARE KICK SPRING, AND THE BUG IT EXISTS TO KILL.
+     *
+     * BUILD 0xx, the playtester on the ratatat: *"the recoil effect in the gun is too much, like
+     * if its an automatic weapon and u leave trigger on, it just starts jumping all over the
+     * screen"*. The arithmetic, which is the same failure shape as `WEAPON.hitstopMinGap` and on
+     * the same gun:
+     *
+     *     kickRotHz 5.8  →  172 ms period,  ~137 ms to settle
+     *     kickPosHz 6.5  →  154 ms period,  ~111 ms to settle
+     *     ratatat at 900 rpm                  **66.7 ms between shots**
+     *
+     * The SMG re-kicks its own viewmodel spring 2.1× faster than the spring can get home. The
+     * measured consequence is NOT a growing oscillation — it is a **permanent offset**: under
+     * sustained fire the model sat at a mean of 4.3° of pitch and 23 mm of push-back and never
+     * once returned to rest, wandering between 2.2° and 5.6° for as long as the trigger was
+     * held. A large object parked off-centre and never still is exactly "jumping all over the
+     * screen", and it is caused by the *rate*, not by the amplitude.
+     *
+     * THE RULE. A shot's kick spring runs at whatever frequency lets its envelope decay to this
+     * residual before the NEXT shot lands, and never below the authored floor above:
+     *
+     *     effectiveHz = max(floorHz, -ln(residual) / (2π · ζ · shotInterval))
+     *
+     * The interval is MEASURED by the viewmodel from its own clock, so this needs no plumbing
+     * and automatically covers a fire-rate boon, `fireRateScale`, and any weapon anyone ever
+     * adds. The impulse is deliberately left alone (see `Viewmodel.fire`), so a stiffer spring
+     * also means a proportionally smaller excursion — one number buys TIGHT, FAST and SMALL
+     * together, which is the CoD high-RPM SMG feel: it buzzes, it does not heave.
+     *
+     * WHY 0.15 AND NOT SOMETHING TIDIER. It is the one number that leaves the other three guns
+     * bit-for-bit untouched with margin. At 0.15 the floor stops binding above 438 rpm (rot) /
+     * 542 rpm (pos); the inkslinger and THE PRESS cap out at 400 rpm and so ask for 5.30 / 4.79
+     * Hz, *below* both floors, and the boomstick (90) and longshot (55) are nowhere near. Raise
+     * this number and you start re-tuning the pistol by accident.
+     */
+    kickSettleResidual: 0.15,
+    /**
+     * Ceiling on the frequency the rule above may ask for, Hz. 30 is the Nyquist of a 60 fps
+     * display: a kick spring faster than this rises and falls between two frames, so the player
+     * sees an aliased flicker or nothing at all, and the excursion (which shrinks as 1/Hz) has
+     * already fallen below a pixel. It engages past ~2250 rpm — a minigun, where a per-shot kick
+     * is the wrong idea anyway. Past the ceiling the displacement stops shrinking and
+     * `kickPosMax` / `kickRotMaxDeg` below become the thing holding the line, which is exactly
+     * what a safety net is for.
+     */
+    kickHzMax: 30,
+    /**
+     * HARD CEILING on the accumulated kick, metres and degrees, applied to the summed spring
+     * every frame. Pure safety net — nothing in the shipped arsenal comes near it, and the rule
+     * above is what actually fixes the ratatat. This is here so that no future combination of
+     * fire rate, `weaponKick` and boons can ever walk the model off the screen.
+     *
+     * Sized at 3.5 units of `weaponKick`: one shot of the boomstick, the heaviest gun we have at
+     * `weaponKick` 2.6, peaks at 0.149 m / 29.7° of magnitude. A gun authored past ~3.5 would
+     * clip against this — raise it then, deliberately, rather than letting the net go slack now.
+     */
+    kickPosMax: 0.20,
+    kickRotMaxDeg: 40,
 
     // ── RELOAD ROUTINE (scripted over the reload's real duration, so it always fits) ───────
 
