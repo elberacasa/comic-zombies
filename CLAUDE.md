@@ -23,7 +23,48 @@ Three pillars, in priority order:
 - **100% IN-HOUSE ASSETS.** Zero downloaded models, textures, sounds, or fonts-as-assets. Every mesh is generated from code or authored as procedural geometry. Every texture is drawn to a canvas/shader at runtime. Every sound is synthesized with WebAudio. This is *why* we chose comic style — bold, flat, ink-outlined art is achievable in-house at a level that reads as premium.
 - **COMIC STYLE IS LAW.** See `docs/ART_DIRECTION.md`. Cel-banded lighting, heavy ink outlines, halftone dots, screen-tone shadows, saturated limited palette, onomatopoeia pop-ups ("BLAM!", "SPLAT!"), speed lines, panel-style UI. Never drift toward realism, never drift toward "low-poly pastel indie".
 - **60 FPS at 1080p** on a mid-range laptop GPU. Performance is a feature.
-- **BROWSER ONLY.** No install, no download step, loads in seconds.
+- **BROWSER ONLY.** No install step. (Load *time* is no longer sacred — see the pivot below.)
+
+---
+
+## 1.5 THE PIVOT — READ THIS BEFORE ANY VISUAL WORK
+
+The bar is **Skopje '83** (Steam, Nov 2025) — a comic-book-styled FPS with rogue-lite elements, the
+closest published comparable to this game. The human named it as the target. Two rules changed
+after comparing against it. **A fresh agent working from older context will get these wrong.**
+
+### What did NOT change
+**100% in-house assets stays.** It is the project's differentiator, the README's entire hook and
+the reason `gallery.html` exists. Do not add asset files. Ever.
+
+### What DID change
+
+1. **BOOT TIME AND MEMORY ARE NO LONGER CONSTRAINED.** The human, verbatim: *"dont mind the weight
+   as long as it runs"*. Textures were capped at 256 px and the arena baked in ~200 ms because
+   the game had to load in seconds. That ceiling is lifted — generate bigger textures, more prop
+   variety, more bake time. A few seconds of loading screen is fine. **60 fps at runtime is still
+   absolute.** This is a boot-cost relaxation, not a frame-cost one.
+
+2. **PALETTE RESTRAINT IS RELAXED. BE LOUDER.** The reserved channels still hold — `ACID` and `HOT`
+   belong to enemies, `GOLD` to interactables — but the value ceiling and saturation were tuned
+   timidly. Skopje is *loud*: saturated yellow against magenta against orange fire. We can be far
+   bolder inside the same rules, and the "one warm accent per weapon" rule is retired — their guns
+   carry five or six colour zones each.
+
+### And the process rule that changed, which matters most
+
+**AGENTS MAY NOW TAKE SCREENSHOTS — one, at the START of a visual task, to aim.**
+
+The old rule ("machines check facts, the human judges feel") was meant to save tokens. On visual
+work it cost far more: three consecutive passes fixed the wrong thing on the weapons — base
+colours, then the glove, then finally a cyan rim light — because everything was measured
+part-by-part, blind. One screenshot at the start showed all three in seconds, plus that the gun is
+~8% of frame against Skopje's ~25%, that it renders as a dark unreadable blob, and that the bottom
+40% of the frame is flat empty ground. **None of that was findable by measurement.**
+
+So: look ONCE to aim, then measure and iterate blind as before. Do NOT loop on screenshots — the
+human still judges whether it looks *good*, free and better. An agent's screenshot is for
+targeting, not taste.
 
 ---
 

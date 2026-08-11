@@ -21,6 +21,38 @@ Last updated: end of the BUILD 010 overnight session.
 
 ---
 
+## ⇢ THE PIVOT — READ `CLAUDE.md §1.5` BEFORE ANY VISUAL WORK
+
+The reference target is now **Skopje '83** (Steam, Nov 2025) — a comic-book FPS with rogue-lite
+elements, the closest published comparable. Three rules changed and an agent on stale context WILL
+get them wrong:
+
+1. **Boot time / memory are unconstrained** — *"dont mind the weight as long as it runs"*. 256 px
+   textures and a 200 ms arena bake were load-time compromises. Lift them. 60 fps at RUNTIME is
+   still absolute.
+2. **Be louder.** Reserved channels hold (ACID/HOT = enemies, GOLD = interactables) but the value
+   ceiling and saturation were timid. The "one warm accent per weapon" rule is retired.
+3. **Agents may screenshot ONCE at the start of a visual task, to aim.** Not to judge — the human
+   still judges taste. See `CLAUDE.md §1.5` for why this changed; it saved nothing and cost three
+   wrong fixes in a row.
+
+**100% in-house assets is UNCHANGED and is not up for discussion.**
+
+### What one screenshot immediately revealed, that measurement never did
+- The viewmodel is **~8% of frame**; Skopje's is ~25%. It is a corner prop, not a hero object.
+- It renders as a **dark, unreadable blob** — every per-gun colour tuned over three passes is
+  invisible at that size and value.
+- The **bottom ~40% of the frame is flat, bright, empty ground** — the largest single area in the
+  picture carries no information.
+- **No atmospheric depth**: distant buildings are as saturated as near ones, so the city reads
+  flat. `passes/grade.ts` already has exposure/contrast/lift/saturation/vibrance/tints and
+  `passes/vignette.ts` exists — the machinery is there, the VALUES are timid and depth haze is
+  missing entirely.
+
+Highest visual impact per token, in order: **grade + atmosphere pass** (one shader, every pixel) →
+lighting rig constants → palette tokens → viewmodel scale → multi-zone weapon colour. Avoid
+per-prop geometry authoring; it is linear cost for tiny per-item gain.
+
 ## ⇢ THE ONE THING TO DO NEXT
 
 **`docs/HUMAN_JUDGE.md` is written and UNANSWERED. Get those 15 answers before building anything.**
