@@ -93,6 +93,38 @@ part of why it feels dynamic rather than like a held prop.
 4. **Rebalance colour**: calm desaturated body, 2–3 tiny saturated accents at the periphery.
 5. Only then revisit proportions.
 
+## 2.5 THE STANDING QUALITY BAR — for every new gun, not just the first
+
+> *"we are making new guns so just a consideration, make the weapons look truly AAA+ quality,
+> super pro"* — the playtester.
+
+This is a STANDING instruction on all weapon work from here, not a note on one pass. The viewmodel
+is on screen 100% of the session; it is the most-looked-at object in the game and it is judged
+against a published commercial title.
+
+What "AAA+" means concretely here — each of these is a thing a previous pass got wrong, so they
+are checks, not sentiment:
+
+1. **It must read as a MACHINE, not an assembly of primitives.** Parts must look joined,
+   machined and load-bearing — a thing that could be manufactured. If a part looks placed rather
+   than fitted, it is wrong.
+2. **NO part may look bolted on.** Six passes died on exactly this. Anything standing separate
+   from the body of the gun is suspect by default.
+3. **Detail comes from LINES AND SURFACE, not from added solids** (§1.3). This is now buildable —
+   see `INK_FLOOR_INTERIOR` / `INK_FLOOR_CREASE` in `tuning.ts` and the hierarchical ink line.
+4. **Big calm masses with detail concentrated in two or three places** (§1.4). Evenly-distributed
+   small detail reads as noise at every size.
+5. **Calm desaturated body, 2–3 tiny saturated accents at the periphery** (§1.5).
+6. **It must survive the ink line at ARM'S LENGTH**, which is the only distance it is ever seen
+   at. Author for the screen, never for the spec sheet — the hero lens magnifies ~2.6x at hip, so
+   a part that reads modest in metres can dominate the frame.
+7. **Every mechanism must look like it works.** A charging handle should look grabbable, an
+   ejection port like something exits it, a magazine like it inserts.
+
+**The acceptance test is §3 below and it has not changed**: crop the weapon out of a full-size
+frame, put it beside the reference crop, and ask whether ours reads as a machine. Anything less
+than yes is a no.
+
 ## 3. HOW TO KNOW IT WORKED
 
 The gates stay as they are (ink floor, clearance, aim solve, 60 fps). But the acceptance test for
