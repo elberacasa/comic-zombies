@@ -209,6 +209,27 @@ const MODEL_SCALE = 1;
 const INK_FLOOR = 0.010;
 
 /**
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ * THE RIM IS NO LONGER CYAN, AND THAT WAS THE BLUE.
+ *
+ * Every viewmodel material used `rimColor: PALETTE.ELECTRIC` — 0x00e5ff, PURE CYAN — and a
+ * Fresnel rim is strongest at grazing angles, i.e. exactly the edges nearest the camera. So all
+ * four weapons wore an identical bright cyan light along every near edge, which is precisely what
+ * the playtester kept reporting after three separate passes at the base colours: "they still all
+ * look blue close to the hand and in the back of the gun". No base colour could have fixed it —
+ * the rim sat on top of all of them, the same on every gun.
+ *
+ * It was also a palette violation hiding in plain sight: the palette's own comment calls ELECTRIC
+ * "a UI/player signal", not a material colour.
+ *
+ * Warm and dim now — a soft bounce off the world rather than a light show — so it describes the
+ * edge without repainting it, and each gun's own colour is what survives at the silhouette.
+ * ═════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const VIEW_RIM = hexMix(PALETTE.CONCRETE, PALETTE.RUST, 0.22);
+
+
+/**
  * The rake every magazine and every mag well is built on, radians. One number, so the well and
  * the magazine that slides through it cannot be authored at two different angles.
  */
@@ -1409,7 +1430,7 @@ export class Viewmodel {
      */
     const FRAME_LOOK: FieldLook = {
       shadowColor: PALETTE.TEAL,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.26,
       halftoneAngle: 75,
       toneFloor: 0.22,
@@ -1456,7 +1477,7 @@ export class Viewmodel {
      */
     const POLYMER_LOOK: FieldLook = {
       shadowColor: PALETTE.INK_SOFT,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.30,
       halftoneAngle: 60,
       toneFloor: 0.30,
@@ -1468,7 +1489,7 @@ export class Viewmodel {
     };
     const STEEL_LOOK: FieldLook = {
       shadowColor: PALETTE.TEAL,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.28,
       halftoneAngle: 0,
       toneFloor: 0.24,
@@ -1521,7 +1542,7 @@ export class Viewmodel {
       name: 'Ink:viewmodel-glove',
       color: hexMix(PALETTE.INK, PALETTE.CONCRETE, 0.36),
       shadowColor: PALETTE.INK_SOFT,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.22,
       halftoneAngle: 30,
       toneFloor: 0.26,
@@ -1535,7 +1556,7 @@ export class Viewmodel {
       name: 'Ink:viewmodel-trim',
       color: PALETTE.BONE,
       shadowColor: PALETTE.TEAL,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.24,
       halftoneAngle: 45,
       toneFloor: 0.2,
@@ -1565,9 +1586,24 @@ export class Viewmodel {
      */
     const sightMat = makeInkMaterial({
       name: 'Ink:viewmodel-sights',
-      color: PALETTE.BONE,
-      shadowColor: hexMix(PALETTE.BONE, PALETTE.TEAL, 0.4),
-      rimColor: PALETTE.ELECTRIC,
+      /**
+       * DARK IRON, NOT BONE. This was `PALETTE.BONE` (0.73) — the brightest value anywhere on the
+       * weapon — worn by three separate blades standing proud of the top edge. The playtester has
+       * now named it three times, most recently "the longshot has 3 grey thing on top looks bad,
+       * same with inkslinger". They were three pale bars because they were literally three pale
+       * bars.
+       *
+       * Real iron sights are BLACK, and they work: a dark post reads against the world you are
+       * aiming at, not against the gun. That is the correct contrast direction and it also solves
+       * the complaint, so the post is now dark iron with a slightly cooler shadow.
+       *
+       * `toneFloor` stays high for the reason the original note gives — a post that falls into
+       * shadow when you aim into shadow disappears exactly when you need it — so the blades keep
+       * their own internal light even though they are dark.
+       */
+      color: hexMix(PALETTE.INK, PALETTE.CONCRETE, 0.30),
+      shadowColor: hexMix(PALETTE.INK, PALETTE.TEAL, 0.22),
+      rimColor: VIEW_RIM,
       rimStrength: 0.18,
       halftoneAngle: 45,
       toneFloor: 0.55,
@@ -1637,7 +1673,7 @@ export class Viewmodel {
       // Walnut is warm, so it takes a cool shadow (ART §1). Oiled, not lacquered: a little more
       // specular than polymer, nowhere near the machined steel.
       shadowColor: PALETTE.TEAL,
-      rimColor: PALETTE.ELECTRIC,
+      rimColor: VIEW_RIM,
       rimStrength: 0.26,
       halftoneAngle: 60,
       toneFloor: 0.28,
