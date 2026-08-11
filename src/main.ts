@@ -101,6 +101,11 @@ interface CzGlobals {
   setEscalation(n?: number): number;
   /** Grant a boon by id, skipping the draw. `CZ.boons.allDefs` lists every id. */
   giveBoon(id: string): void;
+  /**
+   * Put a weapon in your hands, skipping the wall-buy that does not exist yet.
+   * `'ratatat'` · `'boomstick'` · `'longshot'` · `'inkslinger'`.
+   */
+  give(id: string): void;
   /** Deal a boon draw right now, outside the round beat. */
   offerBoons(n?: number): void;
   /** Kill the player outright — the fastest route to the run-summary panel. */
@@ -928,6 +933,14 @@ async function boot(): Promise<void> {
       skipToRound: (n: number) => rounds.skipToRound(n),
       setEscalation: (n?: number) => rounds.setEscalation(n),
       giveBoon: (id: string) => boons.grant(id),
+      give: (id: string) => {
+        if (!ctx.weapons.getDef(id)) {
+          console.warn(`[CZ] no weapon '${id}'. Try: ` +
+            ctx.weapons.allDefs.map((d) => `'${d.id}'`).join(' · '));
+          return;
+        }
+        ctx.weapons.give(id);
+      },
       // Through the CONTRACT, not the class: `BoonSystem.offer`'s default parameter narrows its
       // own type to the literal 3, which a caller passing a plain `number` cannot satisfy.
       offerBoons: (n = 3) => ctx.boons.offer(n),

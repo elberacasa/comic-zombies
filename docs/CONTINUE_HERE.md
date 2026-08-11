@@ -82,7 +82,60 @@ coherent thing instead of two random offsets (`shoulderLead`).
 Budget after: **194 draw calls, 459k triangles at 25 alive** — unchanged, because no ring
 *counts* changed. Hit registration unchanged (limb miss ≤0.9% at 5/15/30 m).
 
-### 3. Next, once the judge sheet comes back
+---
+
+## BUILD 009 — the playtester's next round of notes
+
+Their verdict on 008: **"FEELS BETTER"**, with one blocker and a big content ask.
+
+### The blocker: "graphics are going low and they look bad suddenly swapping quality" ✅
+Second report of this. The first was the governor *hunting* (fixed in 008 — a spike resets the
+counter). This one was different: the logic was correct and you could still SEE it work. Three
+policy faults in `render/renderer.ts`, all now fixed:
+
+- `STEP` was **0.1** — a 10% resolution change lands in one frame and the whole image softens at
+  once. Now **0.04**, below the threshold where one step is perceptible.
+- `MIN` was **0.55** — thirty percent of the pixels. That is not a soft image, it is a bad one.
+  Now **0.74**.
+- It **dropped the feature tier** once resolution bottomed out, switching bloom and grain OFF
+  mid-fight. That does not soften the image, it *changes* it, with the player doing nothing —
+  the exact case `GAME_BIBLE §8.5` calls a bug. **Removed entirely.** Tier is chosen once at boot
+  or by the player.
+
+Small steps only converge if there are enough of them, so the first drop still costs 3 s of
+sustained slowness and the dial then steps every 0.6 s instead of re-arming the full hold.
+
+### Three new weapons ✅ (data only — NOT obtainable yet)
+`ratatat` (SMG), `boomstick` (shotgun), `longshot` (marksman) are in `WEAPON_DEFS` and fully
+functional: `service.ts:498` loops `def.pellets`, `firing.ts:180` honours `def.penetration`. Every
+recoil pattern's yaw column sums to **exactly 0** (the file's own rule — a net lateral bias walks
+the player's aim sideways with no input). Verified in-browser: all three equip with correct ammo.
+
+**`thumper` is deliberately absent.** The archetype note in `defs.ts` claimed `firing.ts`
+"dispatches on `def.archetype`" and that the launcher branch "is already there" — **both are
+false**, `archetype` is not read anywhere in the firing path. The other four shipped anyway
+because they are hitscan. The note is corrected in place.
+
+Reach them with **`CZ.give('ratatat')`**.
+
+### THE NEXT CHUNK, and it is one chunk not two
+**Wall-buys + the spend UI.** These are the same job: in Zombies a wall-buy *is* how you get a
+gun, and it is also the only thing that makes points mean anything. Right now `PlayerService` has
+`addPoints()` and `points` but **no `spend()`** — that is the first thing to add. Then buy zones
+in the arena, a prompt, and the purchase UI. After that: mystery box, Pack-a-Punch, perks.
+
+Then: **production menus** — main menu, pause, settings with mouse sensitivity, graphics and
+audio. Their words: *"great menus now targeting production and not debugging, with sensibility
+and all the pro features"*. Everything is F-keys and console handles today.
+
+**Known gap:** all four weapons share ONE hardcoded viewmodel (`buildGunGeometry()`, built once
+and cached). An SMG that looks like a pistol is a `CLAUDE.md` §1 violation ("if a screen looks
+plain, it is a bug"). Needs a per-archetype silhouette profile — barrel length, stock, foregrip,
+scope, wide receiver — not four hand-authored models.
+
+---
+
+### Older: next, once the 008 judge sheet comes back
 Still open from the human's own list, in their words: *"they can be a bit smarter"* (awareness,
 flanking — the AI is still one `melee` role for everything except the Screamer), and the
 clothing-vs-flesh split / wounds, which is the one part of "better bodies" NOT done — the body is

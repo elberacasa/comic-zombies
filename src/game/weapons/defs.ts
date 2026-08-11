@@ -157,8 +157,196 @@ export const INKSLINGER: WeaponDef = {
 // The registry
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
-/** Everything the game can hand you. M2 ships one, perfectly. M4 fills this out. */
-export const WEAPON_DEFS: readonly WeaponDef[] = [INKSLINGER];
+/**
+ * ═══ THE RATATAT — SMG, the hip-fire king ═══
+ *
+ * Identity: you do not aim this gun, you SWIM in a horde with it. The lowest per-shot damage in
+ * the game and by far the highest rate, so its answer to a body in your face is volume, and its
+ * answer to a body at 40 m is "that is not your job".
+ *
+ * The pattern is the whole skill. It cracks vertically over five shots, plateaus, then drifts
+ * HARD LEFT for ten — and the last six sweep back right. Holding the mouse down and pulling
+ * straight down does not work; you have to counter the drift and then stop countering it, which
+ * is exactly the "learnable pattern, not a slope" test in the inkslinger's own note above.
+ */
+export const RATATAT: WeaponDef = {
+  id: 'ratatat',
+  name: 'RATATAT',
+  archetype: 'smg',
+  /** 26 × 2.2 = 57 a head. Four heads or ~6 bodies on a round-1 shambler — it kills by RATE. */
+  damage: 26,
+  /** Below the pistol's 2.5: rewarding precision on a 900 rpm spray would delete the marksman. */
+  headshotMult: 2.2,
+  /** 900 rpm = 15 rounds a second. The mag is gone in 2.1 s, which is the whole risk. */
+  rpm: 900,
+  auto: true,
+  magSize: 32,
+  reserveAmmo: 224,
+  reloadTime: 1.9,
+  activeReloadWindow: [0.78, 0.24],
+  pellets: 1,
+  /**
+   * Hip 0.020 rad ≈ 1.1° — WIDER than the pistol in absolute terms but far tighter per second of
+   * fire, which is what "hip-fire king" actually means. ADS 0.006 is deliberately NOT a laser:
+   * aiming an SMG should tighten the cone, not turn it into a marksman.
+   */
+  spreadHip: 0.020,
+  spreadAds: 0.006,
+  recoilPattern: [
+    [0.0182, 0.0000],
+    [0.0170, 0.0014],
+    [0.0158, 0.0013],
+    [0.0146, -0.0003],
+    [0.0134, -0.0015],
+    [0.0120, -0.0011],
+    [0.0112, 0.0005],
+    [0.0110, 0.0016],
+    [0.0116, -0.0042],
+    [0.0126, -0.0053],
+    [0.0137, -0.0064],
+    [0.0142, -0.0075],
+    [0.0140, -0.0086],
+    [0.0131, -0.0097],
+    [0.0120, -0.0108],
+    [0.0112, -0.0119],
+    [0.0110, -0.0130],
+    [0.0116, -0.0141],
+    [0.0127, 0.0120],
+    [0.0137, 0.0135],
+    [0.0142, 0.0150],
+    [0.0140, 0.0160],
+    [0.0131, 0.0165],
+    [0.0120, 0.0166],
+  ],
+  recoilRecovery: 3.4,
+  /** Small per shot, brutal cumulative — fifteen of these a second is the real kick. */
+  cameraKick: 0.45,
+  weaponKick: 0.7,
+  range: 32,
+  falloff: 0.45,
+  penetration: 0,
+  adsTime: 0.15,
+  adsFov: 62,
+  moveSpeedMult: 0.94,
+  affix: 'none',
+  buyCost: 1200,
+  ammoCost: 600,
+};
+
+/**
+ * ═══ THE BOOMSTICK — shotgun, the panic button ═══
+ *
+ * Identity: the answer to being SURROUNDED, and nothing else. 8 pellets × 24 is 192 damage
+ * inside 8 m and almost nothing past 18, because `falloff` 0.18 is the most aggressive in the
+ * game. It exists to buy you the half-second you need to get out of a corner.
+ *
+ * Six shells and a 2.6 s reload is the cost. Firing it dry in a crowd is how you die with it.
+ */
+export const BOOMSTICK: WeaponDef = {
+  id: 'boomstick',
+  name: 'BOOMSTICK',
+  archetype: 'shotgun',
+  damage: 24,
+  /** 1.6, not 2.5: with 8 pellets a "headshot" is really 3 pellets that happened to land high. */
+  headshotMult: 1.6,
+  rpm: 90,
+  auto: false,
+  magSize: 6,
+  reserveAmmo: 48,
+  reloadTime: 2.6,
+  activeReloadWindow: [1.05, 0.30],
+  pellets: 8,
+  /** 0.075 rad ≈ 4.3° — a real cone. You point this, you do not aim it. */
+  spreadHip: 0.075,
+  spreadAds: 0.052,
+  recoilPattern: [
+    [0.0620, 0.0000],
+    [0.0585, 0.0090],
+    [0.0570, -0.0075],
+    [0.0562, 0.0062],
+    [0.0575, -0.0058],
+    [0.0596, -0.0019],
+  ],
+  recoilRecovery: 2.2,
+  /** The heaviest kick in the game on both layers. It should feel like it hurts to fire. */
+  cameraKick: 2.2,
+  weaponKick: 2.6,
+  range: 18,
+  falloff: 0.18,
+  penetration: 0,
+  adsTime: 0.26,
+  adsFov: 66,
+  moveSpeedMult: 0.90,
+  affix: 'none',
+  buyCost: 1500,
+  ammoCost: 750,
+};
+
+/**
+ * ═══ THE LONGSHOT — marksman, the train-killer ═══
+ *
+ * Identity: `penetration: 3`. Every other gun stops at the first body; this one goes through
+ * four. It is the only weapon in the game that rewards the player for the horde being in a
+ * CONGA LINE — which is the skill the whole enemy design is built around (GAME_BIBLE §4), and
+ * until now nothing paid you for doing it.
+ *
+ * `headshotMult: 4` on 145 base is 580 to a head, through four heads. That is the highest
+ * ceiling in the arsenal and it is gated behind lining the shot up, at 55 rpm, from range.
+ */
+export const LONGSHOT: WeaponDef = {
+  id: 'longshot',
+  name: 'LONGSHOT',
+  archetype: 'marksman',
+  damage: 145,
+  headshotMult: 4,
+  rpm: 55,
+  auto: false,
+  magSize: 7,
+  reserveAmmo: 56,
+  reloadTime: 2.4,
+  activeReloadWindow: [0.95, 0.26],
+  pellets: 1,
+  /**
+   * Hip 0.055 is enormous ON PURPOSE — three times the shotgun's useful accuracy. This is an ADS
+   * weapon and the def says so out loud: hip-firing it is a mistake the numbers punish rather
+   * than a playstyle. ADS 0.0004 is four times tighter than the pistol's laser.
+   */
+  spreadHip: 0.055,
+  spreadAds: 0.0004,
+  recoilPattern: [
+    [0.0480, 0.0000],
+    [0.0455, 0.0074],
+    [0.0442, -0.0068],
+    [0.0451, 0.0052],
+    [0.0468, -0.0058],
+  ],
+  recoilRecovery: 2.0,
+  cameraKick: 1.8,
+  weaponKick: 2.0,
+  /** The arena's longest sightline is ~140 m and this is the only gun that owns it. */
+  range: 140,
+  falloff: 0.95,
+  penetration: 3,
+  adsTime: 0.32,
+  adsFov: 34,
+  /** You are slow carrying this. Committing to the long lane is the trade. */
+  moveSpeedMult: 0.88,
+  affix: 'none',
+  buyCost: 2000,
+  ammoCost: 900,
+};
+
+/**
+ * Everything the game can hand you.
+ *
+ * `thumper` (GAME_BIBLE §3's launcher) is deliberately NOT here. The archetype note below this
+ * registry used to claim `firing.ts` "dispatches on `def.archetype`" and that the launcher branch
+ * was already written — neither is true; `archetype` is not read anywhere in the firing path, and
+ * every weapon above works purely because it is hitscan data. A launcher needs a real projectile
+ * (arc, splash, self-knockback), so it ships when that exists rather than as a def that silently
+ * fires an invisible bullet.
+ */
+export const WEAPON_DEFS: readonly WeaponDef[] = [INKSLINGER, RATATAT, BOOMSTICK, LONGSHOT];
 
 const _byId = new Map<string, WeaponDef>();
 for (const d of WEAPON_DEFS) _byId.set(d.id, d);
@@ -232,10 +420,12 @@ export function upgradedDef(base: WeaponDef, affix: WeaponAffix = 'none'): Weapo
 //                        range 18 · penetration 0 · weaponKick 2.6
 //   longshot  Marksman   penetration: 3 · headshotMult 4 · rpm 55 · range 140 · falloff 0.95 ·
 //                        adsFov 34 · spreadHip huge (it is an ADS weapon and the def says so)
-//   thumper   Launcher   archetype: 'launcher' — the ONE archetype that is not hitscan.
-//                        `firing.ts` dispatches on `def.archetype`, and the launcher branch is
-//                        already there, delegating to a projectile hook that M4 fills in. The
-//                        def carries everything else it needs (damage, rpm, mag, reload, kick);
-//                        the splash radius rides on `PlayerStats.explosiveRadius` exactly like
-//                        the explosive-rounds boon, so no new def field is required.
+//   thumper   Launcher   archetype: 'launcher' — the ONE archetype that is not hitscan, and the
+//                        ONE still unbuilt. CORRECTION, BUILD 009: this note used to say
+//                        "`firing.ts` dispatches on `def.archetype`, and the launcher branch is
+//                        already there". Both halves are false — `archetype` is not read anywhere
+//                        in the firing path. The other four archetypes shipped anyway, because
+//                        they are all hitscan and `pellets` / `spread` / `penetration` / `falloff`
+//                        genuinely do carry them. The launcher needs real projectile code (arc,
+//                        splash, self-knockback) and is the honest remaining gap.
 // ═════════════════════════════════════════════════════════════════════════════════════════════

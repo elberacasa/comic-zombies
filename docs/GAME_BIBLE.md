@@ -59,14 +59,22 @@ per weapon (deterministic, seeded — mastering the pattern is skill, not luck).
   ~40% faster and grants a 3-second damage buff. Missing it adds a small stumble. *High ceiling.*
 - **Weapon inventory:** 2 slots, fast swap, cancel-reload-with-swap tech.
 
-### Weapon archetypes (M2 ships one, M4 ships the set)
-| Id | Archetype | Identity |
-|---|---|---|
-| `inkslinger` | Pistol (starter) | Infinite reserve, precise, rewards headshots |
-| `ratatat` | SMG | High RPM, wild vertical climb, hip-fire king |
-| `boomstick` | Shotgun | 8 pellets, one-shot cone, the panic button |
-| `longshot` | Marksman rifle | Pierces 3 zombies in a line, huge crit |
-| `thumper` | Grenade launcher | Arcing, splash, self-knockback for movement tech |
+### Weapon archetypes
+| Id | Archetype | Identity | Status |
+|---|---|---|---|
+| `inkslinger` | Pistol (starter) | Infinite reserve, precise, rewards headshots | **shipped** |
+| `ratatat` | SMG | 900 rpm, hip-fire king. Pattern cracks vertically, drifts hard LEFT for ten shots, then sweeps back — you must counter the drift *and then stop*, which is what makes it learnable rather than a slope. | **shipped** |
+| `boomstick` | Shotgun | 8 pellets × 24, `falloff` 0.18 — the most aggressive in the game. The answer to being surrounded and to nothing else. | **shipped** |
+| `longshot` | Marksman rifle | `penetration: 3` — the only weapon that pays you for the horde being in a conga line, which is the skill the entire enemy design is built around. 580 to a head, through four heads. | **shipped** |
+| `thumper` | Grenade launcher | Arcing, splash, self-knockback for movement tech | **not built** — needs real projectile code; `archetype` is not read anywhere in the firing path today |
+
+**All four shipped guns are pure data.** `pellets`, `spread`, `penetration` and `falloff` carry
+every hitscan archetype, which is why the set landed without the weapon service changing — the
+`WeaponDef` contract was designed for this and it held. The launcher is the one that cannot.
+
+**Not yet obtainable in normal play.** Wall-buys do not exist, so the three new guns are reachable
+only via `CZ.give('ratatat')`. That is the next chunk, and it is the same chunk that makes points
+mean anything — see §5.
 
 **Pack-a-Punch (upgrade station):** spend big points → weapon gets a comic-ified upgraded form,
 new name, +damage, +mag, and an **elemental affix** (shock chain / flame DoT / ink-blind).
