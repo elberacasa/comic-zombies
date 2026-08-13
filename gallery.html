@@ -164,7 +164,12 @@
     h2 { font-size: 1.5rem; box-shadow: 3px 3px 0 var(--ink); }
     .lede { font-size: 1rem; }
     .diagram { padding: 1rem .8rem; }
-    .diagram::after {
+    /* tables carry the real content — stack them to fit, never sideways-scroll a fact */
+    .diagram table { min-width: 0 !important; font-size: .78rem !important; }
+    .diagram th, .diagram td { padding: .4rem .3rem !important; }
+    /* svgs are illustration — a short swipe beats 5px type */
+    .diagram svg { min-width: 480px; }
+    .diagram:has(svg)::after {
       content: "← swipe →"; display: block; font: 10px var(--mono);
       color: #93a2bd; text-align: center; margin-top: .6rem; letter-spacing: .1em;
     }
@@ -619,7 +624,7 @@
 <p class="blurb" style="text-align:center;margin-left:auto;margin-right:auto">
   Built with <a href="https://claude.com/claude-code">Claude Code</a>. Sibling project:
   <a href="https://seedbank-alpha.vercel.app" target="_blank" rel="noopener">Seedbank</a>.
-  If any of this was useful, a star costs you one click and means a lot.
+  The source is open — every generator on this page is in the repo.
 </p>
 
 </div>
