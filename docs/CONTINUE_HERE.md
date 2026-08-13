@@ -21,21 +21,24 @@ In game: **`J` cycles the arsenal**, `Q`/wheel swaps slots, `` ` `` toggles the 
 
 ---
 
-## ⚠ IN FLIGHT RIGHT NOW
+## ⚠ THE STANDING ORDER ON WEAPONS — issued after REDLINE landed
 
-**Workflow `wq4kccb11` (`cz-recoil-and-ceiling`) was running when this was written.** Two phases:
-1. Rate-aware CAMERA recoil + re-key the mount rule on `auto` (see §2 below)
-2. Exempt the `hand` group from `depthCompress` + fix three builder parts under the ink floor
+The human played REDLINE and said: *"loved the new weapon REDLINE, lovely, the recoil is much
+smoother in the screen, now we need to delete old weapons and remake new ones with the redline
+style"* — then explicitly: **keep it in mind, do not make code changes yet.**
 
-If it landed, verify gates (`tsc`, `npm run build`, `node tools/zombie.mjs`), commit, deploy.
-If it did not, its script is at
-`~/.claude/projects/-Users-alejandroberacasa-comic-zombies/*/workflows/scripts/cz-recoil-and-ceiling-*.js`
-and can be resumed with `Workflow({scriptPath, resumeFromRunId})`.
+So: **REDLINE is the template. The other five guns are legacy and are to be replaced, not
+patched.** `inkslinger`, `ratatat`, `boomstick`, `longshot`, `press` all predate both the
+proportion finding and the recoil fix. When this resumes, build replacements in REDLINE's style —
+real-counterpart proportions, one file each, no thin standing parts — rather than editing them.
+Do not open a gun file to "improve" it; that is exactly the seven-pass failure mode in §1.
 
-**THE BROWSER BRIDGE IS DOWN.** `list_connected_browsers` → `[]` through many attempts and a
-Chrome restart. Screenshots are impossible until it reconnects (try toggling the extension at
-`chrome://extensions`, then clicking its toolbar icon on an `http://` tab). **The human is
-currently the only one who can see the game.**
+Sequence when it resumes: `types.ts` relational placement first (§5.2), because rebuilding five
+guns against absolute coordinates would bake the same joint problem into all five.
+
+**The browser bridge is back UP** (`list_connected_browsers` returned one local browser). Note
+that selecting a browser requires an `AskUserQuestion` confirmation first, so it is unusable while
+the human is asleep.
 
 ---
 
@@ -124,17 +127,37 @@ Written by cropping the weapon out of a Skopje '83 screenshot and measuring it. 
 
 ---
 
+## 4.5 THE SITE — `gallery.html`, served at `/`
+
+Updated this session with a **★ STAR ON GITHUB** button (fixed top-right, plus hero and footer
+CTAs), a *What shipped lately* band, a **Seedbank** section, and a `max-width: 720px` mobile
+breakpoint. Stats are now measured off the tree: 61.3k lines / 93 files / 6 weapons / ~369 kB gz.
+
+**A production bug was found and fixed while doing it:** every `PLAY IT` button linked
+`/index.html`, which Vercel's `cleanUrls` 308-redirects to `/` — and `scripts/postbuild.mjs` maps
+`/` to the *gallery*. So the main CTA reloaded the landing page; the game only ever answered on
+`/play`. **Any new link to the game must use `/play`.**
+
+The **Seedbank synergy** is real, not marketing: `~/seedbank/docs/reference/PATTERNS.md` was mined
+from this codebase and says so ("the only complete, shipped, zero-downloaded-asset codebase we
+have: `~/comic-zombies`"), and its `SEEDBANK DIVERGENCE` callouts are a standing list of where this
+game's art shortcuts do not generalise. Live at https://seedbank-alpha.vercel.app.
+
 ## 5. NEXT, IN ORDER
 
-1. **Land the in-flight workflow** (recoil playability, then the hand/`depthCompress` ceiling).
+1. ~~Land the in-flight workflow~~ ✅ **shipped** — automatics never recovered at all (a fixed
+   90 ms `recoilRecoverDelay` re-armed by any faster cycle); REDLINE 6 s aim drift 2.93° → 0.54°,
+   mount band 60.63 → 15.43 mm, first shot preserved bit-for-bit. Hand exempt from `depthCompress`.
 2. **`types.ts` relational placement.** The human spotted this: every part spec positions itself
    at ABSOLUTE `y, z` and none reference each other (`OpticBlockSpec {w,h,d,y,z,…}`,
    `EjectionPortSpec {h,d,y,z,…}`, …). That is structurally why nothing looks joined — parts are
    boxes at coordinates, not an assembly that mates. Wanted: parts attach to named anchors on
    other parts (`{ on: 'receiver.top', inset: 0.004 }`) so they mate by construction and survive a
    proportion change. Do this AFTER the ceiling lifts, so parts have room to mate into.
-3. **Re-proportion every gun against the raised ceiling**, REDLINE first (it is the template).
-4. Then the rest of the MW2 lineup.
+3. **Rebuild the five legacy guns in REDLINE's style** (see the standing order at the top).
+   Replace, do not patch.
+4. Then the rest of the MW2 lineup: THE TYPEWRITER (UMP45) · FULL STOP (Intervention) ·
+   THE SPREAD (SPAS-12).
 
 ## Known-open, deliberately
 
