@@ -4,7 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>COMIC ZOMBIES — how a game draws itself</title>
-<meta name="description" content="An AAA-styled browser zombies shooter with zero downloaded assets. Every texture, mesh, letterform and sound is generated in code. Built in about a day with Claude Code." />
+<meta name="description" content="An AAA-styled browser zombies shooter with zero downloaded assets. Every texture, mesh, letterform and sound is generated in code, with Claude Code." />
+<meta property="og:title" content="COMIC ZOMBIES — a game that draws itself" />
+<meta property="og:description" content="A round-based zombies shooter in a browser tab, styled like a graphic novel. No models, no textures, no audio files, no webfonts — every asset is generated in code." />
+<meta name="theme-color" content="#1d2747" />
 <style>
   :root {
     --ink: #0b0a14; --ink-soft: #262e4c; --paper: #f2e8d5;
@@ -119,10 +122,67 @@
     padding: .5rem 1.3rem; box-shadow: 5px 5px 0 var(--ink);
   }
   .cta a.alt { background: var(--electric); color: var(--ink); }
+  .cta a.star { background: var(--gold); color: var(--ink); }
   .cta a:active { transform: translate(3px,3px); box-shadow: 2px 2px 0 var(--ink); }
+
+  /* ── star on github ───────────────────────────────────────────────── */
+  .starbar {
+    position: fixed; top: .8rem; right: .8rem; z-index: 50;
+    font-family: var(--comic); font-size: 1rem; letter-spacing: .06em;
+    text-decoration: none; background: var(--gold); color: var(--ink);
+    border: 3px solid var(--ink); padding: .4rem .8rem;
+    box-shadow: 4px 4px 0 rgba(0,0,0,.6);
+    display: flex; align-items: center; gap: .4rem;
+  }
+  .starbar:hover { background: var(--sodium); }
+  .starbar:active { transform: translate(2px,2px); box-shadow: 2px 2px 0 rgba(0,0,0,.6); }
+  .starbar .st { font-size: 1.15em; line-height: 1; }
+
+  /* ── what's new ───────────────────────────────────────────────────── */
+  .news { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 1.5rem 0; }
+  .news div {
+    background: var(--ink); border: 3px solid var(--paper); padding: .9rem 1rem;
+    box-shadow: 5px 5px 0 rgba(0,0,0,.5);
+  }
+  .news b { display: block; font-family: var(--comic); font-size: 1.15rem; letter-spacing: .04em; color: var(--gold); margin-bottom: .3rem; }
+  .news p { font-size: .86rem; color: #ded5c4; }
+  .news em { color: var(--acid); font-style: normal; }
+
+  .deskonly { display: none; }
+
+  /* ── mobile ───────────────────────────────────────────────────────── */
+  @media (max-width: 720px) {
+    .deskonly {
+      display: block; font-size: .8rem; color: #a8b4cc; max-width: 34rem;
+      border-left: 3px solid var(--gold); padding-left: .7rem; margin: -.6rem 0 1.5rem;
+    }
+    body { font-size: 15px; -webkit-text-size-adjust: 100%; padding-bottom: 3rem; }
+    .wrap { padding: 0 1rem; }
+    .hero { padding: 4.5rem 0 2rem; }
+    h1 { transform: rotate(-2deg); text-shadow: 3px 3px 0 var(--hot), 6px 6px 0 var(--ink); }
+    section { margin: 3rem auto; }
+    h2 { font-size: 1.5rem; box-shadow: 3px 3px 0 var(--ink); }
+    .lede { font-size: 1rem; }
+    .diagram { padding: 1rem .8rem; }
+    .diagram::after {
+      content: "← swipe →"; display: block; font: 10px var(--mono);
+      color: #93a2bd; text-align: center; margin-top: .6rem; letter-spacing: .1em;
+    }
+    .cta { gap: .7rem; }
+    .cta a { font-size: 1.05rem; padding: .45rem 1rem; }
+    .starbar { font-size: .85rem; padding: .3rem .6rem; top: .5rem; right: .5rem; }
+    .starbar .lbl { display: none; }
+    .stats { gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+    .stat b { font-size: 1.7rem; }
+    .grid { gap: .8rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  }
 </style>
 </head>
 <body>
+
+<a class="starbar" href="https://github.com/elberacasa/comic-zombies" target="_blank" rel="noopener">
+  <span class="st">★</span><span class="lbl">STAR ON GITHUB</span>
+</a>
 
 <div class="hero"><div class="wrap">
   <h1>COMIC<span>ZOMBIES</span></h1>
@@ -134,26 +194,81 @@
   </p>
   <p class="lede">
     Every mesh is built from code, every texture is painted to a canvas at boot, every sound is
-    synthesised from oscillators and noise. The entire game is <strong>55,344 lines of
-    TypeScript and a single dependency</strong>, written with Claude Code in about a day.
+    synthesised from oscillators and noise. The entire game is <strong>61,000 lines of
+    TypeScript and a single dependency</strong>, written with Claude Code.
   </p>
 
   <div class="stats">
     <div class="stat zero"><b>0</b><span>downloaded assets</span></div>
     <div class="stat"><b>1</b><span>runtime dependency</span></div>
-    <div class="stat"><b>55.3k</b><span>lines of typescript</span></div>
-    <div class="stat"><b>85</b><span>source files</span></div>
-    <div class="stat"><b>~326kB</b><span>gzipped, total</span></div>
+    <div class="stat"><b>61.3k</b><span>lines of typescript</span></div>
+    <div class="stat"><b>93</b><span>source files</span></div>
+    <div class="stat"><b>6</b><span>weapons, all in code</span></div>
+    <div class="stat"><b>~369kB</b><span>gzipped, total</span></div>
   </div>
 
   <div class="cta">
-    <a href="/index.html">▶ PLAY IT</a>
+    <a href="/play">▶ PLAY IT</a>
+    <a class="star" href="https://github.com/elberacasa/comic-zombies" target="_blank" rel="noopener">★ STAR IT ON GITHUB</a>
     <a class="alt" href="#assets">SEE EVERY ASSET</a>
     <a class="alt" href="#weapons">SEE THE GUNS</a>
   </div>
+  <p class="deskonly">
+    ↑ The game wants a keyboard and a mouse. This page is worth a read on a phone — the game
+    is not. Everything below still generates live, right here, on whatever you are holding.
+  </p>
 </div></div>
 
 <div class="wrap">
+
+<!-- ── WHAT SHIPPED LATELY ──────────────────────────────────────────── -->
+<section>
+  <h2>What shipped lately</h2>
+  <p class="blurb">
+    The project is still running. Recent builds, and the measurement that drove each one — because
+    on this project a fix does not count until a number says it worked.
+  </p>
+  <div class="news">
+    <div>
+      <b>REDLINE</b>
+      <p>A new battle rifle, modelled to the proportions of its real counterpart instead of to
+      taste. Six weapons now live in one file each — <em>and the playtester finally said "lovely"</em>,
+      after seven passes that did not land.</p>
+    </div>
+    <div>
+      <b>THE RECOIL BUG NOBODY SAW</b>
+      <p>Recovery was gated by a fixed 90&nbsp;ms delay against a variable fire rate — so any
+      automatic firing faster than that re-armed the delay before it ever expired and
+      <em>never recovered at all</em>. A 750&nbsp;rpm rifle climbed 15.8° in six seconds. Now 0.5°,
+      with the first shot preserved bit-for-bit.</p>
+    </div>
+    <div>
+      <b>WHY EVERY GUN LOOKED LIKE A BRICK</b>
+      <p>Seven art passes edited gun files. The real cause was in the builder: the hand geometry
+      capped every weapon in the game at a drawn length:height of <em>1.21</em>. Real firearms run
+      1.6:1 to 5.0:1. They read as blocks because they were block-shaped.</p>
+    </div>
+    <div>
+      <b>THE ECONOMY</b>
+      <p>Wall-buys, a mystery box, four perks and Pack-a-Punch — the full round-based spend loop,
+      with points paid for hits and not just kills, so a weak gun is an income weapon.</p>
+    </div>
+    <div>
+      <b>THE HUD LEARNED TO SIT STRAIGHT</b>
+      <p>Comic tilt is great on a splash and terrible on a number you read mid-fight. Every
+      persistent panel was de-tilted and the label type re-cut. Plus a compass and a minimap.</p>
+    </div>
+    <div>
+      <b>QUALITY STOPPED SWAPPING</b>
+      <p>The resolution governor targeted <em>13.5&nbsp;ms</em> — below the 16.67&nbsp;ms a
+      vsynced 60&nbsp;fps frame physically takes. It was demanding 74&nbsp;fps from a display
+      capped at 60, so it downscaled forever. It had been printing the evidence to the console
+      the whole time.</p>
+    </div>
+  </div>
+</section>
+
+<div class="rule"></div>
 
 <!-- ── HOW IT WAS BUILT ─────────────────────────────────────────────── -->
 <section>
@@ -419,6 +534,69 @@
 
 <div class="rule"></div>
 
+<!-- ── SEEDBANK ─────────────────────────────────────────────────────── -->
+<section id="seedbank">
+  <h2>The game that spawned a toolchain</h2>
+  <p class="blurb">
+    Building this meant writing about <strong>a hundred asset generators</strong> — brick, rust,
+    concrete, blood, muzzle flash, lettering, every gunshot. Somewhere around the fiftieth it
+    stopped being a game problem. Every person vibecoding a three.js game with an AI hits the exact
+    same wall, and it is always art: an AI cannot draw a PNG or model a <code>.glb</code>, and
+    describing either costs a fortune in tokens for a result nobody can edit.
+  </p>
+  <p class="blurb">
+    So the same pipeline that built this game was pointed at that wall, and it built
+    <strong><a href="https://seedbank-alpha.vercel.app" target="_blank" rel="noopener">Seedbank</a></strong>
+    — a standard, a studio and a Claude Code bridge, built on one idea:
+    <strong>an asset is a function, not a file.</strong> A texture is forty lines of canvas code. A
+    crate is a geometry builder with a seed. A gunshot is an envelope over a noise burst. Write
+    <code>brick()</code> once and every future game calls it for free.
+  </p>
+
+  <div class="diagram" style="padding:1.2rem 1.5rem">
+    <table style="width:100%;border-collapse:collapse;font-size:.86rem;min-width:600px">
+      <tr style="border-bottom:2px solid #445270">
+        <th style="text-align:left;padding:.5rem;color:#ffc531">The game gave Seedbank</th>
+        <th style="text-align:left;padding:.5rem;color:#ffc531">Seedbank gave the game back</th>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem;color:#ded5c4">Its whole pattern library, mined from shipped code.
+        Seedbank's reference doc is an <em style="color:#8cff3e">extraction, not a hypothesis</em> —
+        every rule in it is quoted from a file in this repo that survived a real playtest.</td>
+        <td style="padding:.5rem">A harder question than the game had asked itself:
+        <em style="color:#8cff3e">style is a parameter</em>. One generator, many manifests. That
+        reframing is why the guns are authored in multiplier space instead of hard-coded colour.</td>
+      </tr>
+      <tr style="border-bottom:1px solid #262e4c">
+        <td style="padding:.5rem;color:#ded5c4">The failure modes, free. Ink-floor blowout, halftone
+        crawl, the tiling seam that only shows on one layer — all found the expensive way here
+        first.</td>
+        <td style="padding:.5rem">The sharpest review this game's art code has ever had. Building a
+        general standard forced a list of <em style="color:#8cff3e">where the game is wrong</em> —
+        places its shortcuts don't generalise — and that list is a to-do.</td>
+      </tr>
+      <tr>
+        <td style="padding:.5rem;color:#ded5c4">Proof that the constraint ships. A finished,
+        zero-downloaded-asset game is an existence argument no README can make.</td>
+        <td style="padding:.5rem">Coherence as a first-class problem. A single beautiful crate never
+        was the hard part — <em style="color:#8cff3e">forty assets that look like one game</em> is.</td>
+      </tr>
+    </table>
+    <p class="caption" style="text-align:left;margin-top:1rem">
+      Two projects, one pipeline, each one the other's test case. The game is where a generator
+      proves it survives a frame at 60&nbsp;fps; the toolchain is where it proves it was worth
+      writing once.
+    </p>
+  </div>
+
+  <div class="cta">
+    <a class="alt" href="https://seedbank-alpha.vercel.app" target="_blank" rel="noopener">SEE SEEDBANK →</a>
+    <a class="star" href="https://github.com/elberacasa/seedbank" target="_blank" rel="noopener">★ STAR SEEDBANK</a>
+  </div>
+</section>
+
+<div class="rule"></div>
+
 <!-- ── LIVE ASSETS ──────────────────────────────────────────────────── -->
 <section id="assets">
   <h2>Every asset, generated live</h2>
@@ -434,9 +612,14 @@
 </section>
 
 <div class="rule"></div>
-<p class="blurb" style="text-align:center">
-  Built with <a href="https://claude.com/claude-code">Claude Code</a>.
-  <a href="/index.html">Play it →</a>
+<div class="cta" style="justify-content:center">
+  <a href="/play">▶ PLAY IT</a>
+  <a class="star" href="https://github.com/elberacasa/comic-zombies" target="_blank" rel="noopener">★ STAR ON GITHUB</a>
+</div>
+<p class="blurb" style="text-align:center;margin-left:auto;margin-right:auto">
+  Built with <a href="https://claude.com/claude-code">Claude Code</a>. Sibling project:
+  <a href="https://seedbank-alpha.vercel.app" target="_blank" rel="noopener">Seedbank</a>.
+  If any of this was useful, a star costs you one click and means a lot.
 </p>
 
 </div>
