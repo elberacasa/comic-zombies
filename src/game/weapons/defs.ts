@@ -484,8 +484,26 @@ export function getWeaponDef(id: string): WeaponDef | undefined {
   return _byId.get(id);
 }
 
-/** The gun you spawn holding. */
+/**
+ * The gun pinned to slot 1 — the reference weapon `Q` always flips back to, and the id the `J`
+ * debug cycle skips so it can never hand you a duplicate of it.
+ */
 export const STARTER_WEAPON_ID = INKSLINGER.id;
+
+/**
+ * THE SPAWN LOADOUT, in slot order. Given in sequence, so the LAST one is what you spawn
+ * holding — `give` equips whatever it just placed.
+ *
+ * REDLINE is the default in hand deliberately: it is the one weapon built after the proportion
+ * finding and the recoil fix, so it is what the game should be judged on in its first ten
+ * seconds. The pistol stays in slot 1 as the fallback and the comparison.
+ *
+ * BALANCE NOTE: this hands the player a 520 rpm battle rifle for free at round 1, which is
+ * strictly richer than the wall-buy economy assumes (REDLINE is a paid weapon everywhere else).
+ * Early rounds get easier and the first spend decision gets later. That is a deliberate
+ * showcase choice, not a tuned one — revisit it when the economy pass happens.
+ */
+export const STARTER_LOADOUT: readonly string[] = [INKSLINGER.id, REDLINE.id];
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // PACK-A-PUNCH — the upgraded form is a DERIVED DEF, not a special case in the service.

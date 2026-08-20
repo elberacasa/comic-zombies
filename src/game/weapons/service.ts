@@ -30,7 +30,7 @@ import type {
 } from '@/core/types';
 import { clamp01, easeOutCubic, lerp } from '@/core/mathx';
 import { CAMERA, MOVE, WEAPON } from '@/game/tuning';
-import { STARTER_WEAPON_ID, WEAPON_DEFS, getWeaponDef, upgradedDef } from './defs';
+import { STARTER_LOADOUT, WEAPON_DEFS, getWeaponDef, upgradedDef } from './defs';
 import { RecoilController, SpreadController, safeSpreadMult, type RecoilRig, type SpreadState } from './recoil';
 import { buildShotDirection, traceShot, type ShotParams } from './firing';
 import { Viewmodel, makeViewmodelDrive, type ViewmodelDrive } from './viewmodel';
@@ -218,7 +218,9 @@ export class WeaponSystem implements System, WeaponService {
       ctx.events.on('player:spawned', () => this.resetTransient()),
     );
 
-    this.give(STARTER_WEAPON_ID);
+    // In slot order — `give` fills the first empty slot and equips it, so the last id in the
+    // loadout is the gun in your hands on spawn.
+    for (const id of STARTER_LOADOUT) this.give(id);
     this.registerDebug(ctx);
   }
 
