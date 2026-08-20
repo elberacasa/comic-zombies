@@ -96,6 +96,15 @@
     background: repeating-conic-gradient(var(--ink-soft) 0% 25%, #1b2138 0% 50%) 0 0 / 16px 16px;
   }
   .art canvas, .art img { max-width: 100%; max-height: 100%; display: block; }
+  /* The checker is there so a texture's ALPHA reads. A gun has no alpha to show, and the
+     checker was doing the opposite job on it: a busy 16px lattice directly behind a pale
+     object flattens it, because the eye reads the lattice as the surface. Guns get a lit
+     stage instead — dark at the edges so the silhouette has something to end against. */
+  #weapons .art {
+    background:
+      radial-gradient(ellipse 70% 60% at 46% 40%, #39456e 0%, #222a49 45%, #131828 78%, #0c0f1c 100%);
+  }
+  #weapons .card { border-color: #05060c; }
   .swatch { width: 100%; height: 100%; display: flex; align-items: flex-end; }
   .swatchmeta {
     width: 100%; display: flex; justify-content: space-between;

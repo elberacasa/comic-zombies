@@ -519,6 +519,23 @@ const GUN_INK_RES = 1800;
 const GUN_FOV = 40;
 
 /**
+ * A bounding box over the meshes that will actually be RENDERED.
+ *
+ * `Box3.setFromObject` ignores `.visible` by design (it answers "where is this subtree", not
+ * "what will you see"). Anything framing a camera wants the second question.
+ */
+function visibleBounds(root: Object3D): Box3 {
+  const box = new Box3().makeEmpty();
+  const scratch = new Box3();
+  root.traverse((o) => {
+    if (!(o as unknown as { isMesh?: boolean }).isMesh) return;
+    for (let p: Object3D | null = o; p && p !== root.parent; p = p.parent) if (!p.visible) return;
+    box.union(scratch.setFromObject(o));
+  });
+  return box.isEmpty() ? new Box3().setFromObject(root) : box;
+}
+
+/**
  * Frame one gun and copy the pixels out.
  *
  * `subject` is in gun space (barrel down −z, up +y), whatever built it. Nothing is disposed here
@@ -534,7 +551,12 @@ function shootGun(subject: Object3D): HTMLCanvasElement {
 
   subject.visible = true;
   subject.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(subject);
+  // FRAME WHAT IS DRAWN, NOT WHAT EXISTS. `Box3.setFromObject` expands over every descendant
+  // regardless of `.visible`, and `buildGunShowpiece` hides `vm-hand` rather than removing it —
+  // so the naive box was 250 mm tall for a 185 mm gun, a third of it an invisible glove hanging
+  // below and behind. The camera dutifully framed the empty space: every gun drew ~30% small,
+  // pushed up and to the left of its tile, with the dead room where the hand would have been.
+  const box = visibleBounds(subject);
   const c = box.getCenter(new Vector3());
   const r = Math.max(0.05, box.getSize(new Vector3()).length() * 0.5);
 
