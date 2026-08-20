@@ -34,7 +34,9 @@ import {
   type WordSetName,
 } from '@/art/letters';
 import { buildProp, mergeProp, type PropKind } from '@/art/shapes';
-import { buildOutlineHull, makeInkMaterial, updateInkGlobals } from '@/render/materials/index';
+import {
+  buildOutlineHull, makeInkMaterial, updateInkGlobals, updateViewSpaceInk,
+} from '@/render/materials/index';
 import { WEAPON } from '@/game/tuning';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -552,6 +554,15 @@ function shootGun(subject: Object3D): HTMLCanvasElement {
   cam.lookAt(0, 0, 0);
 
   updateInkGlobals(0.016, GUN_INK_RES, GUN_INK_RES);
+  // THE GUNS WERE FLAT BECAUSE OF THIS LINE'S ABSENCE. Every part of a weapon is a
+  // `viewSpaceKey` material: it reads `VIEW_SPACE_INK.uKeyDir`, a CAMERA-space key rotated into
+  // world once per frame by whoever owns the camera. In game that is `Viewmodel.compose()`. The
+  // gallery owns its own camera and never did it, so the key stayed at its camera-space literal
+  // and got dotted against world normals under a camera facing the other way — the terminator
+  // left the receiver and every part resolved into a single cel band. One call and the guns are
+  // lit exactly as the player sees them: key from the upper left, tops catching, sides in tone.
+  cam.updateMatrixWorld(true);
+  updateViewSpaceInk(cam.matrixWorld);
   renderer.render(scene, cam);
 
   // Copy out, because the shared renderer is about to draw the next gun over this one.
