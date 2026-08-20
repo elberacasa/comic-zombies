@@ -153,9 +153,16 @@
   /* ── mobile ───────────────────────────────────────────────────────── */
   @media (max-width: 720px) {
     .deskonly {
-      display: block; font-size: .8rem; color: #a8b4cc; max-width: 34rem;
-      border-left: 3px solid var(--gold); padding-left: .7rem; margin: -.6rem 0 1.5rem;
+      display: block; max-width: 34rem; margin: -.4rem 0 1.8rem;
+      background: var(--ink); border: 3px solid var(--gold);
+      box-shadow: 5px 5px 0 rgba(0,0,0,.5); padding: .8rem .9rem;
     }
+    .deskonly b {
+      display: block; font-family: var(--comic); font-size: 1rem; letter-spacing: .12em;
+      color: var(--gold); margin-bottom: .35rem;
+    }
+    .deskonly p { font-size: .82rem; line-height: 1.6; color: #c3cbdd; }
+    .deskonly em { color: var(--paper); font-style: normal; }
     body { font-size: 15px; -webkit-text-size-adjust: 100%; padding-bottom: 3rem; }
     .wrap { padding: 0 1rem; }
     .hero { padding: 4.5rem 0 2rem; }
@@ -208,7 +215,7 @@
     <div class="stat"><b>1</b><span>runtime dependency</span></div>
     <div class="stat"><b>61.3k</b><span>lines of typescript</span></div>
     <div class="stat"><b>93</b><span>source files</span></div>
-    <div class="stat"><b>6</b><span>weapons, all in code</span></div>
+    <div class="stat"><b>5</b><span>weapons, all in code</span></div>
     <div class="stat"><b>~369kB</b><span>gzipped, total</span></div>
   </div>
 
@@ -218,10 +225,12 @@
     <a class="alt" href="#assets">SEE EVERY ASSET</a>
     <a class="alt" href="#weapons">SEE THE GUNS</a>
   </div>
-  <p class="deskonly">
-    ↑ The game wants a keyboard and a mouse. This page is worth a read on a phone — the game
-    is not. Everything below still generates live, right here, on whatever you are holding.
-  </p>
+  <div class="deskonly">
+    <b>DESKTOP ONLY — FOR NOW</b>
+    <p>The game wants a keyboard and a mouse, so tapping PLAY on a phone gets you a polite
+    notice instead. <em>This page, though, is built for the phone</em> — and every asset below
+    is still generated live, right here, on whatever you are holding.</p>
+  </div>
 </div></div>
 
 <div class="wrap">
@@ -610,7 +619,7 @@
     game calls. This page imports the game's own modules — it is not a mock-up, and if a
     generator ever changed, this page would change with it. Each tile prints the exact call
     that made it. That includes <a href="#weapon-surfaces">the weapon surfaces</a> and
-    <a href="#weapons">the four guns</a>, which are asked for by name and shaded with the
+    <a href="#weapons">the five guns</a>, which are asked for by name and shaded with the
     game's own ink material.
   </p>
   <div id="gallery"></div>

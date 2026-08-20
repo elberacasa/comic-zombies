@@ -101,7 +101,7 @@ game's skill ceiling (`GAME_BIBLE §3`, deterministic and learnable) and flatten
 | `ratatat` | SMG, 900 rpm | recoil now calm; gunmetal (moved off ACID's hue) |
 | `boomstick` | shotgun | L:H 0.65 — worst proportions in the game |
 | `longshot` | marksman | L:H 0.99 |
-| `press` | **THE PRESS** — clean-sheet pistol | ships ALONGSIDE inkslinger, stats cloned exactly so `J` is a pure visual A/B |
+| `press` | **THE PRESS** — clean-sheet pistol | **CUT from the shipping arsenal.** Stat-identical clone of the starter, so the mystery box could hand you a second pistol with different art and identical numbers. `models/press.ts` and its def are kept as the clean-sheet reference; it returns when it has its own numbers |
 | `redline` | **REDLINE** — SCAR-H, 520 rpm auto | **best in the game, L:H 1.21 = the theoretical ceiling.** The human said it "looks much better" |
 
 **The agreed lineup** (MW2 nostalgia, our own names — real counterpart for proportions, our name
@@ -133,10 +133,18 @@ Updated this session with a **★ STAR ON GITHUB** button (fixed top-right, plus
 CTAs), a *What shipped lately* band, a **Seedbank** section, and a `max-width: 720px` mobile
 breakpoint. Stats are now measured off the tree: 61.3k lines / 93 files / 6 weapons / ~369 kB gz.
 
-**A production bug was found and fixed while doing it:** every `PLAY IT` button linked
-`/index.html`, which Vercel's `cleanUrls` 308-redirects to `/` — and `scripts/postbuild.mjs` maps
-`/` to the *gallery*. So the main CTA reloaded the landing page; the game only ever answered on
-`/play`. **Any new link to the game must use `/play`.**
+**A CORRECTION, recorded so it is not repeated as fact:** this session reported that every
+`PLAY IT` button was broken in production because `/index.html` 308-redirects to `/`. **That was
+wrong.** `scripts/postbuild.mjs` already rewrites `/index.html` → `/play` in the deployed gallery,
+and has since commit `7953dce`. The links were always correct for visitors; the mistake was
+curling the URL and reading the source instead of the DEPLOYED HTML. The source now says `/play`
+directly, which is honest but changed nothing. **Check `dist/` or the live page, not the source,
+before calling a routing bug.**
+
+**Mobile gate (`index.html`).** A `(any-pointer: fine)` check now decides whether to
+`import('/src/main.ts')` at all: no mouse → the game never downloads and a comic "DESKTOP ONLY —
+FOR NOW" panel shows instead. The entry chunk is 525 bytes; the 526 kB game is a dynamic import
+behind it. This is why the game bundle is now a separate `main-*.js` chunk.
 
 The **Seedbank synergy** is real, not marketing: `~/seedbank/docs/reference/PATTERNS.md` was mined
 from this codebase and says so ("the only complete, shipped, zero-downloaded-asset codebase we

@@ -466,9 +466,15 @@ export const REDLINE: WeaponDef = {
  * every weapon above works purely because it is hitscan data. A launcher needs a real projectile
  * (arc, splash, self-knockback), so it ships when that exists rather than as a def that silently
  * fires an invisible bullet.
+ *
+ * `PRESS` is NOT here either, and its def above is retained on purpose. It was always a
+ * stat-identical clone of the starter pistol — a visual A/B for the `J` key, nothing more. In a
+ * shipping arsenal that is a bug the player can buy: the mystery box hands you a second pistol
+ * with different art and numerically identical everything. It comes back the moment it has its
+ * own numbers, which is what its own comment says it must earn.
  */
 export const WEAPON_DEFS: readonly WeaponDef[] = [
-  INKSLINGER, PRESS, RATATAT, BOOMSTICK, LONGSHOT, REDLINE,
+  INKSLINGER, RATATAT, BOOMSTICK, LONGSHOT, REDLINE,
 ];
 
 const _byId = new Map<string, WeaponDef>();

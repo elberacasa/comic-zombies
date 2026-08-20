@@ -20,7 +20,6 @@
 import { BOOMSTICK } from './boomstick';
 import { INKSLINGER } from './inkslinger';
 import { LONGSHOT } from './longshot';
-import { PRESS } from './press';
 import { RATATAT } from './ratatat';
 import { REDLINE } from './redline';
 import type { WeaponModelDef } from './types';
@@ -29,12 +28,14 @@ import type { WeaponModelDef } from './types';
 export const WEAPON_MODELS: readonly WeaponModelDef[] = [
   INKSLINGER,
   // Second, so J's first press hands it over and Q flips straight back to the reference pistol.
-  PRESS,
+  // (THE PRESS held this slot as a visual A/B for the pistol; it is out of the shipping arsenal
+  //  until it earns its own numbers — see the registry note in `defs.ts`. `models/press.ts` stays
+  //  on disk as the clean-sheet reference the rebuild starts from.)
   RATATAT,
   BOOMSTICK,
   LONGSHOT,
   // Last, so every existing equip index is untouched. It is the clean-sheet battle rifle the
-  // other five get rebuilt against — see the header of `models/redline.ts` for why its
+  // other four get rebuilt against — see the header of `models/redline.ts` for why its
   // `depthCompress` is 0.62 and not the 1.0 the rework brief asked for.
   REDLINE,
 ];

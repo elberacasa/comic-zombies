@@ -54,6 +54,49 @@
   #boot small { opacity: .65; letter-spacing: .18em; font-size: .8rem; }
   @keyframes pulse { 50% { transform: rotate(1.4deg) scale(1.045); } }
   #boot.hidden { display: none; }
+
+  /* ── mobile gate ──────────────────────────────────────────────────────
+   * Set by the boot script below when the device has no fine pointer. The game is a
+   * keyboard-and-mouse shooter; without this a phone loads a full WebGL scene it can
+   * never play, gets hot, and the visitor bounces. Instead we send them to the write-up.
+   */
+  #gate { display: none; }
+  body.nogo { cursor: auto; overflow: auto; }
+  body.nogo #game, body.nogo #boot, body.nogo #ui { display: none; }
+  body.nogo #gate {
+    position: fixed; inset: 0; z-index: 200; display: flex; overflow-y: auto;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 1.1rem; text-align: center; padding: 2rem 1.25rem;
+    background: radial-gradient(ellipse at 50% 40%, #3a2159 0%, #1a1636 55%, #0b0a14 100%);
+  }
+  #gate .burst {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-conic-gradient(from 0deg at 50% 38%,
+      rgba(255,197,49,.07) 0deg 6deg, transparent 6deg 12deg);
+  }
+  #gate > * { position: relative; }
+  #gate .kicker {
+    font-size: .78rem; letter-spacing: .22em; color: var(--gold);
+    border: 3px solid var(--gold); padding: .35rem .8rem; transform: rotate(-1.5deg);
+  }
+  #gate h2 {
+    font-size: clamp(2.1rem, 11vw, 3.4rem); line-height: .9; letter-spacing: .01em;
+    transform: rotate(-2deg) skewX(-4deg); max-width: 15ch;
+    text-shadow: 3px 3px 0 var(--hot), 6px 6px 0 var(--ink);
+  }
+  #gate p {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .92rem; line-height: 1.6; color: #ded5c4; max-width: 34ch;
+  }
+  #gate p b { color: var(--gold); font-weight: 400; }
+  #gate a {
+    font-family: var(--comic-face); font-size: 1.15rem; letter-spacing: .05em;
+    text-decoration: none; background: var(--gold); color: var(--ink);
+    border: 3px solid var(--ink); padding: .55rem 1.2rem;
+    box-shadow: 5px 5px 0 rgba(0,0,0,.6); margin-top: .4rem;
+  }
+  #gate a.ghost { background: transparent; color: var(--paper); border-color: var(--paper); box-shadow: none; margin-top: 0; }
+  #gate small { font-size: .7rem; letter-spacing: .16em; color: #8b93ad; max-width: 32ch; line-height: 1.7; }
   .nosupport { max-width: 42ch; font-size: 1.1rem; line-height: 1.5; }
 </style>
 </head>
@@ -67,6 +110,23 @@
          this is only what shows in the moment before the module has parsed. -->
     <small id="boot-hint">WASD MOVE &nbsp;·&nbsp; LMB SHOOT &nbsp;·&nbsp; R RELOAD &nbsp;·&nbsp; N / M SPAWN ZOMBIES</small>
   </div>
-  <script type="module" src="/src/main.ts"></script>
+  <div id="gate">
+    <div class="burst"></div>
+    <span class="kicker">DESKTOP ONLY — FOR NOW</span>
+    <h2>YOUR PHONE HAS NO TRIGGER FINGER</h2>
+    <p>
+      COMIC ZOMBIES is a <b>keyboard-and-mouse shooter</b> running at 60&nbsp;fps in a browser
+      tab. Touch controls are on the list. Until then it needs a laptop — no install, no
+      download, just the tab.
+    </p>
+    <a href="/">READ HOW IT'S BUILT →</a>
+    <a class="ghost" href="https://github.com/elberacasa/comic-zombies">★ SOURCE ON GITHUB</a>
+    <small>EVERY TEXTURE, MESH AND SOUND IS GENERATED IN CODE. ZERO DOWNLOADED ASSETS.</small>
+  </div>
+  <script type="module">
+    // A fine pointer means a mouse or trackpad exists — the one thing this game cannot fake.
+    if (matchMedia('(any-pointer: fine)').matches) import('/src/main.ts');
+    else document.body.classList.add('nogo');
+  </script>
 </body>
 </html>

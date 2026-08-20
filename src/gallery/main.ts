@@ -405,7 +405,7 @@ async function buildWeaponSurfaces(): Promise<Surfaces | null> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6 · WEAPON MODELS — the four guns, built by the viewmodel's own builder
+// 6 · WEAPON MODELS — every shipping gun, built by the viewmodel's own builder
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -448,12 +448,13 @@ const GUN_PARTS: readonly [part: string, field: Field][] = [
   // is about the gun. It is still built — it is just not what these tiles are for.
 ];
 
-/** Human names for the four ids, so a tile says what the gun IS as well as what it is called. */
+/** Human names for the shipping ids, so a tile says what the gun IS as well as what it is called. */
 const GUN_LABELS: Readonly<Record<string, string>> = {
   inkslinger: 'INKSLINGER — pistol',
   ratatat: 'RATATAT — SMG',
   boomstick: 'BOOMSTICK — shotgun',
   longshot: 'LONGSHOT — marksman',
+  redline: 'REDLINE — battle rifle',
 };
 
 /**
